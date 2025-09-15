@@ -37,6 +37,9 @@ class CAISODataProcessor:
             if df.empty:
                 return {'records_inserted': 0, 'error': 'No valid data after cleaning'}
             
+            # Add source file tracking
+            df['source_file'] = source_file
+            
             # Store in database
             records_inserted = self.db.bulk_insert_lmp_data(df)
             
@@ -175,7 +178,7 @@ class CAISODataProcessor:
             
             # Handle both dict and list responses
             if isinstance(summary, list) and len(summary) > 0:
-                summary = summary[0]
+                summary = summary[0]  # type: ignore
             
             if not isinstance(summary, dict):
                 return {"error": "Invalid data format from database"}

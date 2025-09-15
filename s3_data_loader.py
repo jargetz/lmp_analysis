@@ -36,9 +36,31 @@ class S3DataLoader:
             logging.error(f"Error listing S3 files: {str(e)}")
             return []
     
+    def check_file_already_processed(self, s3_key: str) -> bool:
+        """Check if S3 file has already been processed"""
+        try:
+            # Simple check - see if we have any data from this source file
+            query = "SELECT COUNT(*) as count FROM caiso.lmp_data WHERE source_file = %s LIMIT 1"
+            result = self.processor.db.execute_query(query, (s3_key,))
+            if result and len(result) > 0:
+                return result[0].get('count', 0) > 0
+            return False
+        except:
+            return False
+    
     def download_and_process_file(self, s3_key: str) -> Dict[str, Any]:
         """Download a single zip file from S3 and process it"""
         try:
+            # Skip if already processed (prevent duplicates)
+            if self.check_file_already_processed(s3_key):
+                return {
+                    'success': True,
+                    'records_inserted': 0,
+                    'file': s3_key,
+                    'skipped': True,
+                    'reason': 'Already processed'
+                }
+            
             # Download file from S3
             response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)
             zip_content = response['Body'].read()
@@ -74,6 +96,7 @@ class S3DataLoader:
         
         total_files = len(files)
         processed_files = 0
+        skipped_files = 0
         total_records = 0
         errors = []
         
@@ -84,8 +107,11 @@ class S3DataLoader:
             result = self.download_and_process_file(file_key)
             
             if result['success']:
-                processed_files += 1
-                total_records += result.get('records_inserted', 0)
+                if result.get('skipped'):
+                    skipped_files += 1
+                else:
+                    processed_files += 1
+                    total_records += result.get('records_inserted', 0)
             else:
                 errors.append(f"{file_key}: {result.get('error', 'Unknown error')}")
         
@@ -93,6 +119,7 @@ class S3DataLoader:
             'success': True,
             'total_files': total_files,
             'processed_files': processed_files,
+            'skipped_files': skipped_files,
             'total_records': total_records,
             'errors': errors
         }

@@ -38,55 +38,63 @@ def main():
     with st.sidebar:
         st.header("Data Status")
         
-        # Check current data status
+        # Check database data status only (fast, no S3 checks)
         try:
-            data_status = st.session_state.s3_loader.check_data_freshness()
+            summary = st.session_state.processor.get_data_summary_from_db()
             
-            if 'error' in data_status:
-                st.error(f"Error checking data: {data_status['error']}")
+            if summary and summary.get('total_records', 0) > 0:
+                st.success("✅ Data loaded and ready")
+                st.metric("Records in Database", f"{summary.get('total_records', 0):,}")
+                if summary.get('latest_date'):
+                    st.metric("Latest Data", summary['latest_date'].strftime('%Y-%m-%d'))
+                st.session_state.data_loaded = True
             else:
-                if data_status['db_has_data']:
-                    st.success("✅ Data loaded and ready")
-                    st.metric("Records in Database", f"{data_status['db_records']:,}")
-                    if data_status['latest_db_date']:
-                        st.metric("Latest Data", data_status['latest_db_date'].strftime('%Y-%m-%d'))
-                    st.session_state.data_loaded = True
-                else:
-                    st.warning("⚠️ No data in database")
-                    st.info(f"Found {data_status['s3_files_available']} files in S3")
-                
-                # Data refresh option
-                if st.button("🔄 Refresh Data from S3", help="Load latest data from S3 bucket"):
-                    with st.spinner("Loading data from S3..."):
+                st.warning("⚠️ No data in database")
+                st.info("Use the admin button below to load data from S3")
+                st.session_state.data_loaded = False
+            
+            # Admin data refresh option (explicit action)
+            st.subheader("🔧 Admin Functions")
+            
+            # Simple admin protection
+            admin_password = st.text_input("Admin Password:", type="password", help="Required for S3 data operations")
+            
+            if admin_password == os.getenv('ADMIN_PASSWORD', 'admin123'):
+                if st.button("🔄 Load Data from S3", help="Admin: Download and process all CAISO files from S3 bucket"):
                         def progress_callback(current, total, message):
                             st.progress(current / total, text=message)
                         
                         result = st.session_state.s3_loader.load_all_data(progress_callback)
                         
                         if result['success']:
-                            st.success(f"✅ Loaded {result['processed_files']} files with {result['total_records']:,} records")
+                            success_msg = f"✅ Processed {result['processed_files']} files, skipped {result.get('skipped_files', 0)} duplicates"
+                            if result['total_records'] > 0:
+                                success_msg += f", added {result['total_records']:,} new records"
+                            st.success(success_msg)
                             st.session_state.data_loaded = True
                             st.rerun()
                         else:
                             st.error(f"❌ Failed to load data: {result.get('error', 'Unknown error')}")
+            else:
+                st.button("🔄 Load Data from S3", disabled=True, help="Enter admin password to enable")
                 
         except Exception as e:
-            st.error(f"Error checking data status: {str(e)}")
+            st.error(f"Error checking database status: {str(e)}")
+            st.session_state.data_loaded = False
         
-        # Data summary from database (if data exists)
-        try:
-            summary = st.session_state.processor.get_data_summary_from_db()
-            if summary and summary.get('total_records', 0) > 0:
-                st.subheader("Database Summary")
-                st.metric("Total Records", f"{summary.get('total_records', 0):,}")
-                st.metric("Unique Nodes", summary.get('unique_nodes', 0))
-                
-                if summary.get('earliest_date') and summary.get('latest_date'):
-                    st.metric("Date Range", f"{summary['earliest_date'].date()} to {summary['latest_date'].date()}")
-                
-                st.session_state.data_loaded = True
-        except Exception as e:
-            st.error(f"Error loading data summary: {str(e)}")
+        # Additional database details (if data exists)
+        if st.session_state.data_loaded:
+            try:
+                summary = st.session_state.processor.get_data_summary_from_db()
+                if summary:
+                    st.subheader("Database Details")
+                    st.metric("Unique Nodes", summary.get('unique_nodes', 0))
+                    
+                    if summary.get('earliest_date') and summary.get('latest_date'):
+                        st.metric("Date Range", f"{summary['earliest_date'].date()} to {summary['latest_date'].date()}")
+                        
+            except Exception as e:
+                st.error(f"Error loading database details: {str(e)}")
     
     # Main content area
     if not st.session_state.data_loaded:
