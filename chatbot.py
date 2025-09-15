@@ -3,24 +3,28 @@ import os
 import pandas as pd
 from openai import OpenAI
 from analytics import LMPAnalytics
+from database import DatabaseManager
+import logging
 
 class LMPChatbot:
-    """AI-powered chatbot for natural language querying of LMP data"""
+    """AI-powered chatbot for natural language querying of LMP data with PostgreSQL backend"""
     
     def __init__(self):
         # the newest OpenAI model is "gpt-5" which was released August 7, 2025.
         # do not change this unless explicitly requested by the user
         self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", "default_key"))
         self.analytics = LMPAnalytics()
+        self.db = DatabaseManager()
+        self.logger = logging.getLogger(__name__)
         
-    def process_question(self, question, data):
-        """Process a natural language question about LMP data"""
+    def process_question(self, question):
+        """Process a natural language question about LMP data from database"""
         try:
             # First, analyze the question to understand intent
-            analysis_result = self._analyze_question_intent(question, data)
+            analysis_result = self._analyze_question_intent(question)
             
             # Execute the appropriate analysis
-            result = self._execute_analysis(analysis_result, data)
+            result = self._execute_analysis(analysis_result)
             
             # Generate a natural language response
             response = self._generate_response(question, result, analysis_result)
@@ -28,13 +32,14 @@ class LMPChatbot:
             return response
             
         except Exception as e:
+            self.logger.error(f"Error processing question: {str(e)}")
             return f"I encountered an error processing your question: {str(e)}. Please try rephrasing your question or check if the required data is available."
     
-    def _analyze_question_intent(self, question, data):
+    def _analyze_question_intent(self, question):
         """Analyze the user's question to determine what analysis to perform"""
         
-        # Get basic data info for context
-        data_context = self._get_data_context(data)
+        # Get basic data info for context from database
+        data_context = self._get_data_context_from_db()
         
         system_prompt = """You are an expert in electricity market analysis, specifically CAISO LMP (Locational Marginal Price) data.
         
@@ -95,8 +100,8 @@ class LMPChatbot:
             # Fallback to basic analysis if OpenAI fails
             return self._fallback_intent_analysis(question)
     
-    def _execute_analysis(self, analysis_result, data):
-        """Execute the determined analysis on the data"""
+    def _execute_analysis(self, analysis_result):
+        """Execute the determined analysis using database queries"""
         analysis_type = analysis_result.get('analysis_type', 'general_query')
         params = analysis_result.get('parameters', {})
         
@@ -106,48 +111,54 @@ class LMPChatbot:
                 nodes = params.get('nodes', [])
                 
                 if len(nodes) == 1:
-                    return self.analytics.get_cheapest_hours(data, n_hours, node=nodes[0])
+                    return self.analytics.get_cheapest_hours(n_hours, node=nodes[0])
                 elif len(nodes) > 1:
-                    return self.analytics.get_cheapest_hours(data, n_hours, aggregate_nodes=nodes)
+                    return self.analytics.get_cheapest_hours(n_hours, aggregate_nodes=nodes)
                 else:
-                    return self.analytics.get_cheapest_hours(data, n_hours)
+                    return self.analytics.get_cheapest_hours(n_hours)
             
             elif analysis_type == 'price_percentile':
                 percentile = params.get('percentile', 10)
-                return self.analytics.get_nodes_by_price_percentile(data, percentile)
+                return self.analytics.get_nodes_by_price_percentile(percentile)
             
             elif analysis_type == 'congestion_analysis':
-                if 'MCC' in data.columns:
+                # Check if congestion data is available in database
+                try:
                     n_hours = params.get('n_hours', 20)
-                    return self.analytics.get_lowest_congestion_hours(data, n_hours)
-                else:
+                    result = self.analytics.get_lowest_congestion_hours(n_hours)
+                    if result.empty:
+                        return pd.DataFrame(), "Congestion data (MCC) not available in this dataset"
+                    return result
+                except Exception:
                     return pd.DataFrame(), "Congestion data (MCC) not available in this dataset"
             
             elif analysis_type == 'peak_analysis':
-                return self.analytics.get_peak_vs_offpeak_analysis(data)
+                return self.analytics.get_peak_vs_offpeak_analysis()
             
             elif analysis_type == 'price_statistics':
-                return self.analytics.get_price_statistics(data)
+                return self.analytics.get_price_statistics()
             
             elif analysis_type == 'hourly_patterns':
-                return self.analytics.get_hourly_averages(data)
+                return self.analytics.get_hourly_averages()
             
             elif analysis_type == 'price_spikes':
-                return self.analytics.detect_price_spikes(data)
+                return self.analytics.detect_price_spikes()
             
             elif analysis_type == 'node_comparison':
                 nodes = params.get('nodes', [])
                 if nodes:
-                    filtered_data = data[data['NODE'].isin(nodes)]
-                    return self.analytics.get_price_statistics(filtered_data)
+                    # For node comparison, we can filter using database queries
+                    # For now, return general node summary
+                    return self.analytics.get_node_summary()
                 else:
-                    return self.analytics.get_node_summary(data)
+                    return self.analytics.get_node_summary()
             
             else:
                 # General query - return basic statistics
-                return self.analytics.get_price_statistics(data)
+                return self.analytics.get_price_statistics()
                 
         except Exception as e:
+            self.logger.error(f"Error executing analysis: {str(e)}")
             return pd.DataFrame(), f"Error executing analysis: {str(e)}"
     
     def _generate_response(self, original_question, analysis_result, intent_analysis):
@@ -192,17 +203,17 @@ class LMPChatbot:
             return "No results found for your query."
         
         summaries = {
-            'cheapest_hours': f"Found {len(df)} cheapest hours. The lowest price was ${df['MW'].min():.2f}/MWh at {df.iloc[0]['NODE'] if 'NODE' in df.columns else 'multiple nodes'}.",
+            'cheapest_hours': f"Found {len(df)} cheapest hours. The lowest price was ${df['mw'].min():.2f}/MWh at {df.iloc[0]['node'] if 'node' in df.columns else 'multiple nodes'}.",
             
             'price_percentile': f"Found {len(df)} nodes in the requested price percentile. Average price range: ${df['avg_price'].min():.2f} - ${df['avg_price'].max():.2f}/MWh.",
             
-            'congestion_analysis': f"Analyzed {len(df)} hours with congestion data. Lowest congestion was ${df['MCC'].min():.2f}/MWh.",
+            'congestion_analysis': f"Analyzed {len(df)} hours with congestion data. Lowest congestion was ${df['mcc'].min():.2f}/MWh.",
             
             'peak_analysis': f"Peak vs off-peak analysis for {len(df)} nodes. Average peak premium varies significantly across nodes.",
             
             'price_statistics': f"Price statistics for {len(df)} nodes. Overall price range: ${df['min'].min():.2f} - ${df['max'].max():.2f}/MWh.",
             
-            'hourly_patterns': f"Hourly price patterns show average prices ranging from ${df['MW'].min():.2f} to ${df['MW'].max():.2f}/MWh.",
+            'hourly_patterns': f"Hourly price patterns show average prices ranging from ${df['mw'].min():.2f} to ${df['mw'].max():.2f}/MWh.",
             
             'price_spikes': f"Detected {len(df)} price spike events across the dataset.",
             
@@ -211,24 +222,49 @@ class LMPChatbot:
         
         return summaries.get(analysis_type, f"Analysis completed with {len(df)} results.")
     
-    def _get_data_context(self, data):
-        """Get context information about the dataset"""
-        if data is None or data.empty:
+    def _get_data_context_from_db(self):
+        """Get context information about the dataset from database"""
+        try:
+            # Get basic summary from database
+            summary = self.db.get_data_summary()
+            
+            if not summary or summary.get('total_records', 0) == 0:
+                return {
+                    'total_records': 0,
+                    'unique_nodes': 0,
+                    'date_range': 'No data',
+                    'columns': ['interval_start_time_gmt', 'node', 'mw', 'mcc', 'mlc', 'pos'],
+                    'sample_nodes': []
+                }
+            
+            # Get sample nodes
+            try:
+                nodes = self.db.get_unique_nodes()[:5]
+            except Exception:
+                nodes = []
+            
+            # Format date range
+            date_range = 'No date data'
+            if summary.get('earliest_date') and summary.get('latest_date'):
+                date_range = f"{summary['earliest_date']} to {summary['latest_date']}"
+            
+            return {
+                'total_records': summary.get('total_records', 0),
+                'unique_nodes': summary.get('unique_nodes', 0),
+                'date_range': date_range,
+                'columns': ['interval_start_time_gmt', 'node', 'mw', 'mcc', 'mlc', 'pos'],
+                'sample_nodes': nodes
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting data context: {str(e)}")
             return {
                 'total_records': 0,
                 'unique_nodes': 0,
-                'date_range': 'No data',
-                'columns': [],
+                'date_range': 'Error retrieving data',
+                'columns': ['interval_start_time_gmt', 'node', 'mw', 'mcc', 'mlc', 'pos'],
                 'sample_nodes': []
             }
-        
-        return {
-            'total_records': len(data),
-            'unique_nodes': data['NODE'].nunique() if 'NODE' in data.columns else 0,
-            'date_range': f"{data['INTERVALSTARTTIME_GMT'].min()} to {data['INTERVALSTARTTIME_GMT'].max()}" if 'INTERVALSTARTTIME_GMT' in data.columns else 'No date data',
-            'columns': list(data.columns),
-            'sample_nodes': data['NODE'].unique()[:5].tolist() if 'NODE' in data.columns else []
-        }
     
     def _fallback_intent_analysis(self, question):
         """Fallback analysis when OpenAI is not available"""

@@ -21,9 +21,7 @@ def main():
     st.title("⚡ CAISO LMP Analysis Tool")
     st.markdown("Upload CAISO Day Ahead LMP data and analyze electricity pricing with AI-powered insights.")
     
-    # Initialize session state
-    if 'data' not in st.session_state:
-        st.session_state.data = None
+    # Initialize session state (database-backed)
     if 'processor' not in st.session_state:
         st.session_state.processor = CAISODataProcessor()
     if 'analytics' not in st.session_state:
@@ -32,6 +30,8 @@ def main():
         st.session_state.chatbot = LMPChatbot()
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
+    if 'data_loaded' not in st.session_state:
+        st.session_state.data_loaded = False
     
     # Sidebar for data upload and basic info
     with st.sidebar:
@@ -46,43 +46,54 @@ def main():
         
         if uploaded_files:
             if st.button("Process Files"):
-                with st.spinner("Processing CAISO data..."):
+                with st.spinner("Processing CAISO data and storing in database..."):
                     try:
-                        all_data = []
-                        for uploaded_file in uploaded_files:
-                            # Extract and process each zip file
-                            with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
-                                for file_name in zip_ref.namelist():
-                                    if file_name.endswith('.csv'):
-                                        with zip_ref.open(file_name) as csv_file:
-                                            content = csv_file.read().decode('utf-8')
-                                            df = st.session_state.processor.process_csv_content(content)
-                                            if df is not None and not df.empty:
-                                                all_data.append(df)
+                        # Use the new database-backed processing method
+                        def progress_callback(current, total, message):
+                            st.progress(current / total, text=message)
                         
-                        if all_data:
-                            st.session_state.data = pd.concat(all_data, ignore_index=True)
-                            st.session_state.data = st.session_state.processor.clean_and_validate(st.session_state.data)
-                            st.success(f"Successfully processed {len(all_data)} files with {len(st.session_state.data)} records")
+                        result = st.session_state.processor.process_multiple_zip_files(
+                            uploaded_files, 
+                            progress_callback=progress_callback
+                        )
+                        
+                        if result['total_records_inserted'] > 0:
+                            st.session_state.data_loaded = True
+                            st.success(
+                                f"Successfully processed {result['processed_files']} files "
+                                f"with {result['total_records_inserted']} records stored in database"
+                            )
+                            if result['errors']:
+                                st.warning(f"Encountered {len(result['errors'])} errors during processing:")
+                                for error in result['errors'][:5]:  # Show first 5 errors
+                                    st.text(error)
                         else:
-                            st.error("No valid CSV data found in uploaded files")
+                            st.error("No valid data found in uploaded files")
+                            if result['errors']:
+                                st.error("Errors encountered:")
+                                for error in result['errors']:
+                                    st.text(error)
                             
                     except Exception as e:
                         st.error(f"Error processing files: {str(e)}")
         
-        # Data summary in sidebar
-        if st.session_state.data is not None:
-            st.header("Data Summary")
-            st.metric("Total Records", len(st.session_state.data))
-            unique_nodes = st.session_state.data['NODE'].nunique() if 'NODE' in st.session_state.data.columns else 0
-            st.metric("Unique Nodes", int(unique_nodes))
-            
-            if 'INTERVALSTARTTIME_GMT' in st.session_state.data.columns:
-                date_range = st.session_state.data['INTERVALSTARTTIME_GMT'].dt.date
-                st.metric("Date Range", f"{date_range.min()} to {date_range.max()}")
+        # Data summary from database
+        try:
+            summary = st.session_state.processor.get_data_summary_from_db()
+            if summary and summary.get('total_records', 0) > 0:
+                st.header("Data Summary")
+                st.metric("Total Records", f"{summary.get('total_records', 0):,}")
+                st.metric("Unique Nodes", summary.get('unique_nodes', 0))
+                
+                if summary.get('earliest_date') and summary.get('latest_date'):
+                    st.metric("Date Range", f"{summary['earliest_date'].date()} to {summary['latest_date'].date()}")
+                
+                st.session_state.data_loaded = True
+        except Exception as e:
+            st.error(f"Error loading data summary: {str(e)}")
     
     # Main content area
-    if st.session_state.data is None:
+    if not st.session_state.data_loaded:
         st.info("👆 Please upload CAISO LMP ZIP files to begin analysis")
         
         # Show sample questions that can be asked
@@ -123,10 +134,7 @@ def main():
                     if user_question:
                         with st.spinner("Analyzing your question..."):
                             try:
-                                answer = st.session_state.chatbot.process_question(
-                                    user_question, 
-                                    st.session_state.data
-                                )
+                                answer = st.session_state.chatbot.process_question(user_question)
                                 st.session_state.chat_history.append((user_question, answer))
                                 st.rerun()
                             except Exception as e:
@@ -144,145 +152,101 @@ def main():
             
             with col1:
                 st.subheader("Price Statistics")
-                if 'MW' in st.session_state.data.columns:
-                    price_stats = st.session_state.analytics.get_price_statistics(st.session_state.data)
-                    st.dataframe(price_stats)
+                try:
+                    price_stats = st.session_state.analytics.get_price_statistics()
+                    if not price_stats.empty:
+                        st.dataframe(price_stats)
+                    else:
+                        st.info("No price statistics available")
+                except Exception as e:
+                    st.error(f"Error loading price statistics: {str(e)}")
                 
                 st.subheader("Top 10 Lowest Price Hours")
-                cheapest_hours = st.session_state.analytics.get_cheapest_hours(st.session_state.data, 10)
-                if not cheapest_hours.empty:
-                    st.dataframe(cheapest_hours)
+                try:
+                    cheapest_hours = st.session_state.analytics.get_cheapest_hours(10)
+                    if not cheapest_hours.empty:
+                        st.dataframe(cheapest_hours)
+                    else:
+                        st.info("No cheapest hours data available")
+                except Exception as e:
+                    st.error(f"Error loading cheapest hours: {str(e)}")
             
             with col2:
                 st.subheader("Node Summary")
-                node_summary = st.session_state.analytics.get_node_summary(st.session_state.data)
-                st.dataframe(node_summary)
+                try:
+                    node_summary = st.session_state.analytics.get_node_summary()
+                    if not node_summary.empty:
+                        st.dataframe(node_summary)
+                    else:
+                        st.info("No node summary available")
+                except Exception as e:
+                    st.error(f"Error loading node summary: {str(e)}")
                 
                 st.subheader("Hourly Average Prices")
-                hourly_avg = st.session_state.analytics.get_hourly_averages(st.session_state.data)
-                if not hourly_avg.empty:
-                    st.line_chart(hourly_avg['MW'])
+                try:
+                    hourly_avg = st.session_state.analytics.get_hourly_averages()
+                    if not hourly_avg.empty:
+                        st.line_chart(hourly_avg['mw'])
+                    else:
+                        st.info("No hourly averages available")
+                except Exception as e:
+                    st.error(f"Error loading hourly averages: {str(e)}")
         
         with tab3:
-            st.header("Price Visualizations")
+            st.header("Basic Visualizations")
+            st.info("📊 Advanced time series visualizations with node selection will be available after full database integration. For now, please use the Quick Analytics and AI Chat features.")
             
-            # Time series chart
-            if 'INTERVALSTARTTIME_GMT' in st.session_state.data.columns and 'MW' in st.session_state.data.columns:
-                st.subheader("Price Time Series")
+            # Placeholder for future database-driven visualizations
+            try:
+                # Get sample data for basic chart
+                hourly_avg = st.session_state.analytics.get_hourly_averages()
+                if not hourly_avg.empty:
+                    st.subheader("Hourly Price Patterns")
+                    st.line_chart(hourly_avg.set_index('hour')['mw'])
                 
-                # Node selection for time series
-                available_nodes = st.session_state.data['NODE'].unique()[:10]  # Limit to first 10 nodes for performance
-                selected_nodes = st.multiselect(
-                    "Select nodes to display:",
-                    available_nodes,
-                    default=available_nodes[:3] if len(available_nodes) >= 3 else available_nodes
-                )
-                
-                if selected_nodes:
-                    filtered_data = st.session_state.data[st.session_state.data['NODE'].isin(selected_nodes)]
+                # Simple price statistics chart
+                price_stats = st.session_state.analytics.get_price_statistics()
+                if not price_stats.empty and len(price_stats) > 0:
+                    st.subheader("Average Price by Node (Top 10)")
+                    top_nodes = price_stats.head(10)
+                    st.bar_chart(top_nodes.set_index('node')['mean'])
                     
-                    fig = px.line(
-                        filtered_data,
-                        x='INTERVALSTARTTIME_GMT',
-                        y='MW',
-                        color='NODE',
-                        title='LMP Prices Over Time by Node'
-                    )
-                    fig.update_layout(
-                        xaxis_title="Time",
-                        yaxis_title="Price ($/MWh)",
-                        height=500
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                # Price distribution
-                st.subheader("Price Distribution")
-                fig_hist = px.histogram(
-                    st.session_state.data,
-                    x='MW',
-                    nbins=50,
-                    title='LMP Price Distribution'
-                )
-                fig_hist.update_layout(
-                    xaxis_title="Price ($/MWh)",
-                    yaxis_title="Frequency"
-                )
-                st.plotly_chart(fig_hist, use_container_width=True)
+            except Exception as e:
+                st.error(f"Error loading visualizations: {str(e)}")
         
         with tab4:
             st.header("Data Explorer")
             
-            # Filters
-            col1, col2, col3 = st.columns(3)
-            
-            selected_nodes_filter = []
-            date_range = None
-            price_range = None
+            # Basic data exploration with database queries
+            col1, col2 = st.columns(2)
             
             with col1:
-                if 'NODE' in st.session_state.data.columns:
-                    selected_nodes_filter = st.multiselect(
-                        "Filter by Node:",
-                        st.session_state.data['NODE'].unique(),
-                        default=[]
-                    )
+                st.subheader("Quick Data Samples")
+                
+                # Sample cheapest hours
+                try:
+                    sample_data = st.session_state.analytics.get_cheapest_hours(20)
+                    if not sample_data.empty:
+                        st.write("**20 Cheapest Hours:**")
+                        st.dataframe(sample_data, height=300)
+                    else:
+                        st.info("No data available")
+                except Exception as e:
+                    st.error(f"Error loading sample data: {str(e)}")
             
             with col2:
-                if 'INTERVALSTARTTIME_GMT' in st.session_state.data.columns:
-                    date_range = st.date_input(
-                        "Date Range:",
-                        value=(
-                            st.session_state.data['INTERVALSTARTTIME_GMT'].dt.date.min(),
-                            st.session_state.data['INTERVALSTARTTIME_GMT'].dt.date.max()
-                        ),
-                        min_value=st.session_state.data['INTERVALSTARTTIME_GMT'].dt.date.min(),
-                        max_value=st.session_state.data['INTERVALSTARTTIME_GMT'].dt.date.max()
-                    )
+                st.subheader("Node Statistics")
+                
+                try:
+                    node_stats = st.session_state.analytics.get_price_statistics()
+                    if not node_stats.empty:
+                        st.dataframe(node_stats, height=300)
+                    else:
+                        st.info("No node statistics available")
+                except Exception as e:
+                    st.error(f"Error loading node statistics: {str(e)}")
             
-            with col3:
-                if 'MW' in st.session_state.data.columns:
-                    price_range = st.slider(
-                        "Price Range ($/MWh):",
-                        min_value=float(st.session_state.data['MW'].min()),
-                        max_value=float(st.session_state.data['MW'].max()),
-                        value=(
-                            float(st.session_state.data['MW'].min()),
-                            float(st.session_state.data['MW'].max())
-                        )
-                    )
-            
-            # Apply filters
-            filtered_data = st.session_state.data.copy()
-            
-            if selected_nodes_filter:
-                filtered_data = filtered_data[filtered_data['NODE'].isin(selected_nodes_filter)]
-            
-            if 'INTERVALSTARTTIME_GMT' in filtered_data.columns and date_range is not None and len(date_range) == 2:
-                filtered_data = filtered_data[
-                    (filtered_data['INTERVALSTARTTIME_GMT'].dt.date >= date_range[0]) &
-                    (filtered_data['INTERVALSTARTTIME_GMT'].dt.date <= date_range[1])
-                ]
-            
-            if 'MW' in filtered_data.columns and price_range is not None:
-                filtered_data = filtered_data[
-                    (filtered_data['MW'] >= price_range[0]) &
-                    (filtered_data['MW'] <= price_range[1])
-                ]
-            
-            st.dataframe(
-                filtered_data,
-                use_container_width=True,
-                height=400
-            )
-            
-            # Download filtered data
-            csv = filtered_data.to_csv(index=False)
-            st.download_button(
-                label="Download Filtered Data as CSV",
-                data=csv,
-                file_name=f"caiso_lmp_filtered_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
+            st.info("🔧 Advanced filtering and data export features will be available after completing the full database integration. Use the AI Chat feature to query specific data subsets.")
 
 if __name__ == "__main__":
     main()

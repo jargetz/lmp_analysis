@@ -1,197 +1,434 @@
 import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
+from database import DatabaseManager
+import logging
 
 class LMPAnalytics:
-    """Core analytics functions for CAISO LMP data analysis"""
+    """Core analytics functions for CAISO LMP data analysis with PostgreSQL backend"""
     
     def __init__(self):
-        pass
+        self.db = DatabaseManager()
+        self.logger = logging.getLogger(__name__)
     
-    def get_cheapest_hours(self, df, n_hours, node=None, aggregate_nodes=None):
-        """Get the N cheapest hours overall or for specific node(s)"""
-        if df is None or df.empty:
+    def get_cheapest_hours(self, n_hours, node=None, aggregate_nodes=None, start_date=None, end_date=None):
+        """Get the N cheapest hours overall or for specific node(s) from database"""
+        try:
+            if aggregate_nodes and len(aggregate_nodes) > 1:
+                # Query for aggregated nodes
+                placeholders = ','.join(['%s'] * len(aggregate_nodes))
+                conditions = [f"node IN ({placeholders})"]
+                params = list(aggregate_nodes)
+                
+                if start_date:
+                    conditions.append("interval_start_time_gmt >= %s")
+                    params.append(start_date)
+                if end_date:
+                    conditions.append("interval_start_time_gmt <= %s") 
+                    params.append(end_date)
+                
+                where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+                
+                query = f"""
+                WITH aggregated_prices AS (
+                    SELECT 
+                        interval_start_time_gmt,
+                        AVG(mw) as mw,
+                        'Aggregated_{len(aggregate_nodes)}_nodes' as node
+                    FROM caiso.lmp_data 
+                    {where_clause}
+                    GROUP BY interval_start_time_gmt
+                )
+                SELECT interval_start_time_gmt, node, ROUND(mw::numeric, 2) as mw
+                FROM aggregated_prices
+                ORDER BY mw ASC
+                LIMIT %s
+                """
+                params.append(n_hours)
+                
+            else:
+                # Query for single node or all nodes
+                conditions = []
+                params = []
+                
+                if node:
+                    conditions.append("node = %s")
+                    params.append(node)
+                elif aggregate_nodes and len(aggregate_nodes) == 1:
+                    conditions.append("node = %s")
+                    params.append(aggregate_nodes[0])
+                    
+                if start_date:
+                    conditions.append("interval_start_time_gmt >= %s")
+                    params.append(start_date)
+                if end_date:
+                    conditions.append("interval_start_time_gmt <= %s")
+                    params.append(end_date)
+                
+                where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+                
+                query = f"""
+                SELECT 
+                    interval_start_time_gmt,
+                    node,
+                    ROUND(mw::numeric, 2) as mw
+                FROM caiso.lmp_data 
+                {where_clause}
+                ORDER BY mw ASC
+                LIMIT %s
+                """
+                params.append(n_hours)
+            
+            results = self.db.execute_query(query, params)
+            return pd.DataFrame(results) if results else pd.DataFrame()
+            
+        except Exception as e:
+            self.logger.error(f"Error getting cheapest hours: {str(e)}")
             return pd.DataFrame()
-        
-        working_df = df.copy()
-        
-        if node:
-            working_df = working_df[working_df['NODE'] == node]
-        elif aggregate_nodes:
-            working_df = working_df[working_df['NODE'].isin(aggregate_nodes)]
-            # Group by time and calculate mean price across selected nodes
-            working_df = working_df.groupby('INTERVALSTARTTIME_GMT').agg({
-                'MW': 'mean',
-                'NODE': lambda x: f"Aggregated_{len(aggregate_nodes)}_nodes"
-            }).reset_index()
-        
-        if working_df.empty:
-            return pd.DataFrame()
-        
-        # Sort by price and return top N
-        cheapest = working_df.nsmallest(n_hours, 'MW')
-        
-        return cheapest[['INTERVALSTARTTIME_GMT', 'NODE', 'MW']].round(2)
     
-    def get_lowest_congestion_hours(self, df, n_hours, during_cheap_hours=False):
-        """Get hours with lowest congestion component"""
-        if df is None or df.empty or 'MCC' not in df.columns:
+    def get_lowest_congestion_hours(self, n_hours, during_cheap_hours=False, start_date=None, end_date=None):
+        """Get hours with lowest congestion component from database"""
+        try:
+            conditions = ["mcc IS NOT NULL"]
+            params = []
+            
+            # Add date filters
+            if start_date:
+                conditions.append("interval_start_time_gmt >= %s")
+                params.append(start_date)
+            if end_date:
+                conditions.append("interval_start_time_gmt <= %s")
+                params.append(end_date)
+            
+            if during_cheap_hours:
+                # First get the 20% price threshold
+                threshold_query = f"""
+                SELECT PERCENTILE_CONT(0.2) WITHIN GROUP (ORDER BY mw) as cheap_threshold
+                FROM caiso.lmp_data 
+                WHERE {' AND '.join(conditions)}
+                """
+                threshold_result = self.db.execute_query(threshold_query, params, fetch_all=False)
+                
+                if threshold_result and isinstance(threshold_result, dict) and threshold_result.get('cheap_threshold'):
+                    conditions.append("mw <= %s")
+                    params.append(float(threshold_result['cheap_threshold']))
+            
+            where_clause = "WHERE " + " AND ".join(conditions)
+            
+            query = f"""
+            SELECT 
+                interval_start_time_gmt,
+                node,
+                ROUND(mw::numeric, 2) as mw,
+                ROUND(mcc::numeric, 2) as mcc
+            FROM caiso.lmp_data 
+            {where_clause}
+            ORDER BY mcc ASC
+            LIMIT %s
+            """
+            params.append(n_hours)
+            
+            results = self.db.execute_query(query, params)
+            return pd.DataFrame(results) if results else pd.DataFrame()
+            
+        except Exception as e:
+            self.logger.error(f"Error getting lowest congestion hours: {str(e)}")
             return pd.DataFrame()
-        
-        working_df = df.copy()
-        
-        if during_cheap_hours:
-            # First find the cheapest 20% of hours
-            cheap_threshold = working_df['MW'].quantile(0.2)
-            working_df = working_df[working_df['MW'] <= cheap_threshold]
-        
-        if working_df.empty:
-            return pd.DataFrame()
-        
-        # Sort by congestion component (MCC)
-        lowest_congestion = working_df.nsmallest(n_hours, 'MCC')
-        
-        columns = ['INTERVALSTARTTIME_GMT', 'NODE', 'MW', 'MCC']
-        return lowest_congestion[columns].round(2)
     
-    def get_nodes_by_price_percentile(self, df, percentile=10, period_start=None, period_end=None):
-        """Get nodes in the lowest X percentile of prices"""
-        if df is None or df.empty:
+    def get_nodes_by_price_percentile(self, percentile=10, period_start=None, period_end=None):
+        """Get nodes in the lowest X percentile of prices from database"""
+        try:
+            conditions = []
+            params = []
+            
+            if period_start:
+                conditions.append("interval_start_time_gmt >= %s")
+                params.append(period_start)
+            if period_end:
+                conditions.append("interval_start_time_gmt <= %s")
+                params.append(period_end)
+            
+            where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+            
+            query = f"""
+            WITH node_stats AS (
+                SELECT 
+                    node,
+                    AVG(mw) as avg_price,
+                    STDDEV(mw) as price_std,
+                    COUNT(*) as data_points
+                FROM caiso.lmp_data 
+                {where_clause}
+                GROUP BY node
+            ),
+            price_threshold AS (
+                SELECT PERCENTILE_CONT(%s / 100.0) WITHIN GROUP (ORDER BY avg_price) as threshold
+                FROM node_stats
+            )
+            SELECT 
+                n.node,
+                ROUND(n.avg_price::numeric, 2) as avg_price,
+                ROUND(n.price_std::numeric, 2) as price_std,
+                n.data_points
+            FROM node_stats n, price_threshold t
+            WHERE n.avg_price <= t.threshold
+            ORDER BY n.avg_price
+            """
+            params.append(percentile)
+            
+            results = self.db.execute_query(query, params)
+            return pd.DataFrame(results) if results else pd.DataFrame()
+            
+        except Exception as e:
+            self.logger.error(f"Error getting nodes by price percentile: {str(e)}")
             return pd.DataFrame()
-        
-        working_df = df.copy()
-        
-        # Filter by date range if provided
-        if period_start and 'INTERVALSTARTTIME_GMT' in working_df.columns:
-            working_df = working_df[working_df['INTERVALSTARTTIME_GMT'] >= period_start]
-        if period_end and 'INTERVALSTARTTIME_GMT' in working_df.columns:
-            working_df = working_df[working_df['INTERVALSTARTTIME_GMT'] <= period_end]
-        
-        # Calculate average price per node
-        node_avg_prices = working_df.groupby('NODE')['MW'].agg(['mean', 'std', 'count']).reset_index()
-        node_avg_prices.columns = ['NODE', 'avg_price', 'price_std', 'data_points']
-        
-        # Calculate percentile threshold
-        threshold = np.percentile(node_avg_prices['avg_price'], percentile)
-        
-        # Filter nodes below threshold
-        low_price_nodes = node_avg_prices[node_avg_prices['avg_price'] <= threshold]
-        low_price_nodes = low_price_nodes.sort_values('avg_price')
-        
-        return low_price_nodes.round(2)
     
-    def get_peak_vs_offpeak_analysis(self, df):
-        """Analyze peak vs off-peak pricing patterns"""
-        if df is None or df.empty or 'HOUR' not in df.columns:
+    def get_peak_vs_offpeak_analysis(self, start_date=None, end_date=None):
+        """Analyze peak vs off-peak pricing patterns from database"""
+        try:
+            conditions = []
+            params = []
+            
+            if start_date:
+                conditions.append("interval_start_time_gmt >= %s")
+                params.append(start_date)
+            if end_date:
+                conditions.append("interval_start_time_gmt <= %s")
+                params.append(end_date)
+            
+            where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+            
+            query = f"""
+            WITH period_stats AS (
+                SELECT 
+                    node,
+                    CASE WHEN hour_of_day BETWEEN 7 AND 22 THEN 'Peak' ELSE 'Off-Peak' END as period,
+                    AVG(mw) as avg_price
+                FROM caiso.lmp_data 
+                {where_clause}
+                GROUP BY node, CASE WHEN hour_of_day BETWEEN 7 AND 22 THEN 'Peak' ELSE 'Off-Peak' END
+            )
+            SELECT 
+                node,
+                ROUND(MAX(CASE WHEN period = 'Peak' THEN avg_price END)::numeric, 2) as peak,
+                ROUND(MAX(CASE WHEN period = 'Off-Peak' THEN avg_price END)::numeric, 2) as off_peak,
+                ROUND((MAX(CASE WHEN period = 'Peak' THEN avg_price END) - 
+                       MAX(CASE WHEN period = 'Off-Peak' THEN avg_price END))::numeric, 2) as peak_premium,
+                ROUND((((MAX(CASE WHEN period = 'Peak' THEN avg_price END) - 
+                         MAX(CASE WHEN period = 'Off-Peak' THEN avg_price END)) / 
+                         NULLIF(MAX(CASE WHEN period = 'Off-Peak' THEN avg_price END), 0)) * 100)::numeric, 2) as peak_premium_pct
+            FROM period_stats
+            GROUP BY node
+            HAVING COUNT(DISTINCT period) = 2
+            ORDER BY peak_premium_pct DESC
+            """
+            
+            results = self.db.execute_query(query, params)
+            return pd.DataFrame(results) if results else pd.DataFrame()
+            
+        except Exception as e:
+            self.logger.error(f"Error getting peak vs off-peak analysis: {str(e)}")
             return pd.DataFrame()
-        
-        # Define peak hours (typically 7 AM to 10 PM)
-        df_copy = df.copy()
-        df_copy['PERIOD'] = df_copy['HOUR'].apply(
-            lambda x: 'Peak' if 7 <= x <= 22 else 'Off-Peak'
-        )
-        
-        # Calculate statistics by period
-        period_stats = df_copy.groupby(['NODE', 'PERIOD'])['MW'].agg([
-            'mean', 'median', 'std', 'min', 'max', 'count'
-        ]).reset_index()
-        
-        # Pivot to compare peak vs off-peak
-        pivot_stats = period_stats.pivot(index='NODE', columns='PERIOD', values='mean').reset_index()
-        
-        if 'Peak' in pivot_stats.columns and 'Off-Peak' in pivot_stats.columns:
-            pivot_stats['Peak_Premium'] = pivot_stats['Peak'] - pivot_stats['Off-Peak']
-            pivot_stats['Peak_Premium_Pct'] = (pivot_stats['Peak_Premium'] / pivot_stats['Off-Peak']) * 100
-        
-        return pivot_stats.round(2)
     
-    def get_price_statistics(self, df):
-        """Get comprehensive price statistics"""
-        if df is None or df.empty:
+    def get_price_statistics(self, start_date=None, end_date=None):
+        """Get comprehensive price statistics from database"""
+        try:
+            conditions = []
+            params = []
+            
+            if start_date:
+                conditions.append("interval_start_time_gmt >= %s")
+                params.append(start_date)
+            if end_date:
+                conditions.append("interval_start_time_gmt <= %s")
+                params.append(end_date)
+            
+            where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+            
+            query = f"""
+            SELECT 
+                node,
+                COUNT(*) as count,
+                ROUND(AVG(mw)::numeric, 2) as mean,
+                ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY mw)::numeric, 2) as median,
+                ROUND(STDDEV(mw)::numeric, 2) as std,
+                ROUND(MIN(mw)::numeric, 2) as min,
+                ROUND(MAX(mw)::numeric, 2) as max,
+                ROUND(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY mw)::numeric, 2) as p25,
+                ROUND(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY mw)::numeric, 2) as p75,
+                ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY mw)::numeric, 2) as p95
+            FROM caiso.lmp_data 
+            {where_clause}
+            GROUP BY node
+            ORDER BY mean
+            """
+            
+            results = self.db.execute_query(query, params)
+            return pd.DataFrame(results) if results else pd.DataFrame()
+            
+        except Exception as e:
+            self.logger.error(f"Error getting price statistics: {str(e)}")
             return pd.DataFrame()
-        
-        stats = df.groupby('NODE')['MW'].agg([
-            'count', 'mean', 'median', 'std', 'min', 'max',
-            lambda x: np.percentile(x, 25),
-            lambda x: np.percentile(x, 75),
-            lambda x: np.percentile(x, 95)
-        ]).reset_index()
-        
-        stats.columns = ['NODE', 'count', 'mean', 'median', 'std', 'min', 'max', 'p25', 'p75', 'p95']
-        
-        return stats.round(2)
     
-    def get_hourly_averages(self, df):
-        """Get average prices by hour of day"""
-        if df is None or df.empty or 'HOUR' not in df.columns:
+    def get_hourly_averages(self, start_date=None, end_date=None):
+        """Get average prices by hour of day from database"""
+        try:
+            conditions = []
+            params = []
+            
+            if start_date:
+                conditions.append("interval_start_time_gmt >= %s")
+                params.append(start_date)
+            if end_date:
+                conditions.append("interval_start_time_gmt <= %s")
+                params.append(end_date)
+            
+            where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+            
+            query = f"""
+            SELECT 
+                hour_of_day as hour,
+                ROUND(AVG(mw)::numeric, 2) as mw,
+                ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY mw)::numeric, 2) as median,
+                ROUND(STDDEV(mw)::numeric, 2) as std
+            FROM caiso.lmp_data 
+            {where_clause}
+            GROUP BY hour_of_day
+            ORDER BY hour_of_day
+            """
+            
+            results = self.db.execute_query(query, params)
+            return pd.DataFrame(results) if results else pd.DataFrame()
+            
+        except Exception as e:
+            self.logger.error(f"Error getting hourly averages: {str(e)}")
             return pd.DataFrame()
-        
-        hourly_avg = df.groupby('HOUR')['MW'].agg(['mean', 'median', 'std']).reset_index()
-        hourly_avg.columns = ['HOUR', 'MW', 'median', 'std']
-        
-        return hourly_avg.round(2)
     
-    def get_node_summary(self, df):
-        """Get summary statistics for all nodes"""
-        if df is None or df.empty:
+    def get_node_summary(self, start_date=None, end_date=None):
+        """Get summary statistics for all nodes from database"""
+        try:
+            conditions = []
+            params = []
+            
+            if start_date:
+                conditions.append("interval_start_time_gmt >= %s")
+                params.append(start_date)
+            if end_date:
+                conditions.append("interval_start_time_gmt <= %s")
+                params.append(end_date)
+            
+            where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+            
+            query = f"""
+            SELECT 
+                node,
+                COUNT(*) as mw_count,
+                ROUND(AVG(mw)::numeric, 2) as mw_mean,
+                ROUND(MIN(mw)::numeric, 2) as mw_min,
+                ROUND(MAX(mw)::numeric, 2) as mw_max,
+                MIN(interval_start_time_gmt) as intervalstarttime_gmt_min,
+                MAX(interval_start_time_gmt) as intervalstarttime_gmt_max
+            FROM caiso.lmp_data 
+            {where_clause}
+            GROUP BY node
+            ORDER BY node
+            """
+            
+            results = self.db.execute_query(query, params)
+            return pd.DataFrame(results) if results else pd.DataFrame()
+            
+        except Exception as e:
+            self.logger.error(f"Error getting node summary: {str(e)}")
             return pd.DataFrame()
-        
-        summary = df.groupby('NODE').agg({
-            'MW': ['count', 'mean', 'min', 'max'],
-            'INTERVALSTARTTIME_GMT': ['min', 'max'] if 'INTERVALSTARTTIME_GMT' in df.columns else ['count', 'count']
-        }).round(2)
-        
-        # Flatten column names
-        summary.columns = ['_'.join(col).strip() for col in summary.columns.values]
-        summary = summary.reset_index()
-        
-        return summary
     
-    def detect_price_spikes(self, df, threshold_std=3):
-        """Detect price spikes using standard deviation threshold"""
-        if df is None or df.empty:
+    def detect_price_spikes(self, threshold_std=3, start_date=None, end_date=None):
+        """Detect price spikes using standard deviation threshold from database"""
+        try:
+            conditions = []
+            params = []
+            
+            if start_date:
+                conditions.append("interval_start_time_gmt >= %s")
+                params.append(start_date)
+            if end_date:
+                conditions.append("interval_start_time_gmt <= %s")
+                params.append(end_date)
+            
+            where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+            
+            query = f"""
+            WITH rolling_stats AS (
+                SELECT 
+                    interval_start_time_gmt,
+                    node,
+                    mw,
+                    AVG(mw) OVER (
+                        PARTITION BY node 
+                        ORDER BY interval_start_time_gmt 
+                        ROWS BETWEEN 23 PRECEDING AND CURRENT ROW
+                    ) as rolling_mean,
+                    STDDEV(mw) OVER (
+                        PARTITION BY node 
+                        ORDER BY interval_start_time_gmt 
+                        ROWS BETWEEN 23 PRECEDING AND CURRENT ROW
+                    ) as rolling_std
+                FROM caiso.lmp_data 
+                {where_clause}
+            )
+            SELECT 
+                interval_start_time_gmt,
+                node,
+                ROUND(mw::numeric, 2) as mw,
+                ROUND(rolling_mean::numeric, 2) as rolling_mean
+            FROM rolling_stats
+            WHERE mw > rolling_mean + %s * COALESCE(rolling_std, 0)
+              AND rolling_std IS NOT NULL
+              AND rolling_std > 0
+            ORDER BY interval_start_time_gmt DESC
+            """
+            params.append(threshold_std)
+            
+            results = self.db.execute_query(query, params)
+            return pd.DataFrame(results) if results else pd.DataFrame()
+            
+        except Exception as e:
+            self.logger.error(f"Error detecting price spikes: {str(e)}")
             return pd.DataFrame()
-        
-        df_copy = df.copy()
-        
-        # Calculate rolling statistics for each node
-        df_copy['rolling_mean'] = df_copy.groupby('NODE')['MW'].transform(
-            lambda x: x.rolling(window=24, min_periods=1).mean()
-        )
-        df_copy['rolling_std'] = df_copy.groupby('NODE')['MW'].transform(
-            lambda x: x.rolling(window=24, min_periods=1).std()
-        )
-        
-        # Identify spikes
-        df_copy['is_spike'] = (
-            df_copy['MW'] > df_copy['rolling_mean'] + threshold_std * df_copy['rolling_std']
-        )
-        
-        spikes = df_copy[df_copy['is_spike']]
-        
-        if spikes.empty:
-            return pd.DataFrame()
-        
-        return spikes[['INTERVALSTARTTIME_GMT', 'NODE', 'MW', 'rolling_mean']].round(2)
     
-    def get_congestion_analysis(self, df):
-        """Analyze congestion patterns if MCC data is available"""
-        if df is None or df.empty or 'MCC' not in df.columns:
+    def get_congestion_analysis(self, start_date=None, end_date=None):
+        """Analyze congestion patterns if MCC data is available from database"""
+        try:
+            conditions = ["mcc IS NOT NULL"]
+            params = []
+            
+            if start_date:
+                conditions.append("interval_start_time_gmt >= %s")
+                params.append(start_date)
+            if end_date:
+                conditions.append("interval_start_time_gmt <= %s")
+                params.append(end_date)
+            
+            where_clause = "WHERE " + " AND ".join(conditions)
+            
+            query = f"""
+            SELECT 
+                node,
+                ROUND(AVG(mcc)::numeric, 2) as avg_congestion,
+                ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY mcc)::numeric, 2) as median_congestion,
+                ROUND(STDDEV(mcc)::numeric, 2) as congestion_std,
+                ROUND(MIN(mcc)::numeric, 2) as min_congestion,
+                ROUND(MAX(mcc)::numeric, 2) as max_congestion,
+                COUNT(CASE WHEN mcc > 0 THEN 1 END) as positive_congestion_hours,
+                COUNT(*) as total_hours,
+                ROUND((COUNT(CASE WHEN mcc > 0 THEN 1 END) * 100.0 / COUNT(*))::numeric, 2) as congestion_frequency
+            FROM caiso.lmp_data 
+            {where_clause}
+            GROUP BY node
+            ORDER BY congestion_frequency DESC
+            """
+            
+            results = self.db.execute_query(query, params)
+            return pd.DataFrame(results) if results else pd.DataFrame()
+            
+        except Exception as e:
+            self.logger.error(f"Error getting congestion analysis: {str(e)}")
             return pd.DataFrame()
-        
-        congestion_stats = df.groupby('NODE')['MCC'].agg([
-            'mean', 'median', 'std', 'min', 'max',
-            lambda x: (x > 0).sum(),  # Hours with positive congestion
-            'count'
-        ]).reset_index()
-        
-        congestion_stats.columns = [
-            'NODE', 'avg_congestion', 'median_congestion', 'congestion_std',
-            'min_congestion', 'max_congestion', 'positive_congestion_hours', 'total_hours'
-        ]
-        
-        congestion_stats['congestion_frequency'] = (
-            congestion_stats['positive_congestion_hours'] / congestion_stats['total_hours']
-        ) * 100
-        
-        return congestion_stats.round(2)
