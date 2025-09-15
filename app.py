@@ -3,13 +3,12 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import io
-import zipfile
 import os
 
 from data_processor import CAISODataProcessor
 from analytics import LMPAnalytics
 from chatbot import LMPChatbot
+from s3_data_loader import S3DataLoader
 
 def main():
     st.set_page_config(
@@ -19,7 +18,7 @@ def main():
     )
     
     st.title("⚡ CAISO LMP Analysis Tool")
-    st.markdown("Upload CAISO Day Ahead LMP data and analyze electricity pricing with AI-powered insights.")
+    st.markdown("Analyze electricity pricing with AI-powered insights using comprehensive CAISO Day Ahead LMP data.")
     
     # Initialize session state (database-backed)
     if 'processor' not in st.session_state:
@@ -32,56 +31,53 @@ def main():
         st.session_state.chat_history = []
     if 'data_loaded' not in st.session_state:
         st.session_state.data_loaded = False
+    if 's3_loader' not in st.session_state:
+        st.session_state.s3_loader = S3DataLoader()
     
-    # Sidebar for data upload and basic info
+    # Sidebar for data management and info
     with st.sidebar:
-        st.header("Data Upload")
+        st.header("Data Status")
         
-        uploaded_files = st.file_uploader(
-            "Upload CAISO LMP ZIP files",
-            type=['zip'],
-            accept_multiple_files=True,
-            help="Upload ZIP files containing CAISO Day Ahead LMP CSV data"
-        )
-        
-        if uploaded_files:
-            if st.button("Process Files"):
-                with st.spinner("Processing CAISO data and storing in database..."):
-                    try:
-                        # Use the new database-backed processing method
+        # Check current data status
+        try:
+            data_status = st.session_state.s3_loader.check_data_freshness()
+            
+            if 'error' in data_status:
+                st.error(f"Error checking data: {data_status['error']}")
+            else:
+                if data_status['db_has_data']:
+                    st.success("✅ Data loaded and ready")
+                    st.metric("Records in Database", f"{data_status['db_records']:,}")
+                    if data_status['latest_db_date']:
+                        st.metric("Latest Data", data_status['latest_db_date'].strftime('%Y-%m-%d'))
+                    st.session_state.data_loaded = True
+                else:
+                    st.warning("⚠️ No data in database")
+                    st.info(f"Found {data_status['s3_files_available']} files in S3")
+                
+                # Data refresh option
+                if st.button("🔄 Refresh Data from S3", help="Load latest data from S3 bucket"):
+                    with st.spinner("Loading data from S3..."):
                         def progress_callback(current, total, message):
                             st.progress(current / total, text=message)
                         
-                        result = st.session_state.processor.process_multiple_zip_files(
-                            uploaded_files, 
-                            progress_callback=progress_callback
-                        )
+                        result = st.session_state.s3_loader.load_all_data(progress_callback)
                         
-                        if result['total_records_inserted'] > 0:
+                        if result['success']:
+                            st.success(f"✅ Loaded {result['processed_files']} files with {result['total_records']:,} records")
                             st.session_state.data_loaded = True
-                            st.success(
-                                f"Successfully processed {result['processed_files']} files "
-                                f"with {result['total_records_inserted']} records stored in database"
-                            )
-                            if result['errors']:
-                                st.warning(f"Encountered {len(result['errors'])} errors during processing:")
-                                for error in result['errors'][:5]:  # Show first 5 errors
-                                    st.text(error)
+                            st.rerun()
                         else:
-                            st.error("No valid data found in uploaded files")
-                            if result['errors']:
-                                st.error("Errors encountered:")
-                                for error in result['errors']:
-                                    st.text(error)
-                            
-                    except Exception as e:
-                        st.error(f"Error processing files: {str(e)}")
+                            st.error(f"❌ Failed to load data: {result.get('error', 'Unknown error')}")
+                
+        except Exception as e:
+            st.error(f"Error checking data status: {str(e)}")
         
-        # Data summary from database
+        # Data summary from database (if data exists)
         try:
             summary = st.session_state.processor.get_data_summary_from_db()
             if summary and summary.get('total_records', 0) > 0:
-                st.header("Data Summary")
+                st.subheader("Database Summary")
                 st.metric("Total Records", f"{summary.get('total_records', 0):,}")
                 st.metric("Unique Nodes", summary.get('unique_nodes', 0))
                 
@@ -94,16 +90,17 @@ def main():
     
     # Main content area
     if not st.session_state.data_loaded:
-        st.info("👆 Please upload CAISO LMP ZIP files to begin analysis")
+        st.info("👈 Click 'Refresh Data from S3' in the sidebar to load CAISO data")
         
         # Show sample questions that can be asked
-        st.header("Sample Analysis Questions")
+        st.header("What You Can Ask")
         st.markdown("""
-        Once you upload data, you can ask questions like:
+        Once data is loaded, you can ask questions like:
         - What are the 10 cheapest hours at node SLAP_PGE2?
-        - Show me the nodes with the lowest 10% of prices
+        - Show me the nodes with the lowest 10% of prices (B10)
         - Which nodes have the lowest congestion component during peak hours?
         - What are the average prices by hour of day?
+        - Show me the B6 and B8 hours (cheapest 6 and 8 hours) for each node
         - Find the hours with the highest price volatility
         """)
         
