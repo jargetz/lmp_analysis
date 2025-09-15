@@ -107,11 +107,11 @@ class S3DataLoader:
         total_records = 0
         errors = []
         
-        # Process files (70% of progress)
+        # Process files (70% of progress) - simplified progress display
         for i, file_key in enumerate(files):
             progress_percent = int((i / total_files) * 70)
             if progress_callback:
-                progress_callback(progress_percent, 100, f"Processing file {i+1}/{total_files}: {file_key}")
+                progress_callback(progress_percent, 100, f"Processing CAISO files... ({i+1}/{total_files})")
             
             result = self.download_and_process_file(file_key)
             
