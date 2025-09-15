@@ -5,6 +5,7 @@ import zipfile
 import io
 from typing import List, Dict, Any
 from data_processor import CAISODataProcessor
+from preprocessing import CAISOPreprocessor
 
 class S3DataLoader:
     """Handles loading CAISO LMP data from S3 bucket"""
@@ -17,6 +18,7 @@ class S3DataLoader:
             aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
         )
         self.processor = CAISODataProcessor()
+        self.preprocessor = CAISOPreprocessor()
         
     def list_caiso_files(self) -> List[str]:
         """List all CAISO LMP zip files in the S3 bucket"""
@@ -42,8 +44,9 @@ class S3DataLoader:
             # Simple check - see if we have any data from this source file
             query = "SELECT COUNT(*) as count FROM caiso.lmp_data WHERE source_file = %s LIMIT 1"
             result = self.processor.db.execute_query(query, (s3_key,))
-            if result and len(result) > 0:
-                return result[0].get('count', 0) > 0
+            if result and len(result) > 0 and isinstance(result[0], dict):
+                count_value = result[0].get('count', 0)
+                return count_value > 0
             return False
         except:
             return False
@@ -88,7 +91,11 @@ class S3DataLoader:
             return {'success': False, 'error': str(e)}
     
     def load_all_data(self, progress_callback=None) -> Dict[str, Any]:
-        """Load all CAISO data from S3 into the database"""
+        """Load all CAISO data from S3 into the database and run preprocessing"""
+        # Phase 1: Download and process raw data
+        if progress_callback:
+            progress_callback(0, 100, "Starting S3 data download and processing...")
+        
         files = self.list_caiso_files()
         
         if not files:
@@ -100,9 +107,11 @@ class S3DataLoader:
         total_records = 0
         errors = []
         
+        # Process files (70% of progress)
         for i, file_key in enumerate(files):
+            progress_percent = int((i / total_files) * 70)
             if progress_callback:
-                progress_callback(i, total_files, f"Processing {file_key}")
+                progress_callback(progress_percent, 100, f"Processing file {i+1}/{total_files}: {file_key}")
             
             result = self.download_and_process_file(file_key)
             
@@ -115,14 +124,37 @@ class S3DataLoader:
             else:
                 errors.append(f"{file_key}: {result.get('error', 'Unknown error')}")
         
-        return {
+        # Phase 2: Run preprocessing (B6/B8 calculations)
+        if progress_callback:
+            progress_callback(70, 100, "Starting B6/B8 preprocessing...")
+        
+        def preprocessing_progress(current, total, message):
+            # Map preprocessing progress to 70-100% range
+            preprocessing_percent = 70 + int((current / total) * 30)
+            if progress_callback:
+                progress_callback(preprocessing_percent, 100, f"Preprocessing: {message}")
+        
+        preprocessing_result = self.preprocessor.run_full_preprocessing(preprocessing_progress)
+        
+        # Combine results
+        final_result = {
             'success': True,
             'total_files': total_files,
             'processed_files': processed_files,
             'skipped_files': skipped_files,
             'total_records': total_records,
-            'errors': errors
+            'errors': errors,
+            'preprocessing': preprocessing_result
         }
+        
+        if progress_callback:
+            if preprocessing_result.get('success'):
+                progress_callback(100, 100, "✅ Data loading and preprocessing completed successfully!")
+            else:
+                progress_callback(100, 100, "⚠️ Data loaded but preprocessing had issues")
+                final_result['errors'].append(f"Preprocessing error: {preprocessing_result.get('error', 'Unknown preprocessing error')}")
+        
+        return final_result
     
     def check_data_freshness(self) -> Dict[str, Any]:
         """Check if database has recent data or needs refresh from S3"""

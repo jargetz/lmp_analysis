@@ -67,10 +67,29 @@ def main():
                         result = st.session_state.s3_loader.load_all_data(progress_callback)
                         
                         if result['success']:
-                            success_msg = f"✅ Processed {result['processed_files']} files, skipped {result.get('skipped_files', 0)} duplicates"
+                            # Show data loading results
+                            success_msg = f"✅ **Data Loading**: Processed {result['processed_files']} files, skipped {result.get('skipped_files', 0)} duplicates"
                             if result['total_records'] > 0:
                                 success_msg += f", added {result['total_records']:,} new records"
                             st.success(success_msg)
+                            
+                            # Show preprocessing results
+                            preprocessing = result.get('preprocessing', {})
+                            if preprocessing.get('success'):
+                                preprocess_msg = f"✅ **B6/B8 Preprocessing**: Processed {preprocessing.get('processed_dates', 0)} days"
+                                preprocess_msg += f", created {preprocessing.get('total_b6_records', 0)} B6 and {preprocessing.get('total_b8_records', 0)} B8 records"
+                                st.success(preprocess_msg)
+                            else:
+                                st.warning(f"⚠️ **Preprocessing Issues**: {preprocessing.get('error', 'Unknown preprocessing error')}")
+                            
+                            # Show any errors
+                            if result.get('errors'):
+                                st.warning(f"⚠️ **Encountered {len(result['errors'])} errors**:")
+                                for error in result['errors'][:3]:  # Show first 3 errors
+                                    st.text(f"• {error}")
+                                if len(result['errors']) > 3:
+                                    st.text(f"... and {len(result['errors']) - 3} more errors")
+                            
                             st.session_state.data_loaded = True
                             st.rerun()
                         else:
