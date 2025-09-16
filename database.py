@@ -74,7 +74,7 @@ class DatabaseManager:
                 'DATE': 'date_only'
             }
             
-            # Only keep columns that exist in the dataframe
+            # Only keep columns that exist in the dataframe and rename them
             existing_columns = {k: v for k, v in column_mapping.items() if k in df_clean.columns}
             df_clean = df_clean.rename(columns=existing_columns)
             
@@ -82,8 +82,17 @@ class DatabaseManager:
             if 'date_only' in df_clean.columns:
                 df_clean['date_only'] = pd.to_datetime(df_clean['date_only']).dt.date
             
+            # Define expected columns for the database table
+            expected_columns = [
+                'interval_start_time_gmt', 'node', 'mw', 'mcc', 'mlc', 'pos',
+                'hour_of_day', 'day_of_week', 'date_only', 'source_file'
+            ]
+            
+            # Keep only columns that should be in the database
+            df_final = df_clean[[col for col in expected_columns if col in df_clean.columns]]
+            
             # Use to_sql for efficient bulk insert
-            df_clean.to_sql(
+            df_final.to_sql(
                 'lmp_data', 
                 self.engine, 
                 schema='caiso',
@@ -92,7 +101,7 @@ class DatabaseManager:
                 method='multi'
             )
             
-            return len(df_clean)
+            return len(df_final)
             
         except Exception as e:
             self.logger.error(f"Error bulk inserting LMP data: {str(e)}")
