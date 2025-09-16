@@ -204,7 +204,7 @@ class LMPChatbot:
         summaries = {
             'cheapest_hours': f"Found {len(df)} cheapest hours. The lowest price was ${df['mw'].min():.2f}/MWh at {df.iloc[0]['node'] if 'node' in df.columns else 'multiple nodes'}.",
             
-            'price_percentile': f"Found {len(df)} nodes in the requested price percentile. Average price range: ${df['avg_price'].min():.2f} - ${df['avg_price'].max():.2f}/MWh.",
+            'price_percentile': f"Found {len(df)} nodes in the requested price percentile. Price range: ${df['mw'].min():.2f} - ${df['mw'].max():.2f}/MWh." if 'mw' in df.columns else f"Found {len(df)} nodes in the requested price percentile.",
             
             'congestion_analysis': f"Analyzed {len(df)} hours with congestion data. Lowest congestion was ${df['mcc'].min():.2f}/MWh.",
             
@@ -269,13 +269,27 @@ class LMPChatbot:
         """Fallback analysis when OpenAI is not available"""
         question_lower = question.lower()
         
-        # Simple keyword-based intent detection
+        # Simple keyword-based intent detection with better defaults
         if any(word in question_lower for word in ['cheapest', 'lowest', 'minimum']):
-            return {
-                'analysis_type': 'cheapest_hours',
-                'parameters': {'n_hours': 10},
-                'confidence': 0.7
-            }
+            # Check if they want hourly patterns vs specific hours vs general stats
+            if any(word in question_lower for word in ['hour', 'operational hour']) and any(word in question_lower for word in ['average', 'mean', 'across']):
+                return {
+                    'analysis_type': 'hourly_patterns',  # This gives average by hour of day
+                    'parameters': {},
+                    'confidence': 0.8
+                }
+            elif any(word in question_lower for word in ['average', 'mean', 'across']):
+                return {
+                    'analysis_type': 'price_statistics', 
+                    'parameters': {'aggregate': True},
+                    'confidence': 0.7
+                }
+            else:
+                return {
+                    'analysis_type': 'cheapest_hours',
+                    'parameters': {'n_hours': 10},
+                    'confidence': 0.7
+                }
         elif any(word in question_lower for word in ['percentile', '%']):
             return {
                 'analysis_type': 'price_percentile',
