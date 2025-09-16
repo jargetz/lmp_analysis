@@ -88,7 +88,7 @@ class DatabaseManager:
             # Define expected columns for the database table
             expected_columns = [
                 'interval_start_time_gmt', 'node', 'mw', 'mcc', 'mlc', 'pos',
-                'hour_of_day', 'day_of_week', 'date_only', 'source_file'
+                'hour_of_day', 'day_of_week', 'date_only', 'source_file', 'opr_hr', 'opr_dt'
             ]
             
             # Keep only columns that should be in the database

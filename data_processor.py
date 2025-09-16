@@ -109,6 +109,10 @@ class CAISODataProcessor:
                 column_mapping[col] = 'MLC'
             elif 'POS' in col_upper:
                 column_mapping[col] = 'POS'
+            elif col_upper == 'OPR_HR':  # Preserve original operational hour
+                column_mapping[col] = 'OPR_HR'
+            elif col_upper == 'OPR_DT':  # Preserve original operational date
+                column_mapping[col] = 'OPR_DT'
                 
         # Apply column mapping
         df_renamed = df.rename(columns=column_mapping)
