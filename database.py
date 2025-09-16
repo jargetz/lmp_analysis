@@ -66,7 +66,6 @@ class DatabaseManager:
             
             # Rename columns to match database schema
             column_mapping = {
-                'INTERVALSTARTTIME_GMT': 'interval_start_time_gmt',
                 'NODE': 'node',
                 'MW': 'mw',
                 'MCC': 'mcc',
@@ -87,7 +86,7 @@ class DatabaseManager:
             
             # Define expected columns for the database table
             expected_columns = [
-                'interval_start_time_gmt', 'node', 'mw', 'mcc', 'mlc', 'pos',
+                'node', 'mw', 'mcc', 'mlc', 'pos',
                 'hour_of_day', 'day_of_week', 'date_only', 'source_file', 'opr_hr', 'opr_dt'
             ]
             
@@ -116,8 +115,8 @@ class DatabaseManager:
         SELECT 
             COUNT(*) as total_records,
             COUNT(DISTINCT node) as unique_nodes,
-            MIN(interval_start_time_gmt) as earliest_date,
-            MAX(interval_start_time_gmt) as latest_date,
+            MIN(opr_dt) as earliest_date,
+            MAX(opr_dt) as latest_date,
             AVG(mw) as avg_price,
             MIN(mw) as min_price,
             MAX(mw) as max_price
@@ -143,18 +142,19 @@ class DatabaseManager:
             params.append(node)
         
         if start_date:
-            conditions.append("interval_start_time_gmt >= %s")
+            conditions.append("opr_dt >= %s")
             params.append(start_date)
             
         if end_date:
-            conditions.append("interval_start_time_gmt <= %s")
+            conditions.append("opr_dt <= %s")
             params.append(end_date)
         
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
         
         query = f"""
         SELECT 
-            interval_start_time_gmt,
+            opr_dt as operational_date,
+            opr_hr as operational_hour,
             node,
             mw,
             mcc,
@@ -181,11 +181,11 @@ class DatabaseManager:
             params.append(node)
             
         if start_date:
-            conditions.append("interval_start_time_gmt >= %s")
+            conditions.append("opr_dt >= %s")
             params.append(start_date)
             
         if end_date:
-            conditions.append("interval_start_time_gmt <= %s")
+            conditions.append("opr_dt <= %s")
             params.append(end_date)
         
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
@@ -217,11 +217,11 @@ class DatabaseManager:
         params = []
         
         if start_date:
-            conditions.append("interval_start_time_gmt >= %s")
+            conditions.append("opr_dt >= %s")
             params.append(start_date)
             
         if end_date:
-            conditions.append("interval_start_time_gmt <= %s")
+            conditions.append("opr_dt <= %s")
             params.append(end_date)
         
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
@@ -252,18 +252,20 @@ class DatabaseManager:
             WITH ranked_hours AS (
                 SELECT 
                     node,
-                    interval_start_time_gmt,
+                    opr_dt,
+                    opr_hr,
                     mw,
                     ROW_NUMBER() OVER (PARTITION BY node ORDER BY mw ASC) as rn
                 FROM caiso.lmp_data 
                 WHERE date_only = %s
             )
-            INSERT INTO caiso.cheapest_hours_b6 (node, interval_start_time_gmt, mw, rank_position, date_computed)
-            SELECT node, interval_start_time_gmt, mw, rn, %s
+            INSERT INTO caiso.cheapest_hours_b6 (node, opr_dt, opr_hr, mw, rank_position, date_computed)
+            SELECT node, opr_dt, opr_hr, mw, rn, %s
             FROM ranked_hours 
             WHERE rn <= 6
             ON CONFLICT (node, date_computed, rank_position) DO UPDATE SET
-                interval_start_time_gmt = EXCLUDED.interval_start_time_gmt,
+                opr_dt = EXCLUDED.opr_dt,
+                opr_hr = EXCLUDED.opr_hr,
                 mw = EXCLUDED.mw,
                 created_at = CURRENT_TIMESTAMP
             """
@@ -273,18 +275,20 @@ class DatabaseManager:
             WITH ranked_hours AS (
                 SELECT 
                     node,
-                    interval_start_time_gmt,
+                    opr_dt,
+                    opr_hr,
                     mw,
                     ROW_NUMBER() OVER (PARTITION BY node ORDER BY mw ASC) as rn
                 FROM caiso.lmp_data 
                 WHERE date_only = %s
             )
-            INSERT INTO caiso.cheapest_hours_b8 (node, interval_start_time_gmt, mw, rank_position, date_computed)
-            SELECT node, interval_start_time_gmt, mw, rn, %s
+            INSERT INTO caiso.cheapest_hours_b8 (node, opr_dt, opr_hr, mw, rank_position, date_computed)
+            SELECT node, opr_dt, opr_hr, mw, rn, %s
             FROM ranked_hours 
             WHERE rn <= 8
             ON CONFLICT (node, date_computed, rank_position) DO UPDATE SET
-                interval_start_time_gmt = EXCLUDED.interval_start_time_gmt,
+                opr_dt = EXCLUDED.opr_dt,
+                opr_hr = EXCLUDED.opr_hr,
                 mw = EXCLUDED.mw,
                 created_at = CURRENT_TIMESTAMP
             """
@@ -307,11 +311,11 @@ class DatabaseManager:
         params = []
         
         if start_date:
-            conditions.append("interval_start_time_gmt >= %s")
+            conditions.append("opr_dt >= %s")
             params.append(start_date)
             
         if end_date:
-            conditions.append("interval_start_time_gmt <= %s")
+            conditions.append("opr_dt <= %s")
             params.append(end_date)
         
         if not conditions:
