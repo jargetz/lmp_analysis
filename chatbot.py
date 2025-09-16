@@ -81,7 +81,7 @@ class LMPChatbot:
         
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
@@ -232,7 +232,7 @@ class LMPChatbot:
                     'total_records': 0,
                     'unique_nodes': 0,
                     'date_range': 'No data',
-                    'columns': ['interval_start_time_gmt', 'node', 'mw', 'mcc', 'mlc', 'pos'],
+                    'columns': ['interval_start_time_gmt', 'node', 'mw'],
                     'sample_nodes': []
                 }
             
@@ -247,11 +247,14 @@ class LMPChatbot:
             if summary.get('earliest_date') and summary.get('latest_date'):
                 date_range = f"{summary['earliest_date']} to {summary['latest_date']}"
             
+            # Use known columns from database schema
+            columns = ['interval_start_time_gmt', 'node', 'mw', 'mcc', 'mlc', 'pos', 'opr_hr', 'opr_dt']
+            
             return {
                 'total_records': summary.get('total_records', 0),
                 'unique_nodes': summary.get('unique_nodes', 0),
                 'date_range': date_range,
-                'columns': ['interval_start_time_gmt', 'node', 'mw', 'mcc', 'mlc', 'pos'],
+                'columns': columns,
                 'sample_nodes': nodes
             }
             
@@ -261,7 +264,7 @@ class LMPChatbot:
                 'total_records': 0,
                 'unique_nodes': 0,
                 'date_range': 'Error retrieving data',
-                'columns': ['interval_start_time_gmt', 'node', 'mw', 'mcc', 'mlc', 'pos'],
+                'columns': ['interval_start_time_gmt', 'node', 'mw'],
                 'sample_nodes': []
             }
     
