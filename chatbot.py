@@ -382,7 +382,7 @@ class LMPChatbot:
                     'total_records': 0,
                     'unique_nodes': 0,
                     'date_range': 'No data',
-                    'columns': ['interval_start_time_gmt', 'node', 'mw'],
+                    'columns': ['operational_date', 'operational_hour', 'node', 'mw'],
                     'sample_nodes': []
                 }
             
@@ -398,7 +398,7 @@ class LMPChatbot:
                 date_range = f"{summary['earliest_date']} to {summary['latest_date']}"
             
             # Use known columns from database schema
-            columns = ['interval_start_time_gmt', 'node', 'mw', 'mcc', 'mlc', 'pos', 'opr_hr', 'opr_dt']
+            columns = ['operational_date', 'operational_hour', 'node', 'mw', 'mcc', 'mlc', 'pos']
             
             return {
                 'total_records': summary.get('total_records', 0),
@@ -414,7 +414,7 @@ class LMPChatbot:
                 'total_records': 0,
                 'unique_nodes': 0,
                 'date_range': 'Error retrieving data',
-                'columns': ['interval_start_time_gmt', 'node', 'mw'],
+                'columns': ['operational_date', 'operational_hour', 'node', 'mw'],
                 'sample_nodes': []
             }
     

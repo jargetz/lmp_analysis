@@ -186,7 +186,7 @@ def main():
                                 if not cheapest.empty:
                                     answer += f"**10 Cheapest Individual Hours:**\n"
                                     for _, row in cheapest.head(10).iterrows():
-                                        answer += f"{row['interval_start_time_gmt']}: ${row['mw']:.2f}/MWh at {row['node']}\n"
+                                        answer += f"{row['operational_date']} Hour {row['operational_hour']}: ${row['mw']:.2f}/MWh at {row['node']}\n"
                                 else:
                                     answer += "No data available"
                         except Exception as e:

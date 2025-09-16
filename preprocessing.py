@@ -20,7 +20,8 @@ class CAISOPreprocessor:
                 id SERIAL PRIMARY KEY,
                 node VARCHAR(100) NOT NULL,
                 date_only DATE NOT NULL,
-                interval_start_time_gmt TIMESTAMP NOT NULL,
+                opr_dt DATE NOT NULL,
+                opr_hr SMALLINT NOT NULL,
                 mw DECIMAL(10,2) NOT NULL,
                 hour_rank INTEGER NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -37,7 +38,8 @@ class CAISOPreprocessor:
                 id SERIAL PRIMARY KEY,
                 node VARCHAR(100) NOT NULL,
                 date_only DATE NOT NULL,
-                interval_start_time_gmt TIMESTAMP NOT NULL,
+                opr_dt DATE NOT NULL,
+                opr_hr SMALLINT NOT NULL,
                 mw DECIMAL(10,2) NOT NULL,
                 hour_rank INTEGER NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -163,10 +165,10 @@ class CAISOPreprocessor:
             for node in nodes:
                 # Get all hours for this node and date, ordered by price
                 hours_query = """
-                SELECT interval_start_time_gmt, mw
+                SELECT opr_dt, opr_hr, mw
                 FROM caiso.lmp_data 
                 WHERE date_only = %s AND node = %s
-                ORDER BY mw ASC, interval_start_time_gmt ASC
+                ORDER BY mw ASC, opr_dt ASC, opr_hr ASC
                 """
                 hours_result = self.db.execute_query(hours_query, (target_date, node))
                 
@@ -194,7 +196,8 @@ class CAISOPreprocessor:
                     b6_records.append({
                         'node': node,
                         'date_only': target_date,
-                        'interval_start_time_gmt': hour_data['interval_start_time_gmt'],
+                        'opr_dt': hour_data['opr_dt'],
+                        'opr_hr': hour_data['opr_hr'],
                         'mw': hour_data['mw'],
                         'hour_rank': rank
                     })
@@ -208,7 +211,8 @@ class CAISOPreprocessor:
                     b8_records.append({
                         'node': node,
                         'date_only': target_date,
-                        'interval_start_time_gmt': hour_data['interval_start_time_gmt'],
+                        'opr_dt': hour_data['opr_dt'],
+                        'opr_hr': hour_data['opr_hr'],
                         'mw': hour_data['mw'],
                         'hour_rank': rank
                     })
@@ -248,8 +252,8 @@ class CAISOPreprocessor:
         
         try:
             query = """
-            INSERT INTO caiso.b6_hours (node, date_only, interval_start_time_gmt, mw, hour_rank)
-            VALUES (%(node)s, %(date_only)s, %(interval_start_time_gmt)s, %(mw)s, %(hour_rank)s)
+            INSERT INTO caiso.b6_hours (node, date_only, opr_dt, opr_hr, mw, hour_rank)
+            VALUES (%(node)s, %(date_only)s, %(opr_dt)s, %(opr_hr)s, %(mw)s, %(hour_rank)s)
             ON CONFLICT (node, date_only, hour_rank) DO NOTHING
             """
             
@@ -272,8 +276,8 @@ class CAISOPreprocessor:
             
         try:
             query = """
-            INSERT INTO caiso.b8_hours (node, date_only, interval_start_time_gmt, mw, hour_rank)
-            VALUES (%(node)s, %(date_only)s, %(interval_start_time_gmt)s, %(mw)s, %(hour_rank)s)
+            INSERT INTO caiso.b8_hours (node, date_only, opr_dt, opr_hr, mw, hour_rank)
+            VALUES (%(node)s, %(date_only)s, %(opr_dt)s, %(opr_hr)s, %(mw)s, %(hour_rank)s)
             ON CONFLICT (node, date_only, hour_rank) DO NOTHING
             """
             
