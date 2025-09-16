@@ -114,6 +114,8 @@ class LMPChatbot:
         analysis_type = analysis_result.get('analysis_type', 'general_query')
         params = analysis_result.get('parameters', {})
         
+        self.logger.info(f"Executing analysis type: {analysis_type} with params: {params}")
+        
         try:
             if analysis_type == 'cheapest_hours':
                 n_hours = params.get('n_hours', 10)
@@ -135,6 +137,8 @@ class LMPChatbot:
                 operational_date = params.get('operational_date')
                 operational_hour = params.get('operational_hour')
                 
+                self.logger.info(f"Executing cheapest_nodes_by_operational_hour with n_nodes={n_nodes}, operational_date={operational_date}, operational_hour={operational_hour}")
+                
                 # Parse operational_date if it's a string (from time_period)
                 if not operational_date and 'time_period' in params:
                     time_period = params.get('time_period', '')
@@ -152,11 +156,16 @@ class LMPChatbot:
                             except:
                                 pass
                 
-                return self.analytics.get_cheapest_nodes_by_hour(
+                self.logger.info(f"Final parameters: operational_date={operational_date}, operational_hour={operational_hour}")
+                
+                result = self.analytics.get_cheapest_nodes_by_hour(
                     n_nodes=n_nodes,
                     operational_date=operational_date, 
                     operational_hour=operational_hour
                 )
+                
+                self.logger.info(f"Result from get_cheapest_nodes_by_hour: {result.columns.tolist() if hasattr(result, 'columns') else 'No columns'}")
+                return result
             
             elif analysis_type == 'price_percentile':
                 percentile = params.get('percentile', 10)
@@ -305,27 +314,62 @@ class LMPChatbot:
         if df.empty:
             return "No results found for your query."
         
-        summaries = {
-            'cheapest_hours': f"Found {len(df)} cheapest hours. The lowest price was ${df['mw'].min():.2f}/MWh at {df.iloc[0]['node']}." if 'mw' in df.columns and len(df) > 0 else f"Found {len(df)} results for cheapest hours analysis.",
+        # Use lazy evaluation to avoid KeyErrors from accessing columns that don't exist
+        if analysis_type == 'cheapest_hours':
+            if 'mw' in df.columns and len(df) > 0:
+                return f"Found {len(df)} cheapest hours. The lowest price was ${df['mw'].min():.2f}/MWh at {df.iloc[0]['node']}."
+            else:
+                return f"Found {len(df)} results for cheapest hours analysis."
+                
+        elif analysis_type == 'cheapest_operational_hours':
+            if len(df) > 0 and 'opr_hr' in df.columns and 'avg_price' in df.columns:
+                return f"Found {len(df)} cheapest operational hours. Hour {df.iloc[0]['opr_hr']} is cheapest with average price ${df.iloc[0]['avg_price']:.2f}/MWh across {df.iloc[0]['unique_nodes']} nodes."
+            else:
+                return f"Found {len(df)} operational hours analysis results."
+                
+        elif analysis_type == 'cheapest_nodes_by_operational_hour':
+            if 'mw' in df.columns and len(df) > 0:
+                return f"Found {len(df)} cheapest nodes for the specified date and hour. The lowest price was ${df['mw'].min():.2f}/MWh at {df.iloc[0]['node']} on {df.iloc[0]['operational_date']}."
+            else:
+                return f"Found {len(df)} nodes for the specified operational hour."
+                
+        elif analysis_type == 'price_percentile':
+            summary = f"Found {len(df)} nodes in the requested price percentile."
+            if 'mw' in df.columns:
+                summary += f" Price range: ${df['mw'].min():.2f} - ${df['mw'].max():.2f}/MWh."
+            return summary
             
-            'cheapest_operational_hours': f"Found {len(df)} cheapest operational hours. Hour {df.iloc[0]['opr_hr']} is cheapest with average price ${df.iloc[0]['avg_price']:.2f}/MWh across {df.iloc[0]['unique_nodes']} nodes." if len(df) > 0 and 'opr_hr' in df.columns else f"Found {len(df)} operational hours analysis results.",
+        elif analysis_type == 'congestion_analysis':
+            summary = f"Analyzed {len(df)} hours with congestion data."
+            if 'mcc' in df.columns:
+                summary += f" Lowest congestion was ${df['mcc'].min():.2f}/MWh."
+            else:
+                summary += " (Congestion data not available)"
+            return summary
             
-            'price_percentile': f"Found {len(df)} nodes in the requested price percentile." + (f" Price range: ${df['mw'].min():.2f} - ${df['mw'].max():.2f}/MWh." if 'mw' in df.columns else ""),
+        elif analysis_type == 'peak_analysis':
+            return f"Peak vs off-peak analysis for {len(df)} nodes. Average peak premium varies significantly across nodes."
             
-            'congestion_analysis': f"Analyzed {len(df)} hours with congestion data." + (f" Lowest congestion was ${df['mcc'].min():.2f}/MWh." if 'mcc' in df.columns else " (Congestion data not available)"),
+        elif analysis_type == 'price_statistics':
+            summary = f"Price statistics for {len(df)} records."
+            if 'mw' in df.columns:
+                summary += f" Price range: ${df['mw'].min():.2f} - ${df['mw'].max():.2f}/MWh."
+            return summary
             
-            'peak_analysis': f"Peak vs off-peak analysis for {len(df)} nodes. Average peak premium varies significantly across nodes.",
+        elif analysis_type == 'hourly_patterns':
+            summary = f"Hourly price patterns show data for {len(df)} time periods."
+            if 'mw' in df.columns:
+                summary += f" Price range: ${df['mw'].min():.2f} to ${df['mw'].max():.2f}/MWh."
+            return summary
             
-            'price_statistics': f"Price statistics for {len(df)} records." + (f" Price range: ${df['mw'].min():.2f} - ${df['mw'].max():.2f}/MWh." if 'mw' in df.columns else ""),
+        elif analysis_type == 'price_spikes':
+            return f"Detected {len(df)} price spike events across the dataset."
             
-            'hourly_patterns': f"Hourly price patterns show data for {len(df)} time periods." + (f" Price range: ${df['mw'].min():.2f} to ${df['mw'].max():.2f}/MWh." if 'mw' in df.columns else ""),
+        elif analysis_type == 'node_comparison':
+            return f"Compared statistics across {len(df)} nodes."
             
-            'price_spikes': f"Detected {len(df)} price spike events across the dataset.",
-            
-            'node_comparison': f"Compared statistics across {len(df)} nodes.",
-        }
-        
-        return summaries.get(analysis_type, f"Analysis completed with {len(df)} results.")
+        else:
+            return f"Analysis completed with {len(df)} results."
     
     def _get_data_context_from_db(self):
         """Get context information about the dataset from database"""
