@@ -18,9 +18,11 @@ class LMPChatbot:
         
     def process_question(self, question):
         """Process a natural language question about LMP data from database"""
+        analysis_result = None
         try:
             # First, analyze the question to understand intent
             analysis_result = self._analyze_question_intent(question)
+            self.logger.info(f"Question analysis result: {analysis_result}")
             
             # Execute the appropriate analysis
             result = self._execute_analysis(analysis_result)
@@ -32,6 +34,7 @@ class LMPChatbot:
             
         except Exception as e:
             self.logger.error(f"Error processing question: {str(e)}")
+            self.logger.error(f"Analysis result was: {analysis_result}")
             return f"I encountered an error processing your question: {str(e)}. Please try rephrasing your question or check if the required data is available."
     
     def _analyze_question_intent(self, question):
@@ -128,7 +131,8 @@ class LMPChatbot:
                     if result.empty:
                         return pd.DataFrame(), "Congestion data (MCC) not available in this dataset"
                     return result
-                except Exception:
+                except Exception as e:
+                    self.logger.error(f"Congestion analysis failed: {str(e)}")
                     return pd.DataFrame(), "Congestion data (MCC) not available in this dataset"
             
             elif analysis_type == 'peak_analysis':
