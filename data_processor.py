@@ -97,8 +97,10 @@ class CAISODataProcessor:
             col_upper = col.upper()
             if 'INTERVALSTARTTIME' in col_upper and 'GMT' in col_upper:
                 column_mapping[col] = 'INTERVALSTARTTIME_GMT'
-            elif 'NODE' in col_upper and 'ID' in col_upper:
+            elif col_upper == 'NODE':  # Exact match for NODE
                 column_mapping[col] = 'NODE'
+            elif 'NODE' in col_upper and 'ID' in col_upper:
+                column_mapping[col] = 'NODE_ID'  # Map NODE_ID separately
             elif col_upper == 'MW' or 'PRICE' in col_upper:
                 column_mapping[col] = 'MW'
             elif 'MCC' in col_upper or 'CONGESTION' in col_upper:
@@ -107,8 +109,15 @@ class CAISODataProcessor:
                 column_mapping[col] = 'MLC'
             elif 'POS' in col_upper:
                 column_mapping[col] = 'POS'
+                
+        # Apply column mapping
+        df_renamed = df.rename(columns=column_mapping)
         
-        return df.rename(columns=column_mapping)
+        # Handle NODE vs NODE_ID conflict: keep only NODE
+        if 'NODE' in df_renamed.columns and 'NODE_ID' in df_renamed.columns:
+            df_renamed = df_renamed.drop(columns=['NODE_ID'])
+            
+        return df_renamed
     
     def _parse_datetime(self, df):
         """Parse datetime columns"""

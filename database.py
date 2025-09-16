@@ -61,6 +61,9 @@ class DatabaseManager:
             # Prepare the dataframe
             df_clean = df.copy()
             
+            # CRITICAL FIX: Remove duplicate columns that cause to_sql errors
+            df_clean = df_clean.loc[:, ~df_clean.columns.duplicated()]
+            
             # Rename columns to match database schema
             column_mapping = {
                 'INTERVALSTARTTIME_GMT': 'interval_start_time_gmt',
