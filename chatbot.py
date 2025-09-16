@@ -48,9 +48,12 @@ class LMPChatbot:
         Analyze the user's question and determine what type of analysis they want. Respond with JSON in this exact format:
         
         {
-            "analysis_type": "one of: cheapest_hours, cheapest_operational_hours, price_percentile, congestion_analysis, peak_analysis, price_statistics, hourly_patterns, price_spikes, node_comparison, general_query",
+            "analysis_type": "one of: cheapest_hours, cheapest_operational_hours, cheapest_nodes_by_operational_hour, price_percentile, congestion_analysis, peak_analysis, price_statistics, hourly_patterns, price_spikes, node_comparison, general_query",
             "parameters": {
                 "n_hours": integer (if asking for top/bottom N),
+                "n_nodes": integer (if asking for top/bottom N nodes),
+                "operational_date": "YYYY-MM-DD format if specific date mentioned",
+                "operational_hour": integer 0-23 (if specific hour mentioned),
                 "percentile": integer (if asking for percentile analysis),
                 "nodes": ["list of specific nodes if mentioned"],
                 "time_period": "specific time period if mentioned",
@@ -60,8 +63,9 @@ class LMPChatbot:
         }
         
         Available analysis types:
-        - cheapest_hours: Finding lowest price hours
+        - cheapest_hours: Finding lowest price hours across all data
         - cheapest_operational_hours: Finding cheapest operational hours (0-23) averaged across all nodes
+        - cheapest_nodes_by_operational_hour: Finding cheapest nodes for a specific operational date and hour
         - price_percentile: Nodes in certain price percentiles  
         - congestion_analysis: Congestion component analysis
         - peak_analysis: Peak vs off-peak comparisons
@@ -70,6 +74,8 @@ class LMPChatbot:
         - price_spikes: Unusual price events
         - node_comparison: Comparing specific nodes
         - general_query: Other analytical questions
+        
+        IMPORTANT: If user asks for "nodes" with a specific "operational date" AND "operational hour", use "cheapest_nodes_by_operational_hour"
         """
         
         user_message = f"""
@@ -123,6 +129,34 @@ class LMPChatbot:
             elif analysis_type == 'cheapest_operational_hours':
                 n_hours = params.get('n_hours') or 5  # Handle None values
                 return self.analytics.get_cheapest_operational_hours(n_hours)
+                
+            elif analysis_type == 'cheapest_nodes_by_operational_hour':
+                n_nodes = params.get('n_nodes', 10)
+                operational_date = params.get('operational_date')
+                operational_hour = params.get('operational_hour')
+                
+                # Parse operational_date if it's a string (from time_period)
+                if not operational_date and 'time_period' in params:
+                    time_period = params.get('time_period', '')
+                    if isinstance(time_period, str) and len(time_period) >= 10:
+                        # Extract date part (YYYY-MM-DD)
+                        operational_date = time_period[:10]
+                        
+                        # Try to extract hour from time_period if not provided
+                        if not operational_hour and ':' in time_period:
+                            try:
+                                # Parse something like "2024-01-01 13:00:00"
+                                from datetime import datetime
+                                dt = datetime.fromisoformat(time_period.replace(' ', 'T') if 'T' not in time_period else time_period)
+                                operational_hour = dt.hour
+                            except:
+                                pass
+                
+                return self.analytics.get_cheapest_nodes_by_hour(
+                    n_nodes=n_nodes,
+                    operational_date=operational_date, 
+                    operational_hour=operational_hour
+                )
             
             elif analysis_type == 'price_percentile':
                 percentile = params.get('percentile', 10)
@@ -217,7 +251,8 @@ class LMPChatbot:
         # Create user-friendly names for analysis types
         analysis_names = {
             'cheapest_hours': 'Cheapest Individual Hours',
-            'cheapest_operational_hours': 'Cheapest Operational Hours (Averaged Across Nodes)', 
+            'cheapest_operational_hours': 'Cheapest Operational Hours (Averaged Across Nodes)',
+            'cheapest_nodes_by_operational_hour': 'Cheapest Nodes for Specific Date and Hour',
             'price_percentile': 'Nodes by Price Percentile',
             'congestion_analysis': 'Congestion Component Analysis',
             'peak_analysis': 'Peak vs Off-Peak Analysis',
@@ -236,6 +271,12 @@ class LMPChatbot:
             if value is not None and value != [] and value != '':
                 if key == 'n_hours':
                     param_display.append(f"Number of results: {value}")
+                elif key == 'n_nodes':
+                    param_display.append(f"Number of nodes: {value}")
+                elif key == 'operational_date':
+                    param_display.append(f"Date: {value}")
+                elif key == 'operational_hour':
+                    param_display.append(f"Hour: {value}")
                 elif key == 'percentile':
                     param_display.append(f"Percentile: {value}%")
                 elif key == 'nodes':
