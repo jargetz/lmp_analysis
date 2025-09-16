@@ -206,11 +206,11 @@ class LMPChatbot:
             return "No results found for your query."
         
         summaries = {
-            'cheapest_hours': f"Found {len(df)} cheapest hours. The lowest price was ${df['mw'].min():.2f}/MWh at {df.iloc[0]['node'] if 'node' in df.columns else 'multiple nodes'}.",
+            'cheapest_hours': f"Found {len(df)} cheapest hours. The lowest price was ${df['mw'].min():.2f}/MWh at {df.iloc[0]['node'] if 'node' in df.columns else 'multiple nodes'}." if 'mw' in df.columns and not df.empty else f"Found {len(df)} results for cheapest hours analysis.",
             
             'price_percentile': f"Found {len(df)} nodes in the requested price percentile. Price range: ${df['mw'].min():.2f} - ${df['mw'].max():.2f}/MWh." if 'mw' in df.columns else f"Found {len(df)} nodes in the requested price percentile.",
             
-            'congestion_analysis': f"Analyzed {len(df)} hours with congestion data. Lowest congestion was ${df['mcc'].min():.2f}/MWh.",
+            'congestion_analysis': f"Analyzed {len(df)} hours with congestion data. Lowest congestion was ${df['mcc'].min():.2f}/MWh." if 'mcc' in df.columns else f"Analyzed {len(df)} hours but congestion data not available.",
             
             'peak_analysis': f"Peak vs off-peak analysis for {len(df)} nodes. Average peak premium varies significantly across nodes.",
             
