@@ -184,6 +184,9 @@ class LMPChatbot:
         if result_df is None or (isinstance(result_df, pd.DataFrame) and result_df.empty):
             return "I couldn't find any data matching your query. Please check if the requested information is available in your dataset."
         
+        # Generate interpretation display
+        interpretation = self._format_interpretation(intent_analysis)
+        
         # Convert DataFrame to readable format
         if isinstance(result_df, pd.DataFrame):
             # Limit results for readability
@@ -195,15 +198,66 @@ class LMPChatbot:
             # Format as table
             table_str = display_df.to_string(index=False, float_format='%.2f')
             
-            response = f"{summary}\n\nResults:\n```\n{table_str}\n```"
+            response = f"{interpretation}\n\n{summary}\n\nResults:\n```\n{table_str}\n```"
             
             if len(result_df) > 20:
                 response += f"\n\n(Showing first 20 results out of {len(result_df)} total results)"
                 
         else:
-            response = str(result_df)
+            response = f"{interpretation}\n\n{str(result_df)}"
         
         return response
+    
+    def _format_interpretation(self, intent_analysis):
+        """Format the AI's interpretation of the user's question in a user-friendly way"""
+        analysis_type = intent_analysis.get('analysis_type', 'general_query')
+        parameters = intent_analysis.get('parameters', {})
+        confidence = intent_analysis.get('confidence', 0)
+        
+        # Create user-friendly names for analysis types
+        analysis_names = {
+            'cheapest_hours': 'Cheapest Individual Hours',
+            'cheapest_operational_hours': 'Cheapest Operational Hours (Averaged Across Nodes)', 
+            'price_percentile': 'Nodes by Price Percentile',
+            'congestion_analysis': 'Congestion Component Analysis',
+            'peak_analysis': 'Peak vs Off-Peak Analysis',
+            'price_statistics': 'Price Statistics Overview',
+            'hourly_patterns': 'Hourly Price Patterns',
+            'price_spikes': 'Price Spike Detection',
+            'node_comparison': 'Node Comparison Analysis',
+            'general_query': 'General Analysis'
+        }
+        
+        friendly_name = analysis_names.get(analysis_type, analysis_type.replace('_', ' ').title())
+        
+        # Format parameters in a user-friendly way
+        param_display = []
+        for key, value in parameters.items():
+            if value is not None and value != [] and value != '':
+                if key == 'n_hours':
+                    param_display.append(f"Number of results: {value}")
+                elif key == 'percentile':
+                    param_display.append(f"Percentile: {value}%")
+                elif key == 'nodes':
+                    if isinstance(value, list) and len(value) > 0:
+                        node_str = ', '.join(value[:3])  # Show first 3 nodes
+                        if len(value) > 3:
+                            node_str += f" (and {len(value) - 3} more)"
+                        param_display.append(f"Nodes: {node_str}")
+                elif key == 'time_period':
+                    param_display.append(f"Time period: {value}")
+        
+        params_str = " • ".join(param_display) if param_display else "All available data"
+        confidence_str = f"{int(confidence * 100)}%" if confidence > 0 else "High"
+        
+        interpretation = f"""🤖 **How I interpreted your question:**
+**Analysis Type:** {friendly_name}
+**Parameters:** {params_str}
+**Confidence:** {confidence_str}
+
+---"""
+        
+        return interpretation
     
     def _generate_summary(self, df, analysis_type):
         """Generate a summary of the analysis results"""
