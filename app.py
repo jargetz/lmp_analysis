@@ -152,9 +152,9 @@ def main():
                 placeholder="e.g., What are the 5 cheapest hours at each node?"
             )
             
-            col1, col2 = st.columns([1, 4])
+            col1, col2, col3 = st.columns([1, 1, 3])
             with col1:
-                if st.button("Ask", type="primary"):
+                if st.button("Ask AI", type="primary"):
                     if user_question:
                         with st.spinner("Analyzing your question..."):
                             try:
@@ -163,6 +163,37 @@ def main():
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Error processing question: {str(e)}")
+            
+            with col2:
+                if st.button("Quick Answer", type="secondary"):
+                    if user_question and user_question.strip():
+                        # Direct data answers without AI
+                        answer = "Quick Analysis Results:\n\n"
+                        try:
+                            if any(word in user_question.lower() for word in ['cheapest', 'lowest']) and any(word in user_question.lower() for word in ['hour', 'operational hour']):
+                                hourly_data = st.session_state.analytics.get_hourly_averages()
+                                if not hourly_data.empty:
+                                    cheapest_hour = hourly_data.loc[hourly_data['mw'].idxmin()]
+                                    answer += f"**Cheapest Hour:** Hour {cheapest_hour['hour']} with average price ${cheapest_hour['mw']:.2f}/MWh\n\n"
+                                    answer += "All hourly averages:\n"
+                                    for _, row in hourly_data.head(10).iterrows():
+                                        answer += f"Hour {row['hour']}: ${row['mw']:.2f}/MWh\n"
+                                else:
+                                    answer += "No hourly data available"
+                            else:
+                                # Default to cheapest hours
+                                cheapest = st.session_state.analytics.get_cheapest_hours(10)
+                                if not cheapest.empty:
+                                    answer += f"**10 Cheapest Individual Hours:**\n"
+                                    for _, row in cheapest.head(10).iterrows():
+                                        answer += f"{row['interval_start_time_gmt']}: ${row['mw']:.2f}/MWh at {row['node']}\n"
+                                else:
+                                    answer += "No data available"
+                        except Exception as e:
+                            answer += f"Error: {str(e)}"
+                        
+                        st.session_state.chat_history.append((user_question, answer))
+                        st.rerun()
             
             with col2:
                 if st.button("Clear Chat"):
