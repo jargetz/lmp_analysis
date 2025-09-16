@@ -13,28 +13,27 @@ class LMPAnalytics:
     def get_cheapest_operational_hours(self, n_hours=5, start_date=None, end_date=None):
         """Get the N cheapest operational hours (0-23) averaged across all nodes"""
         try:
-            # Use hour_of_day as temporary fallback until opr_hr is properly loaded
             conditions = ["mw > 0"]
             params = []
             
             if start_date:
-                conditions.append("date_only >= %s")
+                conditions.append("opr_dt >= %s")
                 params.append(start_date)
             if end_date:
-                conditions.append("date_only <= %s")
+                conditions.append("opr_dt <= %s")
                 params.append(end_date)
             
             where_clause = "WHERE " + " AND ".join(conditions)
             
             query = f"""
             SELECT 
-                hour_of_day as opr_hr,
+                opr_hr,
                 ROUND(AVG(mw)::numeric, 2) as avg_price,
                 COUNT(*) as records,
                 COUNT(DISTINCT node) as unique_nodes
             FROM caiso.lmp_data 
             {where_clause}
-            GROUP BY hour_of_day
+            GROUP BY opr_hr
             ORDER BY avg_price ASC
             LIMIT %s
             """
@@ -144,22 +143,22 @@ class LMPAnalytics:
             
             # Filter by operational date
             if operational_date:
-                conditions.append("date_only = %s")
+                conditions.append("opr_dt = %s")
                 params.append(operational_date)
             
-            # Filter by operational hour (using hour_of_day column as proxy for opr_hr)
+            # Filter by operational hour
             if operational_hour is not None:
-                conditions.append("hour_of_day = %s")
+                conditions.append("opr_hr = %s")
                 params.append(operational_hour)
             
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
             
             query = f"""
             SELECT 
-                date_only as operational_date,
+                opr_dt as operational_date,
                 node,
                 ROUND(mw::numeric, 2) as mw,
-                hour_of_day as opr_hr
+                opr_hr
             FROM caiso.lmp_data 
             {where_clause}
             ORDER BY mw ASC
@@ -291,11 +290,11 @@ class LMPAnalytics:
             WITH period_stats AS (
                 SELECT 
                     node,
-                    CASE WHEN hour_of_day BETWEEN 7 AND 22 THEN 'Peak' ELSE 'Off-Peak' END as period,
+                    CASE WHEN opr_hr BETWEEN 7 AND 22 THEN 'Peak' ELSE 'Off-Peak' END as period,
                     AVG(mw) as avg_price
                 FROM caiso.lmp_data 
                 {where_clause}
-                GROUP BY node, CASE WHEN hour_of_day BETWEEN 7 AND 22 THEN 'Peak' ELSE 'Off-Peak' END
+                GROUP BY node, CASE WHEN opr_hr BETWEEN 7 AND 22 THEN 'Peak' ELSE 'Off-Peak' END
             )
             SELECT 
                 node,
@@ -376,14 +375,14 @@ class LMPAnalytics:
             
             query = f"""
             SELECT 
-                hour_of_day as hour,
+                opr_hr as hour,
                 ROUND(AVG(mw)::numeric, 2) as mw,
                 ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY mw)::numeric, 2) as median,
                 ROUND(STDDEV(mw)::numeric, 2) as std
             FROM caiso.lmp_data 
             {where_clause}
-            GROUP BY hour_of_day
-            ORDER BY hour_of_day
+            GROUP BY opr_hr
+            ORDER BY opr_hr
             """
             
             results = self.db.execute_query(query, params)

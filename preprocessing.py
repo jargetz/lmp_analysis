@@ -19,17 +19,16 @@ class CAISOPreprocessor:
             CREATE TABLE IF NOT EXISTS caiso.b6_hours (
                 id SERIAL PRIMARY KEY,
                 node VARCHAR(100) NOT NULL,
-                date_only DATE NOT NULL,
                 opr_dt DATE NOT NULL,
                 opr_hr SMALLINT NOT NULL,
                 mw DECIMAL(10,2) NOT NULL,
                 hour_rank INTEGER NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(node, date_only, hour_rank)
+                UNIQUE(node, opr_dt, hour_rank)
             );
             
-            CREATE INDEX IF NOT EXISTS idx_b6_node_date ON caiso.b6_hours(node, date_only);
-            CREATE INDEX IF NOT EXISTS idx_b6_date ON caiso.b6_hours(date_only);
+            CREATE INDEX IF NOT EXISTS idx_b6_node_date ON caiso.b6_hours(node, opr_dt);
+            CREATE INDEX IF NOT EXISTS idx_b6_date ON caiso.b6_hours(opr_dt);
             """
             
             # Create B8 (cheapest 8 hours) table  
@@ -37,17 +36,16 @@ class CAISOPreprocessor:
             CREATE TABLE IF NOT EXISTS caiso.b8_hours (
                 id SERIAL PRIMARY KEY,
                 node VARCHAR(100) NOT NULL,
-                date_only DATE NOT NULL,
                 opr_dt DATE NOT NULL,
                 opr_hr SMALLINT NOT NULL,
                 mw DECIMAL(10,2) NOT NULL,
                 hour_rank INTEGER NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(node, date_only, hour_rank)
+                UNIQUE(node, opr_dt, hour_rank)
             );
             
-            CREATE INDEX IF NOT EXISTS idx_b8_node_date ON caiso.b8_hours(node, date_only);
-            CREATE INDEX IF NOT EXISTS idx_b8_date ON caiso.b8_hours(date_only);
+            CREATE INDEX IF NOT EXISTS idx_b8_node_date ON caiso.b8_hours(node, opr_dt);
+            CREATE INDEX IF NOT EXISTS idx_b8_date ON caiso.b8_hours(opr_dt);
             """
             
             # Create node daily summary table
@@ -55,7 +53,7 @@ class CAISOPreprocessor:
             CREATE TABLE IF NOT EXISTS caiso.node_daily_summary (
                 id SERIAL PRIMARY KEY,
                 node VARCHAR(100) NOT NULL,
-                date_only DATE NOT NULL,
+                opr_dt DATE NOT NULL,
                 min_price DECIMAL(10,2),
                 max_price DECIMAL(10,2),
                 avg_price DECIMAL(10,2),
@@ -64,10 +62,10 @@ class CAISOPreprocessor:
                 b6_avg_price DECIMAL(10,2),
                 b8_avg_price DECIMAL(10,2),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(node, date_only)
+                UNIQUE(node, opr_dt)
             );
             
-            CREATE INDEX IF NOT EXISTS idx_summary_node_date ON caiso.node_daily_summary(node, date_only);
+            CREATE INDEX IF NOT EXISTS idx_summary_node_date ON caiso.node_daily_summary(node, opr_dt);
             """
             
             # Execute all table creation commands
@@ -147,7 +145,7 @@ class CAISOPreprocessor:
             nodes_query = """
             SELECT DISTINCT node 
             FROM caiso.lmp_data 
-            WHERE date_only = %s
+            WHERE opr_dt = %s
             ORDER BY node
             """
             nodes_result = self.db.execute_query(nodes_query, (target_date,))
@@ -167,7 +165,7 @@ class CAISOPreprocessor:
                 hours_query = """
                 SELECT opr_dt, opr_hr, mw
                 FROM caiso.lmp_data 
-                WHERE date_only = %s AND node = %s
+                WHERE opr_dt = %s AND node = %s
                 ORDER BY mw ASC, opr_dt ASC, opr_hr ASC
                 """
                 hours_result = self.db.execute_query(hours_query, (target_date, node))
@@ -179,7 +177,7 @@ class CAISOPreprocessor:
                 prices = [float(row['mw']) for row in hours_result if isinstance(row, dict) and row.get('mw') is not None]
                 summary_stats = {
                     'node': node,
-                    'date_only': target_date,
+                    'opr_dt': target_date,
                     'min_price': min(prices),
                     'max_price': max(prices),
                     'avg_price': sum(prices) / len(prices),
@@ -195,7 +193,6 @@ class CAISOPreprocessor:
                 for rank, hour_data in enumerate(b6_hours, 1):
                     b6_records.append({
                         'node': node,
-                        'date_only': target_date,
                         'opr_dt': hour_data['opr_dt'],
                         'opr_hr': hour_data['opr_hr'],
                         'mw': hour_data['mw'],
@@ -210,7 +207,6 @@ class CAISOPreprocessor:
                 for rank, hour_data in enumerate(b8_hours, 1):
                     b8_records.append({
                         'node': node,
-                        'date_only': target_date,
                         'opr_dt': hour_data['opr_dt'],
                         'opr_hr': hour_data['opr_hr'],
                         'mw': hour_data['mw'],
@@ -239,10 +235,13 @@ class CAISOPreprocessor:
     def is_date_already_processed(self, target_date: date) -> bool:
         """Check if B6/B8 calculations already exist for this date"""
         try:
-            query = "SELECT COUNT(*) as count FROM caiso.b6_hours WHERE date_only = %s LIMIT 1"
+            query = "SELECT COUNT(*) as count FROM caiso.b6_hours WHERE opr_dt = %s LIMIT 1"
             result = self.db.execute_query(query, (target_date,), fetch_all=False)
-            return result and isinstance(result, dict) and result.get('count', 0) > 0
-        except:
+            if result and isinstance(result, dict):
+                count_value = result.get('count', 0)
+                return bool(count_value and count_value > 0)
+            return False
+        except Exception:
             return False
     
     def bulk_insert_b6_records(self, records: List[Dict]) -> int:
@@ -252,9 +251,9 @@ class CAISOPreprocessor:
         
         try:
             query = """
-            INSERT INTO caiso.b6_hours (node, date_only, opr_dt, opr_hr, mw, hour_rank)
-            VALUES (%(node)s, %(date_only)s, %(opr_dt)s, %(opr_hr)s, %(mw)s, %(hour_rank)s)
-            ON CONFLICT (node, date_only, hour_rank) DO NOTHING
+            INSERT INTO caiso.b6_hours (node, opr_dt, opr_hr, mw, hour_rank)
+            VALUES (%(node)s, %(opr_dt)s, %(opr_hr)s, %(mw)s, %(hour_rank)s)
+            ON CONFLICT (node, opr_dt, hour_rank) DO NOTHING
             """
             
             with self.db.get_connection() as conn:
@@ -276,9 +275,9 @@ class CAISOPreprocessor:
             
         try:
             query = """
-            INSERT INTO caiso.b8_hours (node, date_only, opr_dt, opr_hr, mw, hour_rank)
-            VALUES (%(node)s, %(date_only)s, %(opr_dt)s, %(opr_hr)s, %(mw)s, %(hour_rank)s)
-            ON CONFLICT (node, date_only, hour_rank) DO NOTHING
+            INSERT INTO caiso.b8_hours (node, opr_dt, opr_hr, mw, hour_rank)
+            VALUES (%(node)s, %(opr_dt)s, %(opr_hr)s, %(mw)s, %(hour_rank)s)
+            ON CONFLICT (node, opr_dt, hour_rank) DO NOTHING
             """
             
             with self.db.get_connection() as conn:
@@ -301,10 +300,10 @@ class CAISOPreprocessor:
         try:
             query = """
             INSERT INTO caiso.node_daily_summary 
-            (node, date_only, min_price, max_price, avg_price, median_price, total_hours, b6_avg_price, b8_avg_price)
-            VALUES (%(node)s, %(date_only)s, %(min_price)s, %(max_price)s, %(avg_price)s, 
+            (node, opr_dt, min_price, max_price, avg_price, median_price, total_hours, b6_avg_price, b8_avg_price)
+            VALUES (%(node)s, %(opr_dt)s, %(min_price)s, %(max_price)s, %(avg_price)s, 
                     %(median_price)s, %(total_hours)s, %(b6_avg_price)s, %(b8_avg_price)s)
-            ON CONFLICT (node, date_only) DO UPDATE SET
+            ON CONFLICT (node, opr_dt) DO UPDATE SET
                 min_price = EXCLUDED.min_price,
                 max_price = EXCLUDED.max_price,
                 avg_price = EXCLUDED.avg_price,
@@ -332,9 +331,9 @@ class CAISOPreprocessor:
         try:
             query = """
             SELECT 
-                MIN(date_only) as earliest_date,
-                MAX(date_only) as latest_date,
-                COUNT(DISTINCT date_only) as total_days
+                MIN(opr_dt) as earliest_date,
+                MAX(opr_dt) as latest_date,
+                COUNT(DISTINCT opr_dt) as total_days
             FROM caiso.lmp_data
             """
             

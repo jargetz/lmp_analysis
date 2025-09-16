@@ -71,9 +71,9 @@ class DatabaseManager:
                 'MCC': 'mcc',
                 'MLC': 'mlc', 
                 'POS': 'pos',
-                'HOUR': 'hour_of_day',
+                'HOUR': 'opr_hr',
                 'DAY_OF_WEEK': 'day_of_week',
-                'DATE': 'date_only'
+                'DATE': 'opr_dt'
             }
             
             # Only keep columns that exist in the dataframe and rename them
@@ -81,13 +81,13 @@ class DatabaseManager:
             df_clean = df_clean.rename(columns=existing_columns)
             
             # Convert date column to proper format
-            if 'date_only' in df_clean.columns:
-                df_clean['date_only'] = pd.to_datetime(df_clean['date_only']).dt.date
+            if 'opr_dt' in df_clean.columns:
+                df_clean['opr_dt'] = pd.to_datetime(df_clean['opr_dt']).dt.date
             
             # Define expected columns for the database table
             expected_columns = [
                 'node', 'mw', 'mcc', 'mlc', 'pos',
-                'hour_of_day', 'day_of_week', 'date_only', 'source_file', 'opr_hr', 'opr_dt'
+                'day_of_week', 'source_file', 'opr_hr', 'opr_dt'
             ]
             
             # Keep only columns that should be in the database
@@ -158,8 +158,7 @@ class DatabaseManager:
             node,
             mw,
             mcc,
-            mlc,
-            hour_of_day
+            mlc
         FROM caiso.lmp_data 
         {where_clause}
         ORDER BY mw ASC
@@ -228,14 +227,14 @@ class DatabaseManager:
         
         query = f"""
         SELECT 
-            hour_of_day,
+            opr_hr,
             AVG(mw) as avg_price,
             STDDEV(mw) as std_price,
             COUNT(*) as record_count
         FROM caiso.lmp_data 
         {where_clause}
-        GROUP BY hour_of_day
-        ORDER BY hour_of_day
+        GROUP BY opr_hr
+        ORDER BY opr_hr
         """
         
         results = self.execute_query(query, params)
@@ -257,7 +256,7 @@ class DatabaseManager:
                     mw,
                     ROW_NUMBER() OVER (PARTITION BY node ORDER BY mw ASC) as rn
                 FROM caiso.lmp_data 
-                WHERE date_only = %s
+                WHERE opr_dt = %s
             )
             INSERT INTO caiso.cheapest_hours_b6 (node, opr_dt, opr_hr, mw, rank_position, date_computed)
             SELECT node, opr_dt, opr_hr, mw, rn, %s
@@ -280,7 +279,7 @@ class DatabaseManager:
                     mw,
                     ROW_NUMBER() OVER (PARTITION BY node ORDER BY mw ASC) as rn
                 FROM caiso.lmp_data 
-                WHERE date_only = %s
+                WHERE opr_dt = %s
             )
             INSERT INTO caiso.cheapest_hours_b8 (node, opr_dt, opr_hr, mw, rank_position, date_computed)
             SELECT node, opr_dt, opr_hr, mw, rn, %s
