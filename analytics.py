@@ -47,7 +47,7 @@ class LMPAnalytics:
             self.logger.error(f"Error getting cheapest operational hours: {str(e)}")
             return pd.DataFrame()
 
-    def get_cheapest_hours(self, n_hours, node=None, aggregate_nodes=None, start_date=None, end_date=None):
+    def get_cheapest_hours(self, n_hours, node=None, aggregate_nodes=None, start_date=None, end_date=None, exclude_zero=True):
         """Get the N cheapest hours overall or for specific node(s) from database"""
         try:
             if aggregate_nodes and len(aggregate_nodes) > 1:
@@ -55,6 +55,10 @@ class LMPAnalytics:
                 placeholders = ','.join(['%s'] * len(aggregate_nodes))
                 conditions = [f"node IN ({placeholders})"]
                 params = list(aggregate_nodes)
+                
+                # Exclude zero prices by default
+                if exclude_zero:
+                    conditions.append("mw > 0")
                 
                 if start_date:
                     conditions.append("interval_start_time_gmt >= %s")
@@ -86,6 +90,10 @@ class LMPAnalytics:
                 # Query for single node or all nodes
                 conditions = []
                 params = []
+                
+                # Exclude zero prices by default
+                if exclude_zero:
+                    conditions.append("mw > 0")
                 
                 if node:
                     conditions.append("node = %s")
@@ -120,6 +128,48 @@ class LMPAnalytics:
             
         except Exception as e:
             self.logger.error(f"Error getting cheapest hours: {str(e)}")
+            return pd.DataFrame()
+
+    def get_cheapest_nodes_by_hour(self, n_nodes=10, operational_date=None, operational_hour=None, exclude_zero=True):
+        """Get the N cheapest nodes for a specific operational date and hour"""
+        try:
+            conditions = []
+            params = []
+            
+            # Always exclude zero prices by default unless specified otherwise
+            if exclude_zero:
+                conditions.append("mw > 0")
+            
+            # Filter by operational date
+            if operational_date:
+                conditions.append("date_only = %s")
+                params.append(operational_date)
+            
+            # Filter by operational hour (using hour_of_day column as proxy for opr_hr)
+            if operational_hour is not None:
+                conditions.append("hour_of_day = %s")
+                params.append(operational_hour)
+            
+            where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+            
+            query = f"""
+            SELECT 
+                date_only as operational_date,
+                node,
+                ROUND(mw::numeric, 2) as mw,
+                hour_of_day as opr_hr
+            FROM caiso.lmp_data 
+            {where_clause}
+            ORDER BY mw ASC
+            LIMIT %s
+            """
+            params.append(n_nodes)
+            
+            results = self.db.execute_query(query, params)
+            return pd.DataFrame(results) if results else pd.DataFrame()
+            
+        except Exception as e:
+            self.logger.error(f"Error getting cheapest nodes by hour: {str(e)}")
             return pd.DataFrame()
     
     def get_lowest_congestion_hours(self, n_hours, during_cheap_hours=False, start_date=None, end_date=None):
