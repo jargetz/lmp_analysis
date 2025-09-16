@@ -10,9 +10,8 @@ class LMPChatbot:
     """AI-powered chatbot for natural language querying of LMP data with PostgreSQL backend"""
     
     def __init__(self):
-        # the newest OpenAI model is "gpt-5" which was released August 7, 2025.
-        # do not change this unless explicitly requested by the user
-        self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", "default_key"))
+        # Using GPT-4 for reliable natural language processing
+        self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.analytics = LMPAnalytics()
         self.db = DatabaseManager()
         self.logger = logging.getLogger(__name__)
@@ -82,7 +81,7 @@ class LMPChatbot:
         
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-5",
+                model="gpt-4",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
