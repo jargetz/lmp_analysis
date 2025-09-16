@@ -121,7 +121,7 @@ class LMPChatbot:
                     return self.analytics.get_cheapest_hours(n_hours)
             
             elif analysis_type == 'cheapest_operational_hours':
-                n_hours = params.get('n_hours', 5)
+                n_hours = params.get('n_hours') or 5  # Handle None values
                 return self.analytics.get_cheapest_operational_hours(n_hours)
             
             elif analysis_type == 'price_percentile':

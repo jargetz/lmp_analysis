@@ -13,27 +13,28 @@ class LMPAnalytics:
     def get_cheapest_operational_hours(self, n_hours=5, start_date=None, end_date=None):
         """Get the N cheapest operational hours (0-23) averaged across all nodes"""
         try:
-            conditions = ["mw > 0", "opr_hr IS NOT NULL"]
+            # Use hour_of_day as temporary fallback until opr_hr is properly loaded
+            conditions = ["mw > 0"]
             params = []
             
             if start_date:
-                conditions.append("opr_dt >= %s")
+                conditions.append("date_only >= %s")
                 params.append(start_date)
             if end_date:
-                conditions.append("opr_dt <= %s")
+                conditions.append("date_only <= %s")
                 params.append(end_date)
             
             where_clause = "WHERE " + " AND ".join(conditions)
             
             query = f"""
             SELECT 
-                opr_hr,
+                hour_of_day as opr_hr,
                 ROUND(AVG(mw)::numeric, 2) as avg_price,
                 COUNT(*) as records,
                 COUNT(DISTINCT node) as unique_nodes
             FROM caiso.lmp_data 
             {where_clause}
-            GROUP BY opr_hr
+            GROUP BY hour_of_day
             ORDER BY avg_price ASC
             LIMIT %s
             """
