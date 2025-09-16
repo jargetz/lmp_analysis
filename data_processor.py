@@ -10,7 +10,7 @@ class CAISODataProcessor:
     """Handles processing and cleaning of CAISO LMP data with PostgreSQL storage"""
     
     def __init__(self):
-        self.required_columns = ['INTERVALSTARTTIME_GMT', 'NODE', 'MW']
+        self.required_columns = ['NODE', 'MW']  # We'll create opr_dt and opr_hr from INTERVALSTARTTIME_GMT
         self.optional_columns = ['MCC', 'MLC', 'POS']  # Congestion, Loss, Position components
         self.db = DatabaseManager()
         self.logger = logging.getLogger(__name__)
@@ -110,9 +110,9 @@ class CAISODataProcessor:
             elif 'POS' in col_upper:
                 column_mapping[col] = 'POS'
             elif col_upper == 'OPR_HR':  # Preserve original operational hour
-                column_mapping[col] = 'OPR_HR'
+                column_mapping[col] = 'opr_hr'
             elif col_upper == 'OPR_DT':  # Preserve original operational date
-                column_mapping[col] = 'OPR_DT'
+                column_mapping[col] = 'opr_dt'
                 
         # Apply column mapping
         df_renamed = df.rename(columns=column_mapping)
@@ -124,15 +124,21 @@ class CAISODataProcessor:
         return df_renamed
     
     def _parse_datetime(self, df):
-        """Parse datetime columns"""
+        """Parse datetime columns and create operational date/hour columns"""
         if 'INTERVALSTARTTIME_GMT' in df.columns:
             try:
-                df['INTERVALSTARTTIME_GMT'] = pd.to_datetime(df['INTERVALSTARTTIME_GMT'])
+                # Parse the timestamp
+                timestamp_col = pd.to_datetime(df['INTERVALSTARTTIME_GMT'])
                 
-                # Extract additional time-based features
-                df['HOUR'] = df['INTERVALSTARTTIME_GMT'].dt.hour
-                df['DAY_OF_WEEK'] = df['INTERVALSTARTTIME_GMT'].dt.day_name()
-                df['DATE'] = df['INTERVALSTARTTIME_GMT'].dt.date
+                # Create operational date and hour columns (required by new schema)
+                df['opr_dt'] = timestamp_col.dt.date
+                df['opr_hr'] = timestamp_col.dt.hour
+                
+                # Extract additional time-based features (optional)
+                df['DAY_OF_WEEK'] = timestamp_col.dt.day_name()
+                
+                # Remove the original timestamp column as we now have opr_dt and opr_hr
+                df = df.drop(columns=['INTERVALSTARTTIME_GMT'])
                 
             except Exception as e:
                 logging.warning(f"Error parsing datetime: {str(e)}")
@@ -160,13 +166,13 @@ class CAISODataProcessor:
             return df
         
         # Remove rows with missing critical data
-        df = df.dropna(subset=['INTERVALSTARTTIME_GMT', 'NODE', 'MW'])
+        df = df.dropna(subset=['opr_dt', 'opr_hr', 'NODE', 'MW'])
         
         # Remove duplicate records
-        df = df.drop_duplicates(subset=['INTERVALSTARTTIME_GMT', 'NODE'])
+        df = df.drop_duplicates(subset=['opr_dt', 'opr_hr', 'NODE'])
         
-        # Sort by time and node
-        df = df.sort_values(['INTERVALSTARTTIME_GMT', 'NODE'])
+        # Sort by operational date, hour, and node
+        df = df.sort_values(['opr_dt', 'opr_hr', 'NODE'])
         
         # Reset index
         df = df.reset_index(drop=True)
