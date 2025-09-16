@@ -48,7 +48,7 @@ class LMPChatbot:
         Analyze the user's question and determine what type of analysis they want. Respond with JSON in this exact format:
         
         {
-            "analysis_type": "one of: cheapest_hours, price_percentile, congestion_analysis, peak_analysis, price_statistics, hourly_patterns, price_spikes, node_comparison, general_query",
+            "analysis_type": "one of: cheapest_hours, cheapest_operational_hours, price_percentile, congestion_analysis, peak_analysis, price_statistics, hourly_patterns, price_spikes, node_comparison, general_query",
             "parameters": {
                 "n_hours": integer (if asking for top/bottom N),
                 "percentile": integer (if asking for percentile analysis),
@@ -61,6 +61,7 @@ class LMPChatbot:
         
         Available analysis types:
         - cheapest_hours: Finding lowest price hours
+        - cheapest_operational_hours: Finding cheapest operational hours (0-23) averaged across all nodes
         - price_percentile: Nodes in certain price percentiles  
         - congestion_analysis: Congestion component analysis
         - peak_analysis: Peak vs off-peak comparisons
@@ -118,6 +119,10 @@ class LMPChatbot:
                     return self.analytics.get_cheapest_hours(n_hours, aggregate_nodes=nodes)
                 else:
                     return self.analytics.get_cheapest_hours(n_hours)
+            
+            elif analysis_type == 'cheapest_operational_hours':
+                n_hours = params.get('n_hours', 5)
+                return self.analytics.get_cheapest_operational_hours(n_hours)
             
             elif analysis_type == 'price_percentile':
                 percentile = params.get('percentile', 10)
@@ -207,6 +212,8 @@ class LMPChatbot:
         
         summaries = {
             'cheapest_hours': f"Found {len(df)} cheapest hours. The lowest price was ${df['mw'].min():.2f}/MWh at {df.iloc[0]['node']}." if 'mw' in df.columns and len(df) > 0 else f"Found {len(df)} results for cheapest hours analysis.",
+            
+            'cheapest_operational_hours': f"Found {len(df)} cheapest operational hours. Hour {df.iloc[0]['opr_hr']} is cheapest with average price ${df.iloc[0]['avg_price']:.2f}/MWh across {df.iloc[0]['unique_nodes']} nodes." if len(df) > 0 and 'opr_hr' in df.columns else f"Found {len(df)} operational hours analysis results.",
             
             'price_percentile': f"Found {len(df)} nodes in the requested price percentile." + (f" Price range: ${df['mw'].min():.2f} - ${df['mw'].max():.2f}/MWh." if 'mw' in df.columns else ""),
             

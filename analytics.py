@@ -10,6 +10,42 @@ class LMPAnalytics:
         self.db = DatabaseManager()
         self.logger = logging.getLogger(__name__)
     
+    def get_cheapest_operational_hours(self, n_hours=5, start_date=None, end_date=None):
+        """Get the N cheapest operational hours (0-23) averaged across all nodes"""
+        try:
+            conditions = ["mw > 0", "opr_hr IS NOT NULL"]
+            params = []
+            
+            if start_date:
+                conditions.append("opr_dt >= %s")
+                params.append(start_date)
+            if end_date:
+                conditions.append("opr_dt <= %s")
+                params.append(end_date)
+            
+            where_clause = "WHERE " + " AND ".join(conditions)
+            
+            query = f"""
+            SELECT 
+                opr_hr,
+                ROUND(AVG(mw)::numeric, 2) as avg_price,
+                COUNT(*) as records,
+                COUNT(DISTINCT node) as unique_nodes
+            FROM caiso.lmp_data 
+            {where_clause}
+            GROUP BY opr_hr
+            ORDER BY avg_price ASC
+            LIMIT %s
+            """
+            params.append(n_hours)
+            
+            results = self.db.execute_query(query, params)
+            return pd.DataFrame(results) if results else pd.DataFrame()
+            
+        except Exception as e:
+            self.logger.error(f"Error getting cheapest operational hours: {str(e)}")
+            return pd.DataFrame()
+
     def get_cheapest_hours(self, n_hours, node=None, aggregate_nodes=None, start_date=None, end_date=None):
         """Get the N cheapest hours overall or for specific node(s) from database"""
         try:
