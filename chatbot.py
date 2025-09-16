@@ -206,17 +206,17 @@ class LMPChatbot:
             return "No results found for your query."
         
         summaries = {
-            'cheapest_hours': f"Found {len(df)} cheapest hours. The lowest price was ${df['mw'].min():.2f}/MWh at {df.iloc[0]['node'] if 'node' in df.columns else 'multiple nodes'}." if 'mw' in df.columns and not df.empty else f"Found {len(df)} results for cheapest hours analysis.",
+            'cheapest_hours': f"Found {len(df)} cheapest hours. The lowest price was ${df['mw'].min():.2f}/MWh at {df.iloc[0]['node']}." if 'mw' in df.columns and len(df) > 0 else f"Found {len(df)} results for cheapest hours analysis.",
             
-            'price_percentile': f"Found {len(df)} nodes in the requested price percentile. Price range: ${df['mw'].min():.2f} - ${df['mw'].max():.2f}/MWh." if 'mw' in df.columns else f"Found {len(df)} nodes in the requested price percentile.",
+            'price_percentile': f"Found {len(df)} nodes in the requested price percentile." + (f" Price range: ${df['mw'].min():.2f} - ${df['mw'].max():.2f}/MWh." if 'mw' in df.columns else ""),
             
-            'congestion_analysis': f"Analyzed {len(df)} hours with congestion data. Lowest congestion was ${df['mcc'].min():.2f}/MWh." if 'mcc' in df.columns else f"Analyzed {len(df)} hours but congestion data not available.",
+            'congestion_analysis': f"Analyzed {len(df)} hours with congestion data." + (f" Lowest congestion was ${df['mcc'].min():.2f}/MWh." if 'mcc' in df.columns else " (Congestion data not available)"),
             
             'peak_analysis': f"Peak vs off-peak analysis for {len(df)} nodes. Average peak premium varies significantly across nodes.",
             
-            'price_statistics': f"Price statistics for {len(df)} nodes. Overall price range: ${df['min'].min():.2f} - ${df['max'].max():.2f}/MWh.",
+            'price_statistics': f"Price statistics for {len(df)} records." + (f" Price range: ${df['mw'].min():.2f} - ${df['mw'].max():.2f}/MWh." if 'mw' in df.columns else ""),
             
-            'hourly_patterns': f"Hourly price patterns show average prices ranging from ${df['mw'].min():.2f} to ${df['mw'].max():.2f}/MWh.",
+            'hourly_patterns': f"Hourly price patterns show data for {len(df)} time periods." + (f" Price range: ${df['mw'].min():.2f} to ${df['mw'].max():.2f}/MWh." if 'mw' in df.columns else ""),
             
             'price_spikes': f"Detected {len(df)} price spike events across the dataset.",
             
