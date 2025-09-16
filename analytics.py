@@ -61,10 +61,10 @@ class LMPAnalytics:
                     conditions.append("mw > 0")
                 
                 if start_date:
-                    conditions.append("interval_start_time_gmt >= %s")
+                    conditions.append("opr_dt >= %s")
                     params.append(start_date)
                 if end_date:
-                    conditions.append("interval_start_time_gmt <= %s") 
+                    conditions.append("opr_dt <= %s") 
                     params.append(end_date)
                 
                 where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
@@ -72,14 +72,15 @@ class LMPAnalytics:
                 query = f"""
                 WITH aggregated_prices AS (
                     SELECT 
-                        interval_start_time_gmt,
+                        opr_dt as operational_date,
+                        opr_hr as operational_hour,
                         AVG(mw) as mw,
                         'Aggregated_{len(aggregate_nodes)}_nodes' as node
                     FROM caiso.lmp_data 
                     {where_clause}
-                    GROUP BY interval_start_time_gmt
+                    GROUP BY opr_dt, opr_hr
                 )
-                SELECT interval_start_time_gmt, node, ROUND(mw::numeric, 2) as mw
+                SELECT operational_date, operational_hour, node, ROUND(mw::numeric, 2) as mw
                 FROM aggregated_prices
                 ORDER BY mw ASC
                 LIMIT %s
@@ -103,17 +104,18 @@ class LMPAnalytics:
                     params.append(aggregate_nodes[0])
                     
                 if start_date:
-                    conditions.append("interval_start_time_gmt >= %s")
+                    conditions.append("opr_dt >= %s")
                     params.append(start_date)
                 if end_date:
-                    conditions.append("interval_start_time_gmt <= %s")
+                    conditions.append("opr_dt <= %s")
                     params.append(end_date)
                 
                 where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
                 
                 query = f"""
                 SELECT 
-                    interval_start_time_gmt,
+                    opr_dt as operational_date,
+                    opr_hr as operational_hour,
                     node,
                     ROUND(mw::numeric, 2) as mw
                 FROM caiso.lmp_data 
@@ -180,10 +182,10 @@ class LMPAnalytics:
             
             # Add date filters
             if start_date:
-                conditions.append("interval_start_time_gmt >= %s")
+                conditions.append("opr_dt >= %s")
                 params.append(start_date)
             if end_date:
-                conditions.append("interval_start_time_gmt <= %s")
+                conditions.append("opr_dt <= %s")
                 params.append(end_date)
             
             if during_cheap_hours:
@@ -203,7 +205,8 @@ class LMPAnalytics:
             
             query = f"""
             SELECT 
-                interval_start_time_gmt,
+                opr_dt as operational_date,
+                opr_hr as operational_hour,
                 node,
                 ROUND(mw::numeric, 2) as mw,
                 ROUND(mcc::numeric, 2) as mcc
@@ -228,10 +231,10 @@ class LMPAnalytics:
             params = []
             
             if period_start:
-                conditions.append("interval_start_time_gmt >= %s")
+                conditions.append("opr_dt >= %s")
                 params.append(period_start)
             if period_end:
-                conditions.append("interval_start_time_gmt <= %s")
+                conditions.append("opr_dt <= %s")
                 params.append(period_end)
             
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
@@ -276,10 +279,10 @@ class LMPAnalytics:
             params = []
             
             if start_date:
-                conditions.append("interval_start_time_gmt >= %s")
+                conditions.append("opr_dt >= %s")
                 params.append(start_date)
             if end_date:
-                conditions.append("interval_start_time_gmt <= %s")
+                conditions.append("opr_dt <= %s")
                 params.append(end_date)
             
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
@@ -323,10 +326,10 @@ class LMPAnalytics:
             params = []
             
             if start_date:
-                conditions.append("interval_start_time_gmt >= %s")
+                conditions.append("opr_dt >= %s")
                 params.append(start_date)
             if end_date:
-                conditions.append("interval_start_time_gmt <= %s")
+                conditions.append("opr_dt <= %s")
                 params.append(end_date)
             
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
@@ -363,10 +366,10 @@ class LMPAnalytics:
             params = []
             
             if start_date:
-                conditions.append("interval_start_time_gmt >= %s")
+                conditions.append("opr_dt >= %s")
                 params.append(start_date)
             if end_date:
-                conditions.append("interval_start_time_gmt <= %s")
+                conditions.append("opr_dt <= %s")
                 params.append(end_date)
             
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
@@ -397,10 +400,10 @@ class LMPAnalytics:
             params = []
             
             if start_date:
-                conditions.append("interval_start_time_gmt >= %s")
+                conditions.append("opr_dt >= %s")
                 params.append(start_date)
             if end_date:
-                conditions.append("interval_start_time_gmt <= %s")
+                conditions.append("opr_dt <= %s")
                 params.append(end_date)
             
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
@@ -412,8 +415,8 @@ class LMPAnalytics:
                 ROUND(AVG(mw)::numeric, 2) as mw_mean,
                 ROUND(MIN(mw)::numeric, 2) as mw_min,
                 ROUND(MAX(mw)::numeric, 2) as mw_max,
-                MIN(interval_start_time_gmt) as intervalstarttime_gmt_min,
-                MAX(interval_start_time_gmt) as intervalstarttime_gmt_max
+                MIN(opr_dt) as opr_dt_min,
+                MAX(opr_dt) as opr_dt_max
             FROM caiso.lmp_data 
             {where_clause}
             GROUP BY node
@@ -434,10 +437,10 @@ class LMPAnalytics:
             params = []
             
             if start_date:
-                conditions.append("interval_start_time_gmt >= %s")
+                conditions.append("opr_dt >= %s")
                 params.append(start_date)
             if end_date:
-                conditions.append("interval_start_time_gmt <= %s")
+                conditions.append("opr_dt <= %s")
                 params.append(end_date)
             
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
@@ -445,24 +448,26 @@ class LMPAnalytics:
             query = f"""
             WITH rolling_stats AS (
                 SELECT 
-                    interval_start_time_gmt,
+                    opr_dt as operational_date,
+                    opr_hr as operational_hour,
                     node,
                     mw,
                     AVG(mw) OVER (
                         PARTITION BY node 
-                        ORDER BY interval_start_time_gmt 
+                        ORDER BY opr_dt, opr_hr 
                         ROWS BETWEEN 23 PRECEDING AND CURRENT ROW
                     ) as rolling_mean,
                     STDDEV(mw) OVER (
                         PARTITION BY node 
-                        ORDER BY interval_start_time_gmt 
+                        ORDER BY opr_dt, opr_hr 
                         ROWS BETWEEN 23 PRECEDING AND CURRENT ROW
                     ) as rolling_std
                 FROM caiso.lmp_data 
                 {where_clause}
             )
             SELECT 
-                interval_start_time_gmt,
+                operational_date,
+                operational_hour,
                 node,
                 ROUND(mw::numeric, 2) as mw,
                 ROUND(rolling_mean::numeric, 2) as rolling_mean
@@ -470,7 +475,7 @@ class LMPAnalytics:
             WHERE mw > rolling_mean + %s * COALESCE(rolling_std, 0)
               AND rolling_std IS NOT NULL
               AND rolling_std > 0
-            ORDER BY interval_start_time_gmt DESC
+            ORDER BY operational_date DESC, operational_hour DESC
             """
             params.append(threshold_std)
             
@@ -488,10 +493,10 @@ class LMPAnalytics:
             params = []
             
             if start_date:
-                conditions.append("interval_start_time_gmt >= %s")
+                conditions.append("opr_dt >= %s")
                 params.append(start_date)
             if end_date:
-                conditions.append("interval_start_time_gmt <= %s")
+                conditions.append("opr_dt <= %s")
                 params.append(end_date)
             
             where_clause = "WHERE " + " AND ".join(conditions)
