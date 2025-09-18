@@ -1,0 +1,52 @@
+Short answer: if your goal is to avoid burning Replit credits, build locally and only use Replit when you actually need their hosted preview or a deployment. Keep the Agent and AI features off unless you truly need them.
+
+Here is a pragmatic setup.
+
+## What costs credits on Replit
+
+Facts:
+
+* Replit uses a credit allowance plus pay-as-you-go for usage beyond plan allotments. Core includes a monthly credit bucket, and overages are billed usage-based. ([Replit Blog][1])
+* The Agent and other AI tasks can consume credits per operation or “checkpoint.” Community and explainer posts describe this per-checkpoint model in 2025. ([Replit Builders][2])
+
+## Lowest-credit workflow
+
+Opinions:
+
+1. **Develop locally.** Use your usual tools on your machine. You will incur zero Replit credits while coding locally.
+
+2. **Use GitHub as the bridge.** Push your local repo to GitHub, then import or pull into a Repl only when you need an online preview or deployment. This keeps most iterations off Replit. ([Replit Docs][3])
+
+3. **Define the environment once with Nix files.** Keep a `replit.nix` or compatible Nix config in the repo so the Repl spins up reproducibly without you tinkering in the Replit UI. This improves portability between local and Replit. ([Replit Blog][4])
+
+4. **Turn off AI helpers by default.** Do not run the Agent or Ghostwriter during routine edits. Use them sparingly for specific refactors to avoid per-operation credit burn. Opinion based on the pricing mechanics cited above. ([Replit Builders][2])
+
+5. **Preview without “real” deployments.** When you need to show something quickly, open the Repl for a short session or use the Free plan’s temporary links. Save “Deployments” for when you truly need uptime. This minimizes credit draw from hosted resources. ([Replit][5])
+
+6. **Batch your Replit usage.** Make changes locally, then push a set of commits and test in one short Replit session rather than keeping the Repl open all afternoon. Opinion.
+
+## Should you stay entirely inside Replit
+
+Opinion:
+
+* If you want the smoothest zero-setup browser dev and you value AI features, staying inside Replit is convenient, but it is easier to leak credits.
+* If your priority is cost control, do most work locally and treat Replit as a deploy and demo surface. That hybrid approach usually keeps spend low while still giving you one-click hosting when you need it.
+
+## Simple checklist
+
+Opinions:
+
+* Local dev in VS Code or your editor
+* Repo on GitHub
+* Add `replit.nix` now so Replit mirrors your local stack
+* Only open Replit to test or deploy
+* Keep Agent and Ghostwriter off by default
+* Prefer brief preview sessions over always-on deployments
+
+If you want, tell me your stack, and I will sketch the exact `replit.nix` and a small GitHub-to-Replit workflow script to make this smooth.
+
+[1]: https://blog.replit.com/flexible-credits-and-usage-based-billing?utm_source=chatgpt.com "Flexible Credits and Usage-Based Billing"
+[2]: https://rpltbldrs.com/p/replit-pricing-explained-2025?utm_source=chatgpt.com "Replit pricing explained (2025)"
+[3]: https://docs.replit.com/replit-workspace/using-git-on-replit/import-repository?utm_source=chatgpt.com "Import from GitHub"
+[4]: https://blog.replit.com/super-colliding-nix-stores?utm_source=chatgpt.com "Super Colliding Nix Stores: Nix Flakes for Millions of ..."
+[5]: https://replit.com/pricing?utm_source=chatgpt.com "Pricing"

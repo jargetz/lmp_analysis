@@ -2,6 +2,53 @@ import pandas as pd
 from datetime import datetime, timedelta
 from database import DatabaseManager
 import logging
+import inspect
+from functools import wraps
+
+# Module-level registry for analytics methods
+_analytics_registry = {}
+
+def register_analytics(description, parameters=None, example_questions=None):
+    """
+    Decorator to register analytics methods with metadata for dynamic discovery.
+    
+    Args:
+        description (str): Clear description of what the method does
+        parameters (list): List of expected parameter names
+        example_questions (list): Example natural language questions this method can answer
+    
+    Returns:
+        Decorated method with registration metadata
+    """
+    def decorator(func):
+        # Get method signature for additional metadata
+        sig = inspect.signature(func)
+        param_names = [param for param in sig.parameters.keys() if param != 'self']
+        
+        # Store registration metadata
+        _analytics_registry[func.__name__] = {
+            'method_name': func.__name__,
+            'description': description,
+            'parameters': parameters or param_names,
+            'example_questions': example_questions or [],
+            'signature': str(sig)
+        }
+        
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            return func(*args, **kwargs)
+        
+        return wrapper
+    return decorator
+
+def get_registered_analytics():
+    """
+    Get all registered analytics methods with their metadata.
+    
+    Returns:
+        dict: Dictionary of all registered methods with metadata for chatbot discovery
+    """
+    return _analytics_registry.copy()
 
 class LMPAnalytics:
     """Core analytics functions for CAISO LMP data analysis with PostgreSQL backend"""
@@ -10,6 +57,15 @@ class LMPAnalytics:
         self.db = DatabaseManager()
         self.logger = logging.getLogger(__name__)
     
+    @register_analytics(
+        description="Find the cheapest operational hours (0-23) averaged across all nodes",
+        parameters=["n_hours", "start_date", "end_date"],
+        example_questions=[
+            "What are the 5 cheapest hours of the day?",
+            "Show me the top 10 cheapest operational hours between Jan 1-15",
+            "Which hours have the lowest average electricity prices?"
+        ]
+    )
     def get_cheapest_operational_hours(self, n_hours=5, start_date=None, end_date=None):
         """Get the N cheapest operational hours (0-23) averaged across all nodes"""
         try:
@@ -46,6 +102,15 @@ class LMPAnalytics:
             self.logger.error(f"Error getting cheapest operational hours: {str(e)}")
             return pd.DataFrame()
 
+    @register_analytics(
+        description="Get the cheapest specific hours overall or for specific node(s)",
+        parameters=["n_hours", "node", "aggregate_nodes", "start_date", "end_date", "exclude_zero"],
+        example_questions=[
+            "What were the 20 cheapest hours last week?",
+            "Show me the cheapest 50 hours for node CAISO_EHV",
+            "Find the cheapest hours across multiple nodes in January"
+        ]
+    )
     def get_cheapest_hours(self, n_hours, node=None, aggregate_nodes=None, start_date=None, end_date=None, exclude_zero=True):
         """Get the N cheapest hours overall or for specific node(s) from database"""
         try:
@@ -131,6 +196,15 @@ class LMPAnalytics:
             self.logger.error(f"Error getting cheapest hours: {str(e)}")
             return pd.DataFrame()
 
+    @register_analytics(
+        description="Find the cheapest nodes during a specific operational date and hour",
+        parameters=["n_nodes", "operational_date", "operational_hour", "exclude_zero"],
+        example_questions=[
+            "What were the 10 cheapest nodes on Jan 1 at hour 13?",
+            "Show me the cheapest nodes during peak hours on Dec 25",
+            "Which nodes had the lowest prices yesterday at 3 PM?"
+        ]
+    )
     def get_cheapest_nodes_by_hour(self, n_nodes=10, operational_date=None, operational_hour=None, exclude_zero=True):
         """Get the N cheapest nodes for a specific operational date and hour"""
         try:
@@ -173,6 +247,15 @@ class LMPAnalytics:
             self.logger.error(f"Error getting cheapest nodes by hour: {str(e)}")
             return pd.DataFrame()
     
+    @register_analytics(
+        description="Get hours with the lowest congestion component (MCC)",
+        parameters=["n_hours", "during_cheap_hours", "start_date", "end_date"],
+        example_questions=[
+            "What are the 25 hours with lowest congestion?",
+            "Show me low congestion hours during cheap price periods",
+            "Find times with minimal transmission constraints last month"
+        ]
+    )
     def get_lowest_congestion_hours(self, n_hours, during_cheap_hours=False, start_date=None, end_date=None):
         """Get hours with lowest congestion component from database"""
         try:
@@ -223,6 +306,15 @@ class LMPAnalytics:
             self.logger.error(f"Error getting lowest congestion hours: {str(e)}")
             return pd.DataFrame()
     
+    @register_analytics(
+        description="Get nodes in the lowest X percentile of average prices",
+        parameters=["percentile", "period_start", "period_end"],
+        example_questions=[
+            "Which nodes are in the bottom 10% for prices?",
+            "Show me the cheapest 5% of nodes last quarter",
+            "Find nodes with consistently low prices in the 20th percentile"
+        ]
+    )
     def get_nodes_by_price_percentile(self, percentile=10, period_start=None, period_end=None):
         """Get nodes in the lowest X percentile of prices from database"""
         try:
@@ -271,6 +363,15 @@ class LMPAnalytics:
             self.logger.error(f"Error getting nodes by price percentile: {str(e)}")
             return pd.DataFrame()
     
+    @register_analytics(
+        description="Analyze peak vs off-peak pricing patterns and premiums",
+        parameters=["start_date", "end_date"],
+        example_questions=[
+            "Compare peak and off-peak prices for all nodes",
+            "What's the peak premium percentage by node?",
+            "Show peak vs off-peak price differences last month"
+        ]
+    )
     def get_peak_vs_offpeak_analysis(self, start_date=None, end_date=None):
         """Analyze peak vs off-peak pricing patterns from database"""
         try:
@@ -318,6 +419,15 @@ class LMPAnalytics:
             self.logger.error(f"Error getting peak vs off-peak analysis: {str(e)}")
             return pd.DataFrame()
     
+    @register_analytics(
+        description="Get comprehensive statistical summary of prices by node",
+        parameters=["start_date", "end_date"],
+        example_questions=[
+            "Show me detailed price statistics for all nodes",
+            "What are the mean, median, and percentiles by node?",
+            "Get statistical overview of prices last week"
+        ]
+    )
     def get_price_statistics(self, start_date=None, end_date=None):
         """Get comprehensive price statistics from database"""
         try:
@@ -358,6 +468,15 @@ class LMPAnalytics:
             self.logger.error(f"Error getting price statistics: {str(e)}")
             return pd.DataFrame()
     
+    @register_analytics(
+        description="Get average prices by hour of day across all nodes",
+        parameters=["start_date", "end_date"],
+        example_questions=[
+            "What are the average prices by hour of day?",
+            "Show me hourly price patterns last month",
+            "Which hours typically have the highest/lowest prices?"
+        ]
+    )
     def get_hourly_averages(self, start_date=None, end_date=None):
         """Get average prices by hour of day from database"""
         try:
@@ -392,6 +511,15 @@ class LMPAnalytics:
             self.logger.error(f"Error getting hourly averages: {str(e)}")
             return pd.DataFrame()
     
+    @register_analytics(
+        description="Get summary statistics and data coverage for each node",
+        parameters=["start_date", "end_date"],
+        example_questions=[
+            "Give me a summary of all nodes and their price ranges",
+            "What nodes have data and what are their min/max prices?",
+            "Show node overview with data counts and date ranges"
+        ]
+    )
     def get_node_summary(self, start_date=None, end_date=None):
         """Get summary statistics for all nodes from database"""
         try:
@@ -429,6 +557,15 @@ class LMPAnalytics:
             self.logger.error(f"Error getting node summary: {str(e)}")
             return pd.DataFrame()
     
+    @register_analytics(
+        description="Detect price spikes using rolling standard deviation threshold",
+        parameters=["threshold_std", "start_date", "end_date"],
+        example_questions=[
+            "Find all price spikes above 3 standard deviations",
+            "What are the unusual price events last week?",
+            "Detect price anomalies and spikes in the data"
+        ]
+    )
     def detect_price_spikes(self, threshold_std=3, start_date=None, end_date=None):
         """Detect price spikes using standard deviation threshold from database"""
         try:
@@ -485,6 +622,15 @@ class LMPAnalytics:
             self.logger.error(f"Error detecting price spikes: {str(e)}")
             return pd.DataFrame()
     
+    @register_analytics(
+        description="Analyze congestion patterns using MCC (marginal congestion component) data",
+        parameters=["start_date", "end_date"],
+        example_questions=[
+            "Which nodes have the highest congestion?",
+            "Show me congestion analysis by node",
+            "What are the congestion patterns and frequencies?"
+        ]
+    )
     def get_congestion_analysis(self, start_date=None, end_date=None):
         """Analyze congestion patterns if MCC data is available from database"""
         try:
