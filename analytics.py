@@ -669,3 +669,54 @@ class LMPAnalytics:
         except Exception as e:
             self.logger.error(f"Error getting congestion analysis: {str(e)}")
             return pd.DataFrame()
+    
+    @register_analytics(
+        description="Get prices at each operational hour (0-23) for a specific node",
+        parameters=["node", "start_date", "end_date", "aggregation_method"],
+        example_questions=[
+            "Show me a chart of prices at each operational hour at node CSADIAB_7_N001",
+            "What are the hourly prices for node CAISO_EHV across all 24 hours?",
+            "Get the price pattern by hour for a specific node"
+        ]
+    )
+    def get_node_hourly_prices(self, node, start_date=None, end_date=None, aggregation_method="avg"):
+        """Get prices for a specific node across all operational hours (0-23)"""
+        try:
+            conditions = ["node = %s"]
+            params = [node]
+            
+            if start_date:
+                conditions.append("opr_dt >= %s")
+                params.append(start_date)
+            if end_date:
+                conditions.append("opr_dt <= %s")
+                params.append(end_date)
+            
+            where_clause = "WHERE " + " AND ".join(conditions)
+            
+            # Choose aggregation method
+            agg_func = "AVG" if aggregation_method.lower() == "avg" else "MEDIAN"
+            if aggregation_method.lower() == "median":
+                agg_func = "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY mw)"
+            
+            query = f"""
+            SELECT 
+                opr_hr as operational_hour,
+                node,
+                ROUND({agg_func}(mw)::numeric, 2) as price,
+                COUNT(*) as data_points,
+                ROUND(MIN(mw)::numeric, 2) as min_price,
+                ROUND(MAX(mw)::numeric, 2) as max_price,
+                ROUND(STDDEV(mw)::numeric, 2) as price_std
+            FROM caiso.lmp_data 
+            {where_clause}
+            GROUP BY opr_hr, node
+            ORDER BY opr_hr
+            """
+            
+            results = self.db.execute_query(query, params)
+            return pd.DataFrame(results) if results else pd.DataFrame()
+            
+        except Exception as e:
+            self.logger.error(f"Error getting node hourly prices: {str(e)}")
+            return pd.DataFrame()

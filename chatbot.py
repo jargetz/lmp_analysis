@@ -213,6 +213,26 @@ class LMPChatbot:
                             'end_date': params.get('end_date')
                         }
                         
+                    elif method_name == 'get_node_hourly_prices':
+                        # Handle node-specific hourly price queries
+                        nodes = params.get('nodes', [])
+                        node = None
+                        
+                        # Extract node from different possible parameter formats
+                        if nodes and len(nodes) > 0:
+                            node = nodes[0]  # Take the first node if multiple specified
+                        
+                        if not node:
+                            # This method requires a node, return error if none specified
+                            return pd.DataFrame(), "Node-specific hourly price analysis requires a specific node to be specified"
+                        
+                        method_args = {
+                            'node': node,
+                            'start_date': params.get('start_date'),
+                            'end_date': params.get('end_date'),
+                            'aggregation_method': params.get('aggregation_method', 'avg')
+                        }
+                        
                     else:
                         # For other methods, map only the parameters they expect
                         for param_name in expected_params:
@@ -399,6 +419,16 @@ class LMPChatbot:
             
         elif analysis_type == 'node_comparison':
             return f"Compared statistics across {len(df)} nodes."
+            
+        elif analysis_type == 'get_node_hourly_prices':
+            if len(df) > 0 and 'node' in df.columns and 'price' in df.columns:
+                node_name = df.iloc[0]['node']
+                min_price = df['price'].min()
+                max_price = df['price'].max()
+                hours_with_data = len(df)
+                return f"Node-specific hourly prices for {node_name}: {hours_with_data} operational hours with price range ${min_price:.2f} - ${max_price:.2f}/MWh."
+            else:
+                return f"Node-specific hourly analysis completed with {len(df)} results."
             
         else:
             return f"Analysis completed with {len(df)} results."
