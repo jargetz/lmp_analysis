@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import os
 
 from data_processor import CAISODataProcessor
-from analytics import LMPAnalytics
+from analytics import LMPAnalytics, get_registered_analytics
 from chatbot import LMPChatbot
 from s3_data_loader import S3DataLoader
 
@@ -110,7 +110,7 @@ def main():
                     st.metric("Unique Nodes", summary.get('unique_nodes', 0))
                     
                     if summary.get('earliest_date') and summary.get('latest_date'):
-                        st.metric("Date Range", f"{summary['earliest_date'].date()} to {summary['latest_date'].date()}")
+                        st.metric("Date Range", f"{summary['earliest_date']} to {summary['latest_date']}")
                         
             except Exception as e:
                 st.error(f"Error loading database details: {str(e)}")
@@ -152,7 +152,7 @@ def main():
                 placeholder="e.g., What are the 5 cheapest hours at each node?"
             )
             
-            col1, col2, col3 = st.columns([1, 1, 3])
+            col1, col2, col3 = st.columns([1, 1, 1])
             with col1:
                 if st.button("Ask AI", type="primary"):
                     if user_question:
@@ -195,11 +195,48 @@ def main():
                         st.session_state.chat_history.append((user_question, answer))
                         st.rerun()
             
-            with col2:
+            with col3:
                 if st.button("Clear Chat"):
                     st.session_state.chat_history = []
                     st.rerun()
         
+            # Available Analytics Tools Section
+            st.header("🔧 Available Analytics Tools")
+            st.markdown("Below are all the analytics methods available in this system. You can ask questions that relate to any of these capabilities:")
+            
+            # Get registered analytics methods
+            try:
+                registered_methods = get_registered_analytics()
+                
+                # Display in expandable sections for better organization
+                num_cols = 2
+                method_items = list(registered_methods.items())
+                
+                for i in range(0, len(method_items), num_cols):
+                    cols = st.columns(num_cols)
+                    
+                    for j, col in enumerate(cols):
+                        if i + j < len(method_items):
+                            method_name, method_info = method_items[i + j]
+                            
+                            with col:
+                                with st.expander(f"📊 {method_info['description'][:50]}...", expanded=False):
+                                    st.markdown(f"**Method:** `{method_name}`")
+                                    st.markdown(f"**Description:** {method_info['description']}")
+                                    
+                                    if method_info['parameters']:
+                                        params_str = ", ".join(method_info['parameters'])
+                                        st.markdown(f"**Parameters:** `{params_str}`")
+                                    
+                                    if method_info['example_questions']:
+                                        st.markdown("**Example Questions:**")
+                                        for question in method_info['example_questions']:
+                                            st.markdown(f"• _{question}_")
+                                            
+            except Exception as e:
+                st.error(f"Error loading analytics tools: {str(e)}")
+                
+            st.divider()
         with tab2:
             st.header("Quick Analytics")
             
