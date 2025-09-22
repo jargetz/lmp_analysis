@@ -57,27 +57,99 @@ class LMPAnalytics:
         self.db = DatabaseManager()
         self.logger = logging.getLogger(__name__)
     
+    def _build_where_conditions(self, start_date=None, end_date=None, nodes=None, exclude_zero=True):
+        """
+        Build standardized WHERE conditions for analytics queries.
+        
+        Args:
+            start_date: Filter start date (optional)
+            end_date: Filter end date (optional) 
+            nodes: Single node or list of nodes to filter (optional)
+            exclude_zero: Whether to exclude zero/negative prices (default True)
+            
+        Returns:
+            tuple: (conditions_list, params_list)
+        """
+        conditions = []
+        params = []
+        
+        # Exclude zero/negative prices by default for consistency
+        if exclude_zero:
+            conditions.append("mw > 0")
+        
+        # Date range filters
+        if start_date:
+            conditions.append("opr_dt >= %s")
+            params.append(start_date)
+        if end_date:
+            conditions.append("opr_dt <= %s")
+            params.append(end_date)
+        
+        # Node filters
+        if nodes:
+            if isinstance(nodes, (list, tuple)) and len(nodes) > 1:
+                placeholders = ','.join(['%s'] * len(nodes))
+                conditions.append(f"node IN ({placeholders})")
+                params.extend(nodes)
+            elif isinstance(nodes, (list, tuple)) and len(nodes) == 1:
+                conditions.append("node = %s")
+                params.append(nodes[0])
+            else:
+                conditions.append("node = %s")
+                params.append(nodes)
+        
+        return conditions, params
+    
+    def _build_market_aggregation_wrapper(self, base_query, market_summary=False):
+        """
+        Wrap a query with market-level aggregation if market_summary=True.
+        
+        Args:
+            base_query: The base SQL query to potentially wrap
+            market_summary: Whether to aggregate to market level
+            
+        Returns:
+            str: Original query or market-aggregated version
+        """
+        if not market_summary:
+            return base_query
+        
+        # For market summaries, we aggregate across all nodes
+        # This wrapper handles the common pattern of converting per-node results to market-wide
+        market_wrapper = f"""
+        WITH base_results AS (
+            {base_query}
+        )
+        SELECT 
+            'MARKET_SUMMARY' as node,
+            ROUND(AVG(CASE WHEN CAST(peak AS NUMERIC) > 0 THEN CAST(peak AS NUMERIC) END)::numeric, 2) as peak,
+            ROUND(AVG(CASE WHEN CAST(off_peak AS NUMERIC) > 0 THEN CAST(off_peak AS NUMERIC) END)::numeric, 2) as off_peak,
+            ROUND(AVG(CASE WHEN CAST(peak_premium AS NUMERIC) > 0 THEN CAST(peak_premium AS NUMERIC) END)::numeric, 2) as peak_premium,
+            ROUND(AVG(CASE WHEN CAST(peak_premium_pct AS NUMERIC) > 0 THEN CAST(peak_premium_pct AS NUMERIC) END)::numeric, 2) as peak_premium_pct
+        FROM base_results
+        WHERE peak IS NOT NULL AND off_peak IS NOT NULL
+        """
+        
+        return market_wrapper
+    
     @register_analytics(
         description="Find the cheapest operational hours (0-23) averaged across all nodes",
-        parameters=["n_hours", "start_date", "end_date"],
+        parameters=["n_hours", "start_date", "end_date", "exclude_zero"],
         example_questions=[
             "What are the 5 cheapest hours of the day?",
             "Show me the top 10 cheapest operational hours between Jan 1-15",
             "Which hours have the lowest average electricity prices?"
         ]
     )
-    def get_cheapest_operational_hours(self, n_hours=5, start_date=None, end_date=None):
+    def get_cheapest_operational_hours(self, n_hours=5, start_date=None, end_date=None, exclude_zero=True):
         """Get the N cheapest operational hours (0-23) averaged across all nodes"""
         try:
-            conditions = ["mw > 0"]
-            params = []
-            
-            if start_date:
-                conditions.append("opr_dt >= %s")
-                params.append(start_date)
-            if end_date:
-                conditions.append("opr_dt <= %s")
-                params.append(end_date)
+            # Use shared helper for consistent condition building
+            conditions, params = self._build_where_conditions(
+                start_date=start_date, 
+                end_date=end_date, 
+                exclude_zero=exclude_zero
+            )
             
             where_clause = "WHERE " + " AND ".join(conditions)
             
@@ -249,26 +321,25 @@ class LMPAnalytics:
     
     @register_analytics(
         description="Get hours with the lowest congestion component (MCC)",
-        parameters=["n_hours", "during_cheap_hours", "start_date", "end_date"],
+        parameters=["n_hours", "during_cheap_hours", "start_date", "end_date", "exclude_zero"],
         example_questions=[
             "What are the 25 hours with lowest congestion?",
             "Show me low congestion hours during cheap price periods",
             "Find times with minimal transmission constraints last month"
         ]
     )
-    def get_lowest_congestion_hours(self, n_hours, during_cheap_hours=False, start_date=None, end_date=None):
+    def get_lowest_congestion_hours(self, n_hours, during_cheap_hours=False, start_date=None, end_date=None, exclude_zero=True):
         """Get hours with lowest congestion component from database"""
         try:
-            conditions = ["mcc IS NOT NULL"]
-            params = []
+            # Start with MCC constraint and use shared helper for other conditions
+            base_conditions, params = self._build_where_conditions(
+                start_date=start_date, 
+                end_date=end_date, 
+                exclude_zero=exclude_zero
+            )
             
-            # Add date filters
-            if start_date:
-                conditions.append("opr_dt >= %s")
-                params.append(start_date)
-            if end_date:
-                conditions.append("opr_dt <= %s")
-                params.append(end_date)
+            # Add MCC-specific constraint
+            conditions = ["mcc IS NOT NULL"] + base_conditions
             
             if during_cheap_hours:
                 # First get the 20% price threshold
@@ -308,25 +379,22 @@ class LMPAnalytics:
     
     @register_analytics(
         description="Get nodes in the lowest X percentile of average prices",
-        parameters=["percentile", "period_start", "period_end"],
+        parameters=["percentile", "period_start", "period_end", "exclude_zero"],
         example_questions=[
             "Which nodes are in the bottom 10% for prices?",
             "Show me the cheapest 5% of nodes last quarter",
             "Find nodes with consistently low prices in the 20th percentile"
         ]
     )
-    def get_nodes_by_price_percentile(self, percentile=10, period_start=None, period_end=None):
+    def get_nodes_by_price_percentile(self, percentile=10, period_start=None, period_end=None, exclude_zero=True):
         """Get nodes in the lowest X percentile of prices from database"""
         try:
-            conditions = []
-            params = []
-            
-            if period_start:
-                conditions.append("opr_dt >= %s")
-                params.append(period_start)
-            if period_end:
-                conditions.append("opr_dt <= %s")
-                params.append(period_end)
+            # Use shared helper for consistent condition building
+            conditions, params = self._build_where_conditions(
+                start_date=period_start, 
+                end_date=period_end, 
+                exclude_zero=exclude_zero
+            )
             
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
             
@@ -365,52 +433,75 @@ class LMPAnalytics:
     
     @register_analytics(
         description="Analyze peak vs off-peak pricing patterns and premiums",
-        parameters=["start_date", "end_date"],
+        parameters=["start_date", "end_date", "exclude_zero", "market_summary"],
         example_questions=[
             "Compare peak and off-peak prices for all nodes",
             "What's the peak premium percentage by node?",
             "Show peak vs off-peak price differences last month"
         ]
     )
-    def get_peak_vs_offpeak_analysis(self, start_date=None, end_date=None):
+    def get_peak_vs_offpeak_analysis(self, start_date=None, end_date=None, exclude_zero=True, market_summary=False):
         """Analyze peak vs off-peak pricing patterns from database"""
         try:
-            conditions = []
-            params = []
-            
-            if start_date:
-                conditions.append("opr_dt >= %s")
-                params.append(start_date)
-            if end_date:
-                conditions.append("opr_dt <= %s")
-                params.append(end_date)
+            # Use shared helper for consistent condition building
+            conditions, params = self._build_where_conditions(
+                start_date=start_date, 
+                end_date=end_date, 
+                exclude_zero=exclude_zero
+            )
             
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
             
-            query = f"""
-            WITH period_stats AS (
+            # Build base query for peak vs off-peak analysis
+            if market_summary:
+                # Market-wide aggregation
+                query = f"""
+                WITH period_stats AS (
+                    SELECT 
+                        CASE WHEN opr_hr BETWEEN 7 AND 22 THEN 'Peak' ELSE 'Off-Peak' END as period,
+                        AVG(mw) as avg_price
+                    FROM caiso.lmp_data 
+                    {where_clause}
+                    GROUP BY CASE WHEN opr_hr BETWEEN 7 AND 22 THEN 'Peak' ELSE 'Off-Peak' END
+                )
+                SELECT 
+                    'MARKET_SUMMARY' as node,
+                    ROUND(MAX(CASE WHEN period = 'Peak' THEN avg_price END)::numeric, 2) as peak,
+                    ROUND(MAX(CASE WHEN period = 'Off-Peak' THEN avg_price END)::numeric, 2) as off_peak,
+                    ROUND((MAX(CASE WHEN period = 'Peak' THEN avg_price END) - 
+                           MAX(CASE WHEN period = 'Off-Peak' THEN avg_price END))::numeric, 2) as peak_premium,
+                    ROUND((((MAX(CASE WHEN period = 'Peak' THEN avg_price END) - 
+                             MAX(CASE WHEN period = 'Off-Peak' THEN avg_price END)) / 
+                             NULLIF(MAX(CASE WHEN period = 'Off-Peak' THEN avg_price END), 0)) * 100)::numeric, 2) as peak_premium_pct
+                FROM period_stats
+                HAVING COUNT(DISTINCT period) = 2
+                """
+            else:
+                # Per-node breakdown (original behavior)
+                query = f"""
+                WITH period_stats AS (
+                    SELECT 
+                        node,
+                        CASE WHEN opr_hr BETWEEN 7 AND 22 THEN 'Peak' ELSE 'Off-Peak' END as period,
+                        AVG(mw) as avg_price
+                    FROM caiso.lmp_data 
+                    {where_clause}
+                    GROUP BY node, CASE WHEN opr_hr BETWEEN 7 AND 22 THEN 'Peak' ELSE 'Off-Peak' END
+                )
                 SELECT 
                     node,
-                    CASE WHEN opr_hr BETWEEN 7 AND 22 THEN 'Peak' ELSE 'Off-Peak' END as period,
-                    AVG(mw) as avg_price
-                FROM caiso.lmp_data 
-                {where_clause}
-                GROUP BY node, CASE WHEN opr_hr BETWEEN 7 AND 22 THEN 'Peak' ELSE 'Off-Peak' END
-            )
-            SELECT 
-                node,
-                ROUND(MAX(CASE WHEN period = 'Peak' THEN avg_price END)::numeric, 2) as peak,
-                ROUND(MAX(CASE WHEN period = 'Off-Peak' THEN avg_price END)::numeric, 2) as off_peak,
-                ROUND((MAX(CASE WHEN period = 'Peak' THEN avg_price END) - 
-                       MAX(CASE WHEN period = 'Off-Peak' THEN avg_price END))::numeric, 2) as peak_premium,
-                ROUND((((MAX(CASE WHEN period = 'Peak' THEN avg_price END) - 
-                         MAX(CASE WHEN period = 'Off-Peak' THEN avg_price END)) / 
-                         NULLIF(MAX(CASE WHEN period = 'Off-Peak' THEN avg_price END), 0)) * 100)::numeric, 2) as peak_premium_pct
-            FROM period_stats
-            GROUP BY node
-            HAVING COUNT(DISTINCT period) = 2
-            ORDER BY peak_premium_pct DESC
-            """
+                    ROUND(MAX(CASE WHEN period = 'Peak' THEN avg_price END)::numeric, 2) as peak,
+                    ROUND(MAX(CASE WHEN period = 'Off-Peak' THEN avg_price END)::numeric, 2) as off_peak,
+                    ROUND((MAX(CASE WHEN period = 'Peak' THEN avg_price END) - 
+                           MAX(CASE WHEN period = 'Off-Peak' THEN avg_price END))::numeric, 2) as peak_premium,
+                    ROUND((((MAX(CASE WHEN period = 'Peak' THEN avg_price END) - 
+                             MAX(CASE WHEN period = 'Off-Peak' THEN avg_price END)) / 
+                             NULLIF(MAX(CASE WHEN period = 'Off-Peak' THEN avg_price END), 0)) * 100)::numeric, 2) as peak_premium_pct
+                FROM period_stats
+                GROUP BY node
+                HAVING COUNT(DISTINCT period) = 2
+                ORDER BY peak_premium_pct DESC
+                """
             
             results = self.db.execute_query(query, params)
             return pd.DataFrame(results) if results else pd.DataFrame()
@@ -421,45 +512,62 @@ class LMPAnalytics:
     
     @register_analytics(
         description="Get comprehensive statistical summary of prices by node",
-        parameters=["start_date", "end_date"],
+        parameters=["start_date", "end_date", "exclude_zero", "market_summary"],
         example_questions=[
             "Show me detailed price statistics for all nodes",
             "What are the mean, median, and percentiles by node?",
             "Get statistical overview of prices last week"
         ]
     )
-    def get_price_statistics(self, start_date=None, end_date=None):
+    def get_price_statistics(self, start_date=None, end_date=None, exclude_zero=True, market_summary=False):
         """Get comprehensive price statistics from database"""
         try:
-            conditions = []
-            params = []
-            
-            if start_date:
-                conditions.append("opr_dt >= %s")
-                params.append(start_date)
-            if end_date:
-                conditions.append("opr_dt <= %s")
-                params.append(end_date)
+            # Use shared helper for consistent condition building
+            conditions, params = self._build_where_conditions(
+                start_date=start_date, 
+                end_date=end_date, 
+                exclude_zero=exclude_zero
+            )
             
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
             
-            query = f"""
-            SELECT 
-                node,
-                COUNT(*) as count,
-                ROUND(AVG(mw)::numeric, 2) as mean,
-                ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY mw)::numeric, 2) as median,
-                ROUND(STDDEV(mw)::numeric, 2) as std,
-                ROUND(MIN(mw)::numeric, 2) as min,
-                ROUND(MAX(mw)::numeric, 2) as max,
-                ROUND(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY mw)::numeric, 2) as p25,
-                ROUND(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY mw)::numeric, 2) as p75,
-                ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY mw)::numeric, 2) as p95
-            FROM caiso.lmp_data 
-            {where_clause}
-            GROUP BY node
-            ORDER BY mean
-            """
+            # Build query based on market_summary preference
+            if market_summary:
+                # Market-wide statistics aggregation
+                query = f"""
+                SELECT 
+                    'MARKET_SUMMARY' as node,
+                    COUNT(*) as count,
+                    ROUND(AVG(mw)::numeric, 2) as mean,
+                    ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY mw)::numeric, 2) as median,
+                    ROUND(STDDEV(mw)::numeric, 2) as std,
+                    ROUND(MIN(mw)::numeric, 2) as min,
+                    ROUND(MAX(mw)::numeric, 2) as max,
+                    ROUND(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY mw)::numeric, 2) as p25,
+                    ROUND(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY mw)::numeric, 2) as p75,
+                    ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY mw)::numeric, 2) as p95
+                FROM caiso.lmp_data 
+                {where_clause}
+                """
+            else:
+                # Per-node statistics (original behavior)
+                query = f"""
+                SELECT 
+                    node,
+                    COUNT(*) as count,
+                    ROUND(AVG(mw)::numeric, 2) as mean,
+                    ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY mw)::numeric, 2) as median,
+                    ROUND(STDDEV(mw)::numeric, 2) as std,
+                    ROUND(MIN(mw)::numeric, 2) as min,
+                    ROUND(MAX(mw)::numeric, 2) as max,
+                    ROUND(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY mw)::numeric, 2) as p25,
+                    ROUND(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY mw)::numeric, 2) as p75,
+                    ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY mw)::numeric, 2) as p95
+                FROM caiso.lmp_data 
+                {where_clause}
+                GROUP BY node
+                ORDER BY mean
+                """
             
             results = self.db.execute_query(query, params)
             return pd.DataFrame(results) if results else pd.DataFrame()
@@ -470,28 +578,26 @@ class LMPAnalytics:
     
     @register_analytics(
         description="Get average prices by hour of day across all nodes",
-        parameters=["start_date", "end_date"],
+        parameters=["start_date", "end_date", "exclude_zero", "market_summary"],
         example_questions=[
             "What are the average prices by hour of day?",
             "Show me hourly price patterns last month",
             "Which hours typically have the highest/lowest prices?"
         ]
     )
-    def get_hourly_averages(self, start_date=None, end_date=None):
+    def get_hourly_averages(self, start_date=None, end_date=None, exclude_zero=True, market_summary=False):
         """Get average prices by hour of day from database"""
         try:
-            conditions = []
-            params = []
-            
-            if start_date:
-                conditions.append("opr_dt >= %s")
-                params.append(start_date)
-            if end_date:
-                conditions.append("opr_dt <= %s")
-                params.append(end_date)
+            # Use shared helper for consistent condition building
+            conditions, params = self._build_where_conditions(
+                start_date=start_date, 
+                end_date=end_date, 
+                exclude_zero=exclude_zero
+            )
             
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
             
+            # Market summary doesn't change the structure for hourly averages since it's already aggregated across nodes
             query = f"""
             SELECT 
                 opr_hr as hour,
@@ -513,25 +619,22 @@ class LMPAnalytics:
     
     @register_analytics(
         description="Get summary statistics and data coverage for each node",
-        parameters=["start_date", "end_date"],
+        parameters=["start_date", "end_date", "exclude_zero"],
         example_questions=[
             "Give me a summary of all nodes and their price ranges",
             "What nodes have data and what are their min/max prices?",
             "Show node overview with data counts and date ranges"
         ]
     )
-    def get_node_summary(self, start_date=None, end_date=None):
+    def get_node_summary(self, start_date=None, end_date=None, exclude_zero=True):
         """Get summary statistics for all nodes from database"""
         try:
-            conditions = []
-            params = []
-            
-            if start_date:
-                conditions.append("opr_dt >= %s")
-                params.append(start_date)
-            if end_date:
-                conditions.append("opr_dt <= %s")
-                params.append(end_date)
+            # Use shared helper for consistent condition building
+            conditions, params = self._build_where_conditions(
+                start_date=start_date, 
+                end_date=end_date, 
+                exclude_zero=exclude_zero
+            )
             
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
             
@@ -559,25 +662,22 @@ class LMPAnalytics:
     
     @register_analytics(
         description="Detect price spikes using rolling standard deviation threshold",
-        parameters=["threshold_std", "start_date", "end_date"],
+        parameters=["threshold_std", "start_date", "end_date", "exclude_zero"],
         example_questions=[
             "Find all price spikes above 3 standard deviations",
             "What are the unusual price events last week?",
             "Detect price anomalies and spikes in the data"
         ]
     )
-    def detect_price_spikes(self, threshold_std=3, start_date=None, end_date=None):
+    def detect_price_spikes(self, threshold_std=3, start_date=None, end_date=None, exclude_zero=True):
         """Detect price spikes using standard deviation threshold from database"""
         try:
-            conditions = []
-            params = []
-            
-            if start_date:
-                conditions.append("opr_dt >= %s")
-                params.append(start_date)
-            if end_date:
-                conditions.append("opr_dt <= %s")
-                params.append(end_date)
+            # Use shared helper for consistent condition building
+            conditions, params = self._build_where_conditions(
+                start_date=start_date, 
+                end_date=end_date, 
+                exclude_zero=exclude_zero
+            )
             
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
             
@@ -624,26 +724,25 @@ class LMPAnalytics:
     
     @register_analytics(
         description="Analyze congestion patterns using MCC (marginal congestion component) data",
-        parameters=["start_date", "end_date"],
+        parameters=["start_date", "end_date", "exclude_zero"],
         example_questions=[
             "Which nodes have the highest congestion?",
             "Show me congestion analysis by node",
             "What are the congestion patterns and frequencies?"
         ]
     )
-    def get_congestion_analysis(self, start_date=None, end_date=None):
+    def get_congestion_analysis(self, start_date=None, end_date=None, exclude_zero=True):
         """Analyze congestion patterns if MCC data is available from database"""
         try:
-            conditions = ["mcc IS NOT NULL"]
-            params = []
+            # Start with MCC constraint and use shared helper for other conditions
+            base_conditions, params = self._build_where_conditions(
+                start_date=start_date, 
+                end_date=end_date, 
+                exclude_zero=exclude_zero
+            )
             
-            if start_date:
-                conditions.append("opr_dt >= %s")
-                params.append(start_date)
-            if end_date:
-                conditions.append("opr_dt <= %s")
-                params.append(end_date)
-            
+            # Add MCC-specific constraint
+            conditions = ["mcc IS NOT NULL"] + base_conditions
             where_clause = "WHERE " + " AND ".join(conditions)
             
             query = f"""
@@ -672,25 +771,26 @@ class LMPAnalytics:
     
     @register_analytics(
         description="Get prices at each operational hour (0-23) for a specific node",
-        parameters=["node", "start_date", "end_date", "aggregation_method"],
+        parameters=["node", "start_date", "end_date", "aggregation_method", "exclude_zero"],
         example_questions=[
             "Show me a chart of prices at each operational hour at node CSADIAB_7_N001",
             "What are the hourly prices for node CAISO_EHV across all 24 hours?",
             "Get the price pattern by hour for a specific node"
         ]
     )
-    def get_node_hourly_prices(self, node, start_date=None, end_date=None, aggregation_method="avg"):
+    def get_node_hourly_prices(self, node, start_date=None, end_date=None, aggregation_method="avg", exclude_zero=True):
         """Get prices for a specific node across all operational hours (0-23)"""
         try:
-            conditions = ["node = %s"]
-            params = [node]
+            # Use shared helper for consistent condition building, then add node constraint
+            base_conditions, base_params = self._build_where_conditions(
+                start_date=start_date, 
+                end_date=end_date, 
+                exclude_zero=exclude_zero
+            )
             
-            if start_date:
-                conditions.append("opr_dt >= %s")
-                params.append(start_date)
-            if end_date:
-                conditions.append("opr_dt <= %s")
-                params.append(end_date)
+            # Add node-specific constraint
+            conditions = ["node = %s"] + base_conditions
+            params = [node] + base_params
             
             where_clause = "WHERE " + " AND ".join(conditions)
             
