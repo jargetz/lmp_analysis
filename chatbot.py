@@ -197,6 +197,18 @@ class LMPChatbot:
         
         self.logger.info(f"Executing analysis type: {analysis_type} with params: {params}")
         
+        # Extract scope and include_zero parameters with defaults
+        scope = params.get('scope', 'market')
+        include_zero = params.get('include_zero', False)
+        
+        # Map include_zero to exclude_zero (include_zero=False → exclude_zero=True)
+        exclude_zero = not include_zero
+        
+        # Map scope to market_summary for compatible methods
+        market_summary = scope == 'market'
+        
+        self.logger.info(f"Intent mapping: scope={scope}, include_zero={include_zero} → exclude_zero={exclude_zero}, market_summary={market_summary}")
+        
         try:
             # Get registered analytics to find the appropriate method
             registered_analytics = get_registered_analytics()
@@ -224,11 +236,20 @@ class LMPChatbot:
                         'percentile': params.get('percentile', 10),
                         'start_date': params.get('start_date'),
                         'end_date': params.get('end_date'),
-                        'exclude_zero': True,  # Default for most methods
+                        'exclude_zero': exclude_zero,  # Now derived from intent's include_zero
                         'during_cheap_hours': False,
                         'node': None,
                         'aggregate_nodes': None
                     }
+                    
+                    # Add market_summary parameter for compatible methods
+                    methods_supporting_market_summary = [
+                        'get_peak_vs_offpeak_analysis', 
+                        'get_price_statistics', 
+                        'get_hourly_averages'
+                    ]
+                    if method_name in methods_supporting_market_summary:
+                        param_mapping['market_summary'] = market_summary
                     
                     # Handle special parameter logic for specific methods
                     if method_name == 'get_cheapest_hours':
@@ -238,6 +259,7 @@ class LMPChatbot:
                         elif len(nodes) > 1:
                             method_args['aggregate_nodes'] = nodes
                         method_args['n_hours'] = params.get('n_hours', 10)
+                        method_args['exclude_zero'] = exclude_zero
                         
                     elif method_name == 'get_cheapest_nodes_by_hour':
                         # Handle time_period parsing for this method
@@ -265,14 +287,15 @@ class LMPChatbot:
                             'n_nodes': params.get('n_nodes', 10),
                             'operational_date': operational_date,
                             'operational_hour': operational_hour,
-                            'exclude_zero': True
+                            'exclude_zero': exclude_zero
                         }
                         
                     elif method_name == 'get_cheapest_operational_hours':
                         method_args = {
                             'n_hours': params.get('n_hours', 5),
                             'start_date': params.get('start_date'),
-                            'end_date': params.get('end_date')
+                            'end_date': params.get('end_date'),
+                            'exclude_zero': exclude_zero
                         }
                         
                     elif method_name == 'get_lowest_congestion_hours':
@@ -280,7 +303,8 @@ class LMPChatbot:
                             'n_hours': params.get('n_hours', 20),
                             'during_cheap_hours': params.get('during_cheap_hours', False),
                             'start_date': params.get('start_date'),
-                            'end_date': params.get('end_date')
+                            'end_date': params.get('end_date'),
+                            'exclude_zero': exclude_zero
                         }
                         
                     elif method_name == 'get_node_hourly_prices':
@@ -300,14 +324,28 @@ class LMPChatbot:
                             'node': node,
                             'start_date': params.get('start_date'),
                             'end_date': params.get('end_date'),
-                            'aggregation_method': params.get('aggregation_method', 'avg')
+                            'aggregation_method': params.get('aggregation_method', 'avg'),
+                            'exclude_zero': exclude_zero
                         }
+                        
+                    elif method_name in methods_supporting_market_summary:
+                        # For methods that support market_summary parameter
+                        for param_name in expected_params:
+                            if param_name in param_mapping and param_mapping[param_name] is not None:
+                                method_args[param_name] = param_mapping[param_name]
+                        
+                        # Ensure market_summary and exclude_zero are always included
+                        method_args['market_summary'] = market_summary
+                        method_args['exclude_zero'] = exclude_zero
                         
                     else:
                         # For other methods, map only the parameters they expect
                         for param_name in expected_params:
                             if param_name in param_mapping and param_mapping[param_name] is not None:
                                 method_args[param_name] = param_mapping[param_name]
+                        
+                        # Ensure exclude_zero is always included for all methods
+                        method_args['exclude_zero'] = exclude_zero
                     
                     # Remove None values to let method defaults take effect
                     method_args = {k: v for k, v in method_args.items() if v is not None}
@@ -330,7 +368,12 @@ class LMPChatbot:
             else:
                 # Fallback for general queries or unrecognized analysis types
                 if hasattr(self.analytics, 'get_price_statistics'):
-                    return self.analytics.get_price_statistics()
+                    # Apply scope and include_zero logic to fallback method too
+                    fallback_args = {
+                        'market_summary': market_summary,
+                        'exclude_zero': exclude_zero
+                    }
+                    return self.analytics.get_price_statistics(**fallback_args)
                 else:
                     return pd.DataFrame(), "No suitable analysis method found"
                 
