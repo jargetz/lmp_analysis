@@ -396,24 +396,55 @@ class LMPChatbot:
         if result_df is None or (isinstance(result_df, pd.DataFrame) and result_df.empty):
             return "I couldn't find any data matching your query. Please check if the requested information is available in your dataset."
         
+        # Get scope from intent analysis
+        params = intent_analysis.get('parameters', {})
+        scope = params.get('scope', 'market')
+        
         # Generate interpretation display
         interpretation = self._format_interpretation(intent_analysis)
         
         # Convert DataFrame to readable format
         if isinstance(result_df, pd.DataFrame):
-            # Limit results for readability
-            display_df = result_df.head(20)
-            
             # Generate summary
-            summary = self._generate_summary(display_df, intent_analysis.get('analysis_type', 'general'))
+            summary = self._generate_summary(result_df, intent_analysis.get('analysis_type', 'general'), intent_analysis)
             
-            # Format as table
-            table_str = display_df.to_string(index=False, float_format='%.2f')
+            # Format response based on scope
+            if scope == 'market':
+                # Market scope: Show concise summaries without detailed tables
+                response = f"{interpretation}\n\n{summary}"
+                
+                # Only show table for market scope if data is very limited and meaningful
+                if len(result_df) <= 3 and any(col in result_df.columns for col in ['peak_avg', 'offpeak_avg', 'avg_price', 'min_price', 'max_price']):
+                    display_df = result_df
+                    table_str = display_df.to_string(index=False, float_format='%.2f')
+                    response += f"\n\nKey Statistics:\n```\n{table_str}\n```"
+                    
+            elif scope == 'node':
+                # Node scope: Show focused node details with relevant data
+                display_df = result_df.head(10)  # Smaller limit for focused view
+                table_str = display_df.to_string(index=False, float_format='%.2f')
+                response = f"{interpretation}\n\n{summary}\n\nNode Details:\n```\n{table_str}\n```"
+                
+                if len(result_df) > 10:
+                    response += f"\n\n(Showing first 10 results out of {len(result_df)} total results)"
+                    
+            elif scope == 'list':
+                # List scope: Show clean ranked tables
+                display_df = result_df.head(15)  # Show more for rankings
+                table_str = display_df.to_string(index=False, float_format='%.2f')
+                response = f"{interpretation}\n\n{summary}\n\nRanking Results:\n```\n{table_str}\n```"
+                
+                if len(result_df) > 15:
+                    response += f"\n\n(Showing top 15 results out of {len(result_df)} total results)"
             
-            response = f"{interpretation}\n\n{summary}\n\nResults:\n```\n{table_str}\n```"
-            
-            if len(result_df) > 20:
-                response += f"\n\n(Showing first 20 results out of {len(result_df)} total results)"
+            else:
+                # Fallback: Default table display
+                display_df = result_df.head(20)
+                table_str = display_df.to_string(index=False, float_format='%.2f')
+                response = f"{interpretation}\n\n{summary}\n\nResults:\n```\n{table_str}\n```"
+                
+                if len(result_df) > 20:
+                    response += f"\n\n(Showing first 20 results out of {len(result_df)} total results)"
                 
         else:
             response = f"{interpretation}\n\n{str(result_df)}"
@@ -425,6 +456,10 @@ class LMPChatbot:
         analysis_type = intent_analysis.get('analysis_type', 'general_query')
         parameters = intent_analysis.get('parameters', {})
         confidence = intent_analysis.get('confidence', 0)
+        
+        # Get scope and include_zero information
+        scope = parameters.get('scope', 'market')
+        include_zero = parameters.get('include_zero', False)
         
         # Get user-friendly names from registered analytics
         registered_analytics = get_registered_analytics()
@@ -439,10 +474,18 @@ class LMPChatbot:
             }
             friendly_name = fallback_names.get(analysis_type, analysis_type.replace('_', ' ').title())
         
+        # Format scope information
+        scope_descriptions = {
+            'market': 'Market-wide analysis',
+            'node': 'Node-specific analysis', 
+            'list': 'Comparative ranking analysis'
+        }
+        scope_str = scope_descriptions.get(scope, scope)
+        
         # Format parameters in a user-friendly way
         param_display = []
         for key, value in parameters.items():
-            if value is not None and value != [] and value != '':
+            if value is not None and value != [] and value != '' and key not in ['scope', 'include_zero']:
                 if key == 'n_hours':
                     param_display.append(f"Number of results: {value}")
                 elif key == 'n_nodes':
@@ -465,20 +508,166 @@ class LMPChatbot:
         params_str = " • ".join(param_display) if param_display else "All available data"
         confidence_str = f"{int(confidence * 100)}%" if confidence > 0 else "High"
         
+        # Add include_zero information if relevant
+        zero_filter_str = ""
+        if include_zero:
+            zero_filter_str = " • Including zero/null prices"
+        
         interpretation = f"""🤖 **How I interpreted your question:**
 **Analysis Type:** {friendly_name}
-**Parameters:** {params_str}
+**Scope:** {scope_str}
+**Parameters:** {params_str}{zero_filter_str}
 **Confidence:** {confidence_str}
 
 ---"""
         
         return interpretation
     
-    def _generate_summary(self, df, analysis_type):
-        """Generate a summary of the analysis results"""
+    def _generate_summary(self, df, analysis_type, intent_analysis=None):
+        """Generate a summary of the analysis results based on scope"""
         if df.empty:
             return "No results found for your query."
         
+        # Get scope from intent analysis
+        scope = 'market'  # default
+        if intent_analysis:
+            params = intent_analysis.get('parameters', {})
+            scope = params.get('scope', 'market')
+        
+        # Generate scope-aware summaries
+        if scope == 'market':
+            return self._generate_market_summary(df, analysis_type)
+        elif scope == 'node':
+            return self._generate_node_summary(df, analysis_type)
+        elif scope == 'list':
+            return self._generate_list_summary(df, analysis_type)
+        else:
+            # Fallback to original logic
+            return self._generate_fallback_summary(df, analysis_type)
+    
+    def _generate_market_summary(self, df, analysis_type):
+        """Generate concise market-wide summaries"""
+        if df.empty:
+            return "No market data found."
+        
+        # Market summary formatting for specific analysis types
+        if analysis_type == 'get_peak_vs_offpeak_analysis':
+            if 'peak_avg' in df.columns and 'offpeak_avg' in df.columns and len(df) > 0:
+                peak_price = df['peak_avg'].iloc[0] if not df['peak_avg'].isna().iloc[0] else 0
+                offpeak_price = df['offpeak_avg'].iloc[0] if not df['offpeak_avg'].isna().iloc[0] else 0
+                if peak_price > 0 and offpeak_price > 0:
+                    premium = peak_price - offpeak_price
+                    premium_pct = (premium / offpeak_price) * 100 if offpeak_price > 0 else 0
+                    return f"Market Peak: ${peak_price:.2f}/MWh, Off-Peak: ${offpeak_price:.2f}/MWh, Premium: ${premium:.2f} ({premium_pct:.1f}%)"
+                else:
+                    return f"Market Peak: ${peak_price:.2f}/MWh, Off-Peak: ${offpeak_price:.2f}/MWh"
+            else:
+                return "Market peak vs off-peak analysis completed."
+                
+        elif analysis_type == 'get_price_statistics':
+            if 'avg_price' in df.columns and 'min_price' in df.columns and 'max_price' in df.columns and len(df) > 0:
+                avg_price = df['avg_price'].iloc[0]
+                min_price = df['min_price'].iloc[0] 
+                max_price = df['max_price'].iloc[0]
+                return f"Market Average: ${avg_price:.2f}/MWh, Range: ${min_price:.2f}-${max_price:.2f}/MWh"
+            elif 'mw' in df.columns:
+                avg_price = df['mw'].mean()
+                min_price = df['mw'].min()
+                max_price = df['mw'].max()
+                return f"Market Average: ${avg_price:.2f}/MWh, Range: ${min_price:.2f}-${max_price:.2f}/MWh"
+            else:
+                return "Market price statistics analysis completed."
+                
+        elif analysis_type == 'get_hourly_averages':
+            if 'avg_price' in df.columns and len(df) > 0:
+                min_hourly = df['avg_price'].min()
+                max_hourly = df['avg_price'].max()
+                return f"24-hour market profile shows prices ranging from ${min_hourly:.2f}-${max_hourly:.2f}/MWh"
+            elif 'mw' in df.columns:
+                min_price = df['mw'].min()
+                max_price = df['mw'].max()
+                return f"24-hour market profile shows prices ranging from ${min_price:.2f}-${max_price:.2f}/MWh"
+            else:
+                return "24-hour market profile analysis completed."
+                
+        else:
+            # Generic market summary for other analysis types
+            if 'mw' in df.columns and len(df) > 0:
+                avg_price = df['mw'].mean()
+                min_price = df['mw'].min()
+                max_price = df['mw'].max()
+                return f"Market analysis shows average price ${avg_price:.2f}/MWh with range ${min_price:.2f}-${max_price:.2f}/MWh across {len(df)} data points."
+            else:
+                return f"Market-wide analysis completed with {len(df)} results."
+    
+    def _generate_node_summary(self, df, analysis_type):
+        """Generate individual node details"""
+        if df.empty:
+            return "No node data found."
+        
+        # Node-specific formatting
+        if analysis_type == 'get_node_hourly_prices':
+            if len(df) > 0 and 'node' in df.columns and 'price' in df.columns:
+                node_name = df.iloc[0]['node']
+                min_price = df['price'].min()
+                max_price = df['price'].max()
+                avg_price = df['price'].mean()
+                hours_with_data = len(df)
+                return f"Node {node_name}: {hours_with_data} hours analyzed, average ${avg_price:.2f}/MWh, range ${min_price:.2f}-${max_price:.2f}/MWh."
+            else:
+                return f"Node-specific analysis completed with {len(df)} results."
+        
+        elif 'node' in df.columns and 'mw' in df.columns and len(df) > 0:
+            # Generic node analysis
+            node_name = df.iloc[0]['node']
+            avg_price = df['mw'].mean()
+            min_price = df['mw'].min() 
+            max_price = df['mw'].max()
+            return f"Node {node_name}: Average ${avg_price:.2f}/MWh, range ${min_price:.2f}-${max_price:.2f}/MWh across {len(df)} time periods."
+        
+        else:
+            return f"Node-specific analysis completed with {len(df)} results."
+    
+    def _generate_list_summary(self, df, analysis_type):
+        """Generate ranking/comparison format summaries"""
+        if df.empty:
+            return "No ranking data found."
+        
+        # List/ranking formatting
+        if analysis_type == 'get_cheapest_nodes_by_hour':
+            if 'mw' in df.columns and len(df) > 0:
+                cheapest_price = df['mw'].min()
+                cheapest_node = df.iloc[0]['node']
+                return f"Ranking of {len(df)} nodes by price. Cheapest: {cheapest_node} at ${cheapest_price:.2f}/MWh."
+            else:
+                return f"Ranking of {len(df)} nodes completed."
+                
+        elif analysis_type == 'cheapest_hours':
+            if 'mw' in df.columns and len(df) > 0:
+                cheapest_price = df['mw'].min()
+                return f"Top {len(df)} cheapest hours identified. Lowest price: ${cheapest_price:.2f}/MWh."
+            else:
+                return f"Top {len(df)} cheapest hours analysis completed."
+                
+        elif analysis_type == 'cheapest_operational_hours':
+            if 'avg_price' in df.columns and 'opr_hr' in df.columns and len(df) > 0:
+                best_hour = df.iloc[0]['opr_hr']
+                best_price = df.iloc[0]['avg_price']
+                return f"Top {len(df)} cheapest operational hours ranked. Best: Hour {best_hour} at ${best_price:.2f}/MWh average."
+            else:
+                return f"Top {len(df)} operational hours ranked."
+        
+        else:
+            # Generic ranking summary
+            if 'mw' in df.columns and len(df) > 0:
+                best_price = df['mw'].min()
+                price_range = df['mw'].max() - df['mw'].min()
+                return f"Ranked {len(df)} results. Best price: ${best_price:.2f}/MWh, range: ${price_range:.2f}/MWh."
+            else:
+                return f"Ranking analysis completed with {len(df)} results."
+    
+    def _generate_fallback_summary(self, df, analysis_type):
+        """Fallback to original summary logic"""
         # Use lazy evaluation to avoid KeyErrors from accessing columns that don't exist
         if analysis_type == 'cheapest_hours':
             if 'mw' in df.columns and len(df) > 0:
