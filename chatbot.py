@@ -78,10 +78,29 @@ class LMPChatbot:
                 "percentile": integer (if asking for percentile analysis),
                 "nodes": ["list of specific nodes if mentioned"],
                 "time_period": "specific time period if mentioned",
-                "comparison_type": "type of comparison requested"
+                "comparison_type": "type of comparison requested",
+                "scope": "market|node|list (REQUIRED - see scope rules below)",
+                "include_zero": boolean (REQUIRED - default false, true only if explicitly requested)
             }},
             "confidence": number between 0 and 1
         }}
+        
+        SCOPE SETTING RULES (ALWAYS SET scope field):
+        - scope="market": For questions about "all nodes", market-wide analysis, or when no specific nodes mentioned
+        - scope="node": For questions about a specific single node (when nodes array has exactly 1 item)
+        - scope="list": For questions asking for "top/cheapest/highest/best/worst X nodes" or ranked comparisons
+        
+        INCLUDE_ZERO RULES (ALWAYS SET include_zero field):
+        - include_zero=false: Default behavior (exclude zero/null prices)
+        - include_zero=true: Only when user explicitly asks to "include zero prices", "show all prices including zero", or similar explicit requests
+        
+        SCOPE EXAMPLES:
+        - "What's the spread of peak vs off-peak for all nodes?" → scope="market", include_zero=false
+        - "Show node CSADIAB_7_N001 peak vs off-peak" → scope="node", include_zero=false  
+        - "Top 10 nodes by peak premium" → scope="list", include_zero=false
+        - "All nodes including zero prices" → scope="market", include_zero=true
+        - "Which nodes have the lowest congestion?" → scope="list", include_zero=false
+        - "Average price across all nodes" → scope="market", include_zero=false
         
         Available analysis types:
         {analysis_descriptions_str}
@@ -112,13 +131,64 @@ class LMPChatbot:
             
             content = response.choices[0].message.content
             if content:
-                return json.loads(content)
+                result = json.loads(content)
+                # Validate and add fallback logic for scope and include_zero fields
+                result = self._validate_and_enhance_intent(result, question)
+                return result
             else:
                 return self._fallback_intent_analysis(question)
             
         except Exception as e:
             # Fallback to basic analysis if OpenAI fails
             return self._fallback_intent_analysis(question)
+    
+    def _validate_and_enhance_intent(self, result, question):
+        """Validate and enhance the intent result with scope and include_zero fallbacks"""
+        parameters = result.get('parameters', {})
+        
+        # Ensure scope is set with deterministic fallback logic
+        if 'scope' not in parameters or parameters['scope'] not in ['market', 'node', 'list']:
+            scope = self._determine_scope_fallback(question, parameters)
+            parameters['scope'] = scope
+        
+        # Ensure include_zero is set with proper fallback
+        if 'include_zero' not in parameters or not isinstance(parameters['include_zero'], bool):
+            include_zero = self._determine_include_zero_fallback(question)
+            parameters['include_zero'] = include_zero
+        
+        result['parameters'] = parameters
+        return result
+    
+    def _determine_scope_fallback(self, question, parameters):
+        """Deterministic fallback logic for scope field"""
+        question_lower = question.lower()
+        nodes = parameters.get('nodes', [])
+        
+        # If specific node mentioned, scope=node
+        if nodes and len(nodes) == 1:
+            return 'node'
+        
+        # If asking for ranked/top/bottom results, scope=list
+        ranking_keywords = ['top', 'bottom', 'best', 'worst', 'cheapest', 'most expensive', 
+                          'highest', 'lowest', 'first', 'last', 'ranking', 'ranked']
+        if any(keyword in question_lower for keyword in ranking_keywords):
+            # Also check for number indicators like "top 10", "5 cheapest", etc.
+            if any(word in question_lower for word in ['nodes', 'node']) and \
+               (parameters.get('n_nodes') or any(char.isdigit() for char in question)):
+                return 'list'
+        
+        # Default to market scope for general questions
+        return 'market'
+    
+    def _determine_include_zero_fallback(self, question):
+        """Deterministic fallback logic for include_zero field"""
+        question_lower = question.lower()
+        
+        # Only set to True if explicitly requested
+        zero_keywords = ['include zero', 'including zero', 'with zero', 'zero prices', 
+                        'all prices', 'show zero', 'include all']
+        
+        return any(keyword in question_lower for keyword in zero_keywords)
     
     def _execute_analysis(self, analysis_result):
         """Execute the determined analysis using database queries"""
@@ -514,42 +584,42 @@ class LMPChatbot:
             if any(word in question_lower for word in ['hour', 'operational hour']) and any(word in question_lower for word in ['average', 'mean', 'across']):
                 return {
                     'analysis_type': 'hourly_patterns',  # This gives average by hour of day
-                    'parameters': {},
+                    'parameters': {'scope': 'market', 'include_zero': False},
                     'confidence': 0.8
                 }
             elif any(word in question_lower for word in ['average', 'mean', 'across']):
                 return {
                     'analysis_type': 'price_statistics', 
-                    'parameters': {'aggregate': True},
+                    'parameters': {'aggregate': True, 'scope': 'market', 'include_zero': False},
                     'confidence': 0.7
                 }
             else:
                 return {
                     'analysis_type': 'cheapest_hours',
-                    'parameters': {'n_hours': 10},
+                    'parameters': {'n_hours': 10, 'scope': 'list', 'include_zero': False},
                     'confidence': 0.7
                 }
         elif any(word in question_lower for word in ['percentile', '%']):
             return {
                 'analysis_type': 'price_percentile',
-                'parameters': {'percentile': 10},
+                'parameters': {'percentile': 10, 'scope': 'list', 'include_zero': False},
                 'confidence': 0.7
             }
         elif any(word in question_lower for word in ['congestion', 'mcc']):
             return {
                 'analysis_type': 'congestion_analysis',
-                'parameters': {'n_hours': 20},
+                'parameters': {'n_hours': 20, 'scope': 'list', 'include_zero': False},
                 'confidence': 0.7
             }
         elif any(word in question_lower for word in ['peak', 'hour']):
             return {
                 'analysis_type': 'hourly_patterns',
-                'parameters': {},
+                'parameters': {'scope': 'market', 'include_zero': False},
                 'confidence': 0.6
             }
         else:
             return {
                 'analysis_type': 'general_query',
-                'parameters': {},
+                'parameters': {'scope': 'market', 'include_zero': False},
                 'confidence': 0.5
             }
