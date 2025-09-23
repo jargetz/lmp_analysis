@@ -552,9 +552,9 @@ class LMPChatbot:
         
         # Market summary formatting for specific analysis types
         if analysis_type == 'get_peak_vs_offpeak_analysis':
-            if 'peak_avg' in df.columns and 'offpeak_avg' in df.columns and len(df) > 0:
-                peak_price = df['peak_avg'].iloc[0] if not df['peak_avg'].isna().iloc[0] else 0
-                offpeak_price = df['offpeak_avg'].iloc[0] if not df['offpeak_avg'].isna().iloc[0] else 0
+            if 'peak' in df.columns and 'off_peak' in df.columns and len(df) > 0:
+                peak_price = df['peak'].iloc[0] if not df['peak'].isna().iloc[0] else 0
+                offpeak_price = df['off_peak'].iloc[0] if not df['off_peak'].isna().iloc[0] else 0
                 if peak_price > 0 and offpeak_price > 0:
                     premium = peak_price - offpeak_price
                     premium_pct = (premium / offpeak_price) * 100 if offpeak_price > 0 else 0
