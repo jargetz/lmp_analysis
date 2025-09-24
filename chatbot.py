@@ -555,12 +555,15 @@ class LMPChatbot:
             if 'peak' in df.columns and 'off_peak' in df.columns and len(df) > 0:
                 peak_price = df['peak'].iloc[0] if not df['peak'].isna().iloc[0] else 0
                 offpeak_price = df['off_peak'].iloc[0] if not df['off_peak'].isna().iloc[0] else 0
-                if peak_price > 0 and offpeak_price > 0:
-                    premium = peak_price - offpeak_price
-                    premium_pct = (premium / offpeak_price) * 100 if offpeak_price > 0 else 0
-                    return f"Market Peak: ${peak_price:.2f}/MWh, Off-Peak: ${offpeak_price:.2f}/MWh, Premium: ${premium:.2f} ({premium_pct:.1f}%)"
+                # Use pre-calculated values from SQL query instead of recalculating
+                premium = df['peak_premium'].iloc[0] if 'peak_premium' in df.columns and not df['peak_premium'].isna().iloc[0] else (peak_price - offpeak_price)
+                premium_pct = df['peak_premium_pct'].iloc[0] if 'peak_premium_pct' in df.columns and not df['peak_premium_pct'].isna().iloc[0] else 0
+                
+                # Format correctly for both positive and negative premiums
+                if premium >= 0:
+                    return f"Market Peak: ${peak_price:.2f}/MWh, Off-Peak: ${offpeak_price:.2f}/MWh, Peak Premium: ${premium:.2f} ({premium_pct:.1f}%)"
                 else:
-                    return f"Market Peak: ${peak_price:.2f}/MWh, Off-Peak: ${offpeak_price:.2f}/MWh"
+                    return f"Market Peak: ${peak_price:.2f}/MWh, Off-Peak: ${offpeak_price:.2f}/MWh, Off-Peak Premium: ${abs(premium):.2f} ({abs(premium_pct):.1f}%)"
             else:
                 return "Market peak vs off-peak analysis completed."
                 
