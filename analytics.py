@@ -458,11 +458,11 @@ class LMPAnalytics:
                 query = f"""
                 WITH period_stats AS (
                     SELECT 
-                        CASE WHEN opr_hr BETWEEN 16 AND 21 THEN 'Peak' ELSE 'Off-Peak' END as period,
+                        CASE WHEN opr_hr BETWEEN 0 AND 6 THEN 'Peak' ELSE 'Off-Peak' END as period,
                         AVG(mw) as avg_price
                     FROM caiso.lmp_data 
                     {where_clause}
-                    GROUP BY CASE WHEN opr_hr BETWEEN 16 AND 21 THEN 'Peak' ELSE 'Off-Peak' END
+                    GROUP BY CASE WHEN opr_hr BETWEEN 0 AND 6 THEN 'Peak' ELSE 'Off-Peak' END
                 )
                 SELECT 
                     'MARKET_SUMMARY' as node,
@@ -482,11 +482,11 @@ class LMPAnalytics:
                 WITH period_stats AS (
                     SELECT 
                         node,
-                        CASE WHEN opr_hr BETWEEN 16 AND 21 THEN 'Peak' ELSE 'Off-Peak' END as period,
+                        CASE WHEN opr_hr BETWEEN 0 AND 6 THEN 'Peak' ELSE 'Off-Peak' END as period,
                         AVG(mw) as avg_price
                     FROM caiso.lmp_data 
                     {where_clause}
-                    GROUP BY node, CASE WHEN opr_hr BETWEEN 16 AND 21 THEN 'Peak' ELSE 'Off-Peak' END
+                    GROUP BY node, CASE WHEN opr_hr BETWEEN 0 AND 6 THEN 'Peak' ELSE 'Off-Peak' END
                 )
                 SELECT 
                     node,
