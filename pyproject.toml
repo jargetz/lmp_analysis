@@ -10,6 +10,7 @@ dependencies = [
     "pandas>=2.3.2",
     "plotly>=6.3.0",
     "psycopg2-binary>=2.9.10",
+    "pytest>=8.4.2",
     "sqlalchemy>=2.0.43",
     "streamlit>=1.49.1",
 ]
