@@ -67,9 +67,21 @@ Preferred communication style: Simple, everyday language.
 - **Run Tests**: `pytest test_analytics_baseline.py -v`
 - **Philosophy**: Minimal but useful - catches breaking changes without slowing iteration
 
+## Data Loading
+
+- **Source**: 312 ZIP files stored in AWS S3 bucket (full year of CAISO Day Ahead LMP data)
+- **Loading Strategy**: Resumable batch processing to handle platform execution time limits
+- **Batch Size**: Configurable (default 20 files per run)
+- **Progress Tracking**: Automatic duplicate detection via `source_file` column
+- **How to Load**: Run `python3 load_full_year.py` multiple times until complete
+- **Full Guide**: See `DATALOAD_GUIDE.md` for detailed instructions
+
 ## Recent Changes
 
-### October 25, 2025
+### October 25, 2025  
 - Fixed peak hour definition: Changed from 16-21 (4-9 PM) to 0-6 (midnight-6 AM) based on actual CAISO market data showing higher prices during early morning hours
 - Added baseline testing suite with pytest covering critical analytics methods
 - Tests validate core functionality against actual database data for regression detection
+- Implemented resumable batch loading system for processing 312 ZIP files from S3
+- Fixed timestamp column handling to maintain `interval_start_time_gmt` for database NOT NULL constraint
+- Created comprehensive data loading guide with batch processing instructions
