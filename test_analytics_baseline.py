@@ -76,13 +76,14 @@ class TestPriceStatistics:
         )
         
         assert not result.empty, "Statistics should return data"
-        assert 'avg_price' in result.columns, "Should have avg_price"
-        assert 'min_price' in result.columns, "Should have min_price"
-        assert 'max_price' in result.columns, "Should have max_price"
+        # Note: get_price_statistics uses 'mean', 'min', 'max' not 'avg_price', 'min_price', 'max_price'
+        assert 'mean' in result.columns, "Should have mean"
+        assert 'min' in result.columns, "Should have min"
+        assert 'max' in result.columns, "Should have max"
         
-        avg = float(result['avg_price'].iloc[0])
-        min_price = float(result['min_price'].iloc[0])
-        max_price = float(result['max_price'].iloc[0])
+        avg = float(result['mean'].iloc[0])
+        min_price = float(result['min'].iloc[0])
+        max_price = float(result['max'].iloc[0])
         
         assert min_price <= avg <= max_price, "Average should be between min and max"
         assert min_price < max_price, "Min should be less than max"
@@ -94,10 +95,10 @@ class TestCheapestHours:
     def test_cheapest_hours_returns_requested_count(self, analytics):
         """Verify cheapest hours returns correct number of results"""
         n_hours = 5
+        # Note: get_cheapest_hours doesn't support market_summary parameter
         result = analytics.get_cheapest_hours(
             n_hours=n_hours,
-            exclude_zero=True,
-            market_summary=True
+            exclude_zero=True
         )
         
         assert not result.empty, "Should return results"
@@ -107,8 +108,7 @@ class TestCheapestHours:
         """Verify results are sorted by price (cheapest first)"""
         result = analytics.get_cheapest_hours(
             n_hours=10,
-            exclude_zero=True,
-            market_summary=True
+            exclude_zero=True
         )
         
         if len(result) > 1 and 'avg_price' in result.columns:

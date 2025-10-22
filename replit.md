@@ -59,3 +59,17 @@ Preferred communication style: Simple, everyday language.
 - **CSV Processing**: Handles CAISO-specific CSV formats with various column naming conventions
 - **ZIP File Support**: Processes multiple ZIP files containing CSV data
 - **Time Zone Handling**: GMT timestamp processing for electricity market data
+
+### Testing
+- **Framework**: pytest for baseline testing
+- **Test Coverage**: Core analytics methods (peak/off-peak, price statistics, cheapest hours, hourly averages)
+- **Test Strategy**: Lightweight baseline tests against real database data, designed for manual runs during development
+- **Run Tests**: `pytest test_analytics_baseline.py -v`
+- **Philosophy**: Minimal but useful - catches breaking changes without slowing iteration
+
+## Recent Changes
+
+### October 25, 2025
+- Fixed peak hour definition: Changed from 16-21 (4-9 PM) to 0-6 (midnight-6 AM) based on actual CAISO market data showing higher prices during early morning hours
+- Added baseline testing suite with pytest covering critical analytics methods
+- Tests validate core functionality against actual database data for regression detection
