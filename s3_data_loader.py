@@ -90,8 +90,14 @@ class S3DataLoader:
             logging.error(f"Error processing S3 file {s3_key}: {str(e)}")
             return {'success': False, 'error': str(e)}
     
-    def load_all_data(self, progress_callback=None) -> Dict[str, Any]:
-        """Load all CAISO data from S3 into the database and run preprocessing"""
+    def load_all_data(self, progress_callback=None, batch_size=None, skip_preprocessing=False) -> Dict[str, Any]:
+        """Load all CAISO data from S3 into the database and run preprocessing
+        
+        Args:
+            progress_callback: Callback function for progress updates
+            batch_size: If set, only process this many unprocessed files per run (for resumability)
+            skip_preprocessing: If True, skip B6/B8 preprocessing (useful for incremental loads)
+        """
         # Phase 1: Download and process raw data
         if progress_callback:
             progress_callback(0, 100, "Starting S3 data download and processing...")
@@ -100,6 +106,14 @@ class S3DataLoader:
         
         if not files:
             return {'success': False, 'error': 'No CAISO files found in S3 bucket'}
+        
+        # Filter to unprocessed files only for resumable loading
+        if batch_size:
+            unprocessed_files = [f for f in files if not self.check_file_already_processed(f)]
+            if not unprocessed_files:
+                return {'success': True, 'message': 'All files already processed!', 
+                       'total_files': len(files), 'processed_files': 0, 'skipped_files': len(files)}
+            files = unprocessed_files[:batch_size]
         
         total_files = len(files)
         processed_files = 0
@@ -125,16 +139,20 @@ class S3DataLoader:
                 errors.append(f"{file_key}: {result.get('error', 'Unknown error')}")
         
         # Phase 2: Run preprocessing (B6/B8 calculations)
-        if progress_callback:
-            progress_callback(70, 100, "Starting B6/B8 preprocessing...")
-        
-        def preprocessing_progress(current, total, message):
-            # Map preprocessing progress to 70-100% range
-            preprocessing_percent = 70 + int((current / total) * 30)
+        preprocessing_result = {}
+        if not skip_preprocessing:
             if progress_callback:
-                progress_callback(preprocessing_percent, 100, f"Preprocessing: {message}")
-        
-        preprocessing_result = self.preprocessor.run_full_preprocessing(preprocessing_progress)
+                progress_callback(70, 100, "Starting B6/B8 preprocessing...")
+            
+            def preprocessing_progress(current, total, message):
+                # Map preprocessing progress to 70-100% range
+                preprocessing_percent = 70 + int((current / total) * 30)
+                if progress_callback:
+                    progress_callback(preprocessing_percent, 100, f"Preprocessing: {message}")
+            
+            preprocessing_result = self.preprocessor.run_full_preprocessing(preprocessing_progress)
+        else:
+            preprocessing_result = {'success': True, 'message': 'Preprocessing skipped (incremental load)'}
         
         # Combine results
         final_result = {

@@ -20,8 +20,18 @@ def progress_callback(current, total, message):
 def main():
     import sys
     print("=" * 60)
-    print("CAISO LMP Full Year Data Load")
+    print("CAISO LMP Full Year Data Load (Resumable Batch Mode)")
     print("=" * 60)
+    
+    # Parse command line arguments
+    batch_size = 20  # Default: process 20 files per run
+    fresh_start = False
+    
+    for arg in sys.argv[1:]:
+        if arg == '--fresh':
+            fresh_start = True
+        elif arg.startswith('--batch='):
+            batch_size = int(arg.split('=')[1])
     
     loader = S3DataLoader()
     
@@ -32,48 +42,56 @@ def main():
     print(f"S3 files available: {freshness.get('s3_files_available', 0)}")
     
     # Clear existing data if requested
-    if len(sys.argv) > 1 and sys.argv[1] == '--fresh':
+    if fresh_start:
         print("\n⚠️  FRESH START MODE: Clearing existing data...")
         from database import DatabaseManager
         db = DatabaseManager()
         db.execute_query("TRUNCATE TABLE caiso.lmp_data RESTART IDENTITY CASCADE", fetch_all=False)
         print("✅ Existing data cleared")
-    elif freshness.get('db_records', 0) > 0:
-        print("\n⚠️  Database already has data. Use --fresh flag to clear and reload.")
-        print("Proceeding will skip already-processed files...")
-        response = input("Continue? (y/n): ")
-        if response.lower() != 'y':
-            print("Aborted.")
-            return
     
-    # Start the load
-    print("\nStarting full data load from S3...")
-    print("This may take a while (300+ files to process)")
+    print(f"\n📦 BATCH MODE: Processing up to {batch_size} files this run")
+    print("💡 TIP: Run this script multiple times to process all files incrementally")
+    
+    # Start the batch load
+    print("\nStarting batch data load from S3...")
     print("-" * 60)
     
-    result = loader.load_all_data(progress_callback)
+    result = loader.load_all_data(
+        progress_callback=progress_callback,
+        batch_size=batch_size,
+        skip_preprocessing=True  # Skip preprocessing during incremental loads
+    )
     
     # Print results
     print("\n" + "=" * 60)
-    print("DATA LOAD COMPLETE")
+    print("BATCH LOAD COMPLETE")
     print("=" * 60)
-    print(f"Total files found: {result['total_files']}")
-    print(f"Files processed: {result['processed_files']}")
-    print(f"Files skipped (already loaded): {result['skipped_files']}")
-    print(f"Total records inserted: {result['total_records']:,}")
+    print(f"Files in this batch: {result.get('total_files', 0)}")
+    print(f"Files processed: {result.get('processed_files', 0)}")
+    print(f"Files skipped: {result.get('skipped_files', 0)}")
+    print(f"Records inserted: {result.get('total_records', 0):,}")
     
     if result.get('errors'):
-        print(f"\nErrors encountered: {len(result['errors'])}")
-        for error in result['errors'][:5]:  # Show first 5 errors
+        print(f"\nErrors: {len(result['errors'])}")
+        for error in result['errors'][:3]:
             print(f"  - {error}")
     
-    if result.get('preprocessing'):
-        prep = result['preprocessing']
-        print(f"\nPreprocessing:")
-        print(f"  - B6 hours calculated: {prep.get('b6_hours', 0)}")
-        print(f"  - B8 hours calculated: {prep.get('b8_hours', 0)}")
+    # Check remaining work
+    all_files = loader.list_caiso_files()
+    processed_count = sum(1 for f in all_files if loader.check_file_already_processed(f))
+    remaining = len(all_files) - processed_count
     
-    print("\n✅ Full year data load complete!")
+    print(f"\n📊 PROGRESS:")
+    print(f"  - Total files in S3: {len(all_files)}")
+    print(f"  - Files processed: {processed_count}")
+    print(f"  - Remaining: {remaining}")
+    
+    if remaining > 0:
+        print(f"\n💡 Run again to process next batch (up to {batch_size} files)")
+        print(f"   Estimated runs needed: {(remaining + batch_size - 1) // batch_size}")
+    else:
+        print("\n✅ All files processed! Run preprocessing next:")
+        print("   python3 -c 'from preprocessing import CAISOPreprocessor; CAISOPreprocessor().run_full_preprocessing()'")
 
 if __name__ == "__main__":
     main()
