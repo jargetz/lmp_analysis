@@ -66,6 +66,7 @@ class DatabaseManager:
             
             # Rename columns to match database schema
             column_mapping = {
+                'INTERVALSTARTTIME_GMT': 'interval_start_time_gmt',
                 'NODE': 'node',
                 'MW': 'mw',
                 'MCC': 'mcc',
@@ -86,7 +87,7 @@ class DatabaseManager:
             
             # Define expected columns for the database table
             expected_columns = [
-                'node', 'mw', 'mcc', 'mlc', 'pos',
+                'interval_start_time_gmt', 'node', 'mw', 'mcc', 'mlc', 'pos',
                 'day_of_week', 'source_file', 'opr_hr', 'opr_dt'
             ]
             

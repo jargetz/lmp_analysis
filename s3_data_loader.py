@@ -101,8 +101,6 @@ class S3DataLoader:
         if not files:
             return {'success': False, 'error': 'No CAISO files found in S3 bucket'}
         
-        # TEMPORARY: Limit to 1 file for testing to prevent credit burn
-        files = files[:1]
         total_files = len(files)
         processed_files = 0
         skipped_files = 0

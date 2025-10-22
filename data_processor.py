@@ -137,8 +137,9 @@ class CAISODataProcessor:
                 # Extract additional time-based features (optional)
                 df['DAY_OF_WEEK'] = timestamp_col.dt.day_name()
                 
-                # Remove the original timestamp column as we now have opr_dt and opr_hr
-                df = df.drop(columns=['INTERVALSTARTTIME_GMT'])
+                # Keep the timestamp column (database requires it with NOT NULL constraint)
+                # Just ensure it's properly parsed
+                df['INTERVALSTARTTIME_GMT'] = timestamp_col
                 
             except Exception as e:
                 logging.warning(f"Error parsing datetime: {str(e)}")
