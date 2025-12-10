@@ -21,6 +21,13 @@ from chatbot import LMPChatbot
 from s3_data_loader import S3DataLoader
 from node_zone_mapping import NodeZoneMapper, VALID_ZONES
 from bx_calculator import BXCalculator, SUPPORTED_BX_VALUES
+from charts import (
+    create_hourly_price_chart,
+    create_bx_trend_chart,
+    create_zone_comparison_bar,
+    create_top_nodes_bar,
+    create_empty_chart
+)
 
 def main():
     st.set_page_config(
@@ -297,17 +304,8 @@ def render_dashboard_tab():
         st.markdown("**Hourly Price Patterns**")
         try:
             hourly_avg = st.session_state.analytics.get_hourly_averages()
-            if not hourly_avg.empty:
-                fig = px.line(
-                    hourly_avg, 
-                    x='hour', 
-                    y='mw',
-                    title='Average Price by Hour',
-                    labels={'hour': 'Hour of Day', 'mw': 'Price ($/MWh)'}
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No hourly data available")
+            fig = create_hourly_price_chart(hourly_avg)
+            st.plotly_chart(fig, use_container_width=True)
         except Exception as e:
             st.error(f"Error loading hourly averages: {str(e)}")
 
