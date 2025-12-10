@@ -71,8 +71,10 @@ class S3DataLoader:
             # Process the zip file
             with zipfile.ZipFile(io.BytesIO(zip_content), 'r') as zip_ref:
                 for file_name in zip_ref.namelist():
-                    # Only process the LMP CSV files we care about
-                    if file_name.endswith('LMP_DAM_LMP_v12.csv'):
+                    # Only process the main LMP CSV file (PRC_LMP_DAM_LMP)
+                    # Skip MCC, MCE, MCL files as they contain component data
+                    if 'PRC_LMP_DAM_LMP' in file_name and file_name.endswith('.csv'):
+                        logging.info(f"Processing {file_name} from {s3_key}")
                         with zip_ref.open(file_name) as csv_file:
                             content = csv_file.read().decode('utf-8')
                             
@@ -84,7 +86,7 @@ class S3DataLoader:
                                 'file': s3_key
                             }
             
-            return {'success': False, 'error': f'No LMP_DAM_LMP_v12.csv found in {s3_key}'}
+            return {'success': False, 'error': f'No PRC_LMP_DAM_LMP CSV found in {s3_key}'}
             
         except Exception as e:
             logging.error(f"Error processing S3 file {s3_key}: {str(e)}")
