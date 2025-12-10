@@ -202,12 +202,18 @@ def render_dashboard_tab():
         )
     
     with filter_col3:
-        # Date range (placeholder - will use actual data range)
-        st.date_input(
+        # Date range filter
+        date_range = st.date_input(
             "Date Range",
             value=(date.today() - timedelta(days=30), date.today()),
             help="Filter by date range"
         )
+        # Parse date range (returns tuple if both dates selected)
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            start_date, end_date = date_range
+        else:
+            start_date = date_range if isinstance(date_range, date) else date.today() - timedelta(days=30)
+            end_date = date.today()
     
     st.divider()
     
@@ -218,7 +224,9 @@ def render_dashboard_tab():
         bx_calc = BXCalculator()
         bx_stats = bx_calc.get_bx_average(
             bx=selected_bx,
-            zone=selected_zone
+            zone=selected_zone,
+            start_date=start_date,
+            end_date=end_date
         )
         
         if bx_stats.get('success') and bx_stats.get('avg_price'):
