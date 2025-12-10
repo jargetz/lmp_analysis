@@ -78,6 +78,17 @@ Preferred communication style: Simple, everyday language.
 
 ## Recent Changes
 
+### December 10, 2025
+- **Dashboard-First UI**: Restructured app.py into two tabs: Dashboard (primary) and AI Assistant
+- **Node-to-Zone Mapping**: Created `node_zone_mapping.py` module to map PNODE_ID to zones (NP15, SP15, ZP26)
+  - Loaded 5,593 node mappings (1,694 mapped to zones, 3,899 unmapped preserved for visibility)
+  - Supports custom file paths for refreshing mappings
+- **BX Calculator**: Created `bx_calculator.py` with support for B4-B10 (cheapest X hours analysis)
+  - Unified table approach with `bx_type` column instead of separate B6/B8 tables
+  - Efficient single-query-per-date design
+  - Query methods: `get_bx_average()`, `get_bx_trend()` with zone filtering
+- **Dashboard Features**: Zone filter, BX selector, summary statistics cards, hourly price chart
+
 ### October 25, 2025  
 - Fixed peak hour definition: Changed from 16-21 (4-9 PM) to 0-6 (midnight-6 AM) based on actual CAISO market data showing higher prices during early morning hours
 - Added baseline testing suite with pytest covering critical analytics methods
