@@ -26,10 +26,13 @@ def main():
     # Parse command line arguments
     batch_size = 20  # Default: process 20 files per run
     fresh_start = False
+    calculate_bx = True  # Default: calculate BX for each day
     
     for arg in sys.argv[1:]:
         if arg == '--fresh':
             fresh_start = True
+        elif arg == '--no-bx':
+            calculate_bx = False
         elif arg.startswith('--batch='):
             batch_size = int(arg.split('=')[1])
     
@@ -49,7 +52,8 @@ def main():
         db.execute_query("TRUNCATE TABLE caiso.lmp_data RESTART IDENTITY CASCADE", fetch_all=False)
         print("✅ Existing data cleared")
     
-    print(f"\n📦 BATCH MODE: Processing up to {batch_size} files this run")
+    bx_msg = "with BX calculation" if calculate_bx else "(no BX)"
+    print(f"\n📦 BATCH MODE: Processing up to {batch_size} files {bx_msg}")
     print("💡 TIP: Run this script multiple times to process all files incrementally")
     
     # Start the batch load
@@ -59,7 +63,7 @@ def main():
     result = loader.load_all_data(
         progress_callback=progress_callback,
         batch_size=batch_size,
-        skip_preprocessing=True  # Skip preprocessing during incremental loads
+        calculate_bx=calculate_bx
     )
     
     # Print results
@@ -70,6 +74,7 @@ def main():
     print(f"Files processed: {result.get('processed_files', 0)}")
     print(f"Files skipped: {result.get('skipped_files', 0)}")
     print(f"Records inserted: {result.get('total_records', 0):,}")
+    print(f"BX days calculated: {result.get('bx_calculated_days', 0)}")
     
     if result.get('errors'):
         print(f"\nErrors: {len(result['errors'])}")
@@ -90,8 +95,7 @@ def main():
         print(f"\n💡 Run again to process next batch (up to {batch_size} files)")
         print(f"   Estimated runs needed: {(remaining + batch_size - 1) // batch_size}")
     else:
-        print("\n✅ All files processed! Run preprocessing next:")
-        print("   python3 -c 'from preprocessing import CAISOPreprocessor; CAISOPreprocessor().run_full_preprocessing()'")
+        print("\n✅ All files processed! BX data is ready for analysis.")
 
 if __name__ == "__main__":
     main()

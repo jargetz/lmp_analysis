@@ -3,9 +3,12 @@ import os
 import logging
 import zipfile
 import io
-from typing import List, Dict, Any
+import re
+from datetime import date
+from typing import List, Dict, Any, Optional
 from data_processor import CAISODataProcessor
 from preprocessing import CAISOPreprocessor
+from bx_calculator import BXCalculator
 
 class S3DataLoader:
     """Handles loading CAISO LMP data from S3 bucket"""
@@ -19,6 +22,15 @@ class S3DataLoader:
         )
         self.processor = CAISODataProcessor()
         self.preprocessor = CAISOPreprocessor()
+        self.bx_calculator = BXCalculator()
+    
+    def _extract_date_from_filename(self, filename: str) -> Optional[date]:
+        """Extract date from CAISO filename like 20240101_20240101_DAM_LMP..."""
+        match = re.match(r'(\d{4})(\d{2})(\d{2})_', filename)
+        if match:
+            year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            return date(year, month, day)
+        return None
         
     def list_caiso_files(self) -> List[str]:
         """List all CAISO LMP zip files in the S3 bucket"""
@@ -51,8 +63,13 @@ class S3DataLoader:
         except:
             return False
     
-    def download_and_process_file(self, s3_key: str) -> Dict[str, Any]:
-        """Download a single zip file from S3 and process it"""
+    def download_and_process_file(self, s3_key: str, calculate_bx: bool = False) -> Dict[str, Any]:
+        """Download a single zip file from S3 and process it.
+        
+        Args:
+            s3_key: The S3 key for the zip file
+            calculate_bx: If True, calculate BX for the day after loading
+        """
         try:
             # Skip if already processed (prevent duplicates)
             if self.check_file_already_processed(s3_key):
@@ -80,10 +97,21 @@ class S3DataLoader:
                             
                             # Process and store in database
                             result = self.processor.process_csv_content_to_db(content, s3_key)
+                            records_inserted = result.get('records_inserted', 0)
+                            
+                            # Calculate BX for this day if requested
+                            bx_result = None
+                            if calculate_bx and records_inserted > 0:
+                                file_date = self._extract_date_from_filename(s3_key)
+                                if file_date:
+                                    logging.info(f"Calculating BX for {file_date}")
+                                    bx_result = self.bx_calculator.calculate_all_bx_for_date(file_date)
+                            
                             return {
                                 'success': True,
-                                'records_inserted': result.get('records_inserted', 0),
-                                'file': s3_key
+                                'records_inserted': records_inserted,
+                                'file': s3_key,
+                                'bx_calculated': bx_result
                             }
             
             return {'success': False, 'error': f'No PRC_LMP_DAM_LMP CSV found in {s3_key}'}
@@ -92,13 +120,18 @@ class S3DataLoader:
             logging.error(f"Error processing S3 file {s3_key}: {str(e)}")
             return {'success': False, 'error': str(e)}
     
-    def load_all_data(self, progress_callback=None, batch_size=None, skip_preprocessing=False) -> Dict[str, Any]:
-        """Load all CAISO data from S3 into the database and run preprocessing
+    def load_all_data(
+        self, 
+        progress_callback=None, 
+        batch_size=None, 
+        calculate_bx: bool = True
+    ) -> Dict[str, Any]:
+        """Load all CAISO data from S3 into the database.
         
         Args:
             progress_callback: Callback function for progress updates
             batch_size: If set, only process this many unprocessed files per run (for resumability)
-            skip_preprocessing: If True, skip B6/B8 preprocessing (useful for incremental loads)
+            calculate_bx: If True (default), calculate BX for each day after loading
         """
         # Phase 1: Download and process raw data
         if progress_callback:
@@ -121,15 +154,17 @@ class S3DataLoader:
         processed_files = 0
         skipped_files = 0
         total_records = 0
+        bx_calculated_days = 0
         errors = []
         
-        # Process files (70% of progress) - simplified progress display
+        # Process files with optional BX calculation per day
         for i, file_key in enumerate(files):
-            progress_percent = int((i / total_files) * 70)
+            progress_percent = int((i / total_files) * 100)
+            bx_status = " + BX" if calculate_bx else ""
             if progress_callback:
-                progress_callback(progress_percent, 100, f"Processing CAISO files... ({i+1}/{total_files})")
+                progress_callback(progress_percent, 100, f"Processing{bx_status}... ({i+1}/{total_files})")
             
-            result = self.download_and_process_file(file_key)
+            result = self.download_and_process_file(file_key, calculate_bx=calculate_bx)
             
             if result['success']:
                 if result.get('skipped'):
@@ -137,24 +172,10 @@ class S3DataLoader:
                 else:
                     processed_files += 1
                     total_records += result.get('records_inserted', 0)
+                    if result.get('bx_calculated'):
+                        bx_calculated_days += 1
             else:
                 errors.append(f"{file_key}: {result.get('error', 'Unknown error')}")
-        
-        # Phase 2: Run preprocessing (B6/B8 calculations)
-        preprocessing_result = {}
-        if not skip_preprocessing:
-            if progress_callback:
-                progress_callback(70, 100, "Starting B6/B8 preprocessing...")
-            
-            def preprocessing_progress(current, total, message):
-                # Map preprocessing progress to 70-100% range
-                preprocessing_percent = 70 + int((current / total) * 30)
-                if progress_callback:
-                    progress_callback(preprocessing_percent, 100, f"Preprocessing: {message}")
-            
-            preprocessing_result = self.preprocessor.run_full_preprocessing(preprocessing_progress)
-        else:
-            preprocessing_result = {'success': True, 'message': 'Preprocessing skipped (incremental load)'}
         
         # Combine results
         final_result = {
@@ -163,16 +184,12 @@ class S3DataLoader:
             'processed_files': processed_files,
             'skipped_files': skipped_files,
             'total_records': total_records,
-            'errors': errors,
-            'preprocessing': preprocessing_result
+            'bx_calculated_days': bx_calculated_days,
+            'errors': errors
         }
         
         if progress_callback:
-            if preprocessing_result.get('success'):
-                progress_callback(100, 100, "✅ Data loading and preprocessing completed successfully!")
-            else:
-                progress_callback(100, 100, "⚠️ Data loaded but preprocessing had issues")
-                final_result['errors'].append(f"Preprocessing error: {preprocessing_result.get('error', 'Unknown preprocessing error')}")
+            progress_callback(100, 100, f"Done! {processed_files} files, {total_records:,} records")
         
         return final_result
     
