@@ -943,6 +943,151 @@ class BXCalculator:
             return []
 
 
+    def get_hourly_averages_for_nodes(self, nodes: List[str], year: int = None) -> List[Dict]:
+        """
+        Get hourly price averages for a list of nodes.
+        
+        Returns list of {'hour': int, 'avg_price': float} dicts.
+        """
+        if not nodes:
+            return []
+        
+        placeholders = ','.join(['%s'] * len(nodes))
+        year_filter = f"AND EXTRACT(YEAR FROM interval_start_time_gmt) = {year}" if year else ""
+        
+        query = f"""
+            SELECT 
+                EXTRACT(HOUR FROM interval_start_time_gmt) as hour,
+                AVG(mw) as avg_price
+            FROM caiso.lmp_data
+            WHERE node IN ({placeholders}) {year_filter}
+            GROUP BY EXTRACT(HOUR FROM interval_start_time_gmt)
+            ORDER BY hour
+        """
+        try:
+            data = self.db.execute_query(query, nodes)
+            return [{'hour': int(r['hour']), 'avg_price': float(r['avg_price'])} for r in data] if data else []
+        except Exception as e:
+            self.logger.error(f"Error getting hourly averages for nodes: {str(e)}")
+            return []
+    
+    def get_bx_trend_by_zone(
+        self,
+        bx: int,
+        year: int,
+        aggregation: str = 'monthly'
+    ) -> Dict[str, List[Dict]]:
+        """
+        Get BX price trend over time for each zone.
+        
+        Returns dict with zone names as keys, each containing list of
+        {'date': date, 'avg_price': float} dicts.
+        """
+        zones = ['NP15', 'SP15', 'ZP26']
+        results = {}
+        
+        for zone in zones:
+            trend = self.get_bx_trend(
+                bx=bx,
+                start_date=date(year, 1, 1),
+                end_date=date(year, 12, 31),
+                zone=zone,
+                aggregation=aggregation
+            )
+            results[zone] = trend
+        
+        # Overall (no zone filter)
+        overall = self.get_bx_trend(
+            bx=bx,
+            start_date=date(year, 1, 1),
+            end_date=date(year, 12, 31),
+            aggregation=aggregation
+        )
+        results['Overall'] = overall
+        
+        return results
+    
+    def get_bx_trend_per_node(
+        self,
+        bx: int,
+        nodes: List[str],
+        year: int,
+        aggregation: str = 'monthly'
+    ) -> Dict[str, List[Dict]]:
+        """
+        Get BX price trend for each specified node.
+        
+        Returns dict with node names as keys, each containing list of
+        {'date': date, 'avg_price': float} dicts.
+        """
+        results = {}
+        
+        for node in nodes[:20]:  # Limit to 20 nodes to avoid chart clutter
+            trend = self.get_bx_trend(
+                bx=bx,
+                start_date=date(year, 1, 1),
+                end_date=date(year, 12, 31),
+                nodes=[node],
+                aggregation=aggregation
+            )
+            results[node] = trend
+        
+        return results
+    
+    def get_node_summary_statistics(
+        self,
+        bx: int,
+        nodes: List[str],
+        year: int
+    ) -> List[Dict]:
+        """
+        Get summary statistics (for box plot) for each node.
+        
+        Returns list of dicts with node, avg, min, max, q1, median, q3.
+        """
+        if not nodes:
+            return []
+        
+        placeholders = ','.join(['%s'] * len(nodes))
+        params = [bx] + list(nodes) + [year]
+        
+        query = f"""
+            SELECT 
+                node,
+                AVG(avg_price) as mean_price,
+                MIN(avg_price) as min_price,
+                MAX(avg_price) as max_price,
+                PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY avg_price) as q1,
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY avg_price) as median,
+                PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY avg_price) as q3,
+                COUNT(*) as day_count
+            FROM caiso.bx_daily_summary
+            WHERE bx_type = %s 
+              AND node IN ({placeholders})
+              AND EXTRACT(YEAR FROM opr_dt) = %s
+            GROUP BY node
+            ORDER BY mean_price
+        """
+        try:
+            data = self.db.execute_query(query, params)
+            return [
+                {
+                    'node': r['node'],
+                    'mean': float(r['mean_price']) if r['mean_price'] else 0,
+                    'min': float(r['min_price']) if r['min_price'] else 0,
+                    'max': float(r['max_price']) if r['max_price'] else 0,
+                    'q1': float(r['q1']) if r['q1'] else 0,
+                    'median': float(r['median']) if r['median'] else 0,
+                    'q3': float(r['q3']) if r['q3'] else 0,
+                    'day_count': r['day_count']
+                }
+                for r in data
+            ] if data else []
+        except Exception as e:
+            self.logger.error(f"Error getting node summary statistics: {str(e)}")
+            return []
+
+
 if __name__ == "__main__":
     # Test the module
     logging.basicConfig(level=logging.INFO)

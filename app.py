@@ -27,7 +27,11 @@ from charts import (
     create_zone_comparison_bar,
     create_top_nodes_bar,
     create_empty_chart,
-    create_zone_hourly_chart
+    create_zone_hourly_chart,
+    create_node_hourly_chart,
+    create_zone_bx_trend_chart,
+    create_node_bx_trend_chart,
+    create_node_box_plot
 )
 
 def main():
@@ -352,6 +356,20 @@ def render_dashboard_tab():
             if any(hourly_zone_data.get(z) for z in ['NP15', 'SP15', 'ZP26', 'Overall']):
                 fig = create_zone_hourly_chart(hourly_zone_data, title=f'Hourly Price by Zone ({selected_year})')
                 st.plotly_chart(fig, use_container_width=True)
+            
+            # BX trend chart by zone (cached)
+            bx_trend_cache_key = f"bx_trend_zone_{selected_bx}_{selected_year}"
+            if bx_trend_cache_key not in st.session_state:
+                st.session_state[bx_trend_cache_key] = bx_calc.get_bx_trend_by_zone(
+                    bx=selected_bx,
+                    year=selected_year,
+                    aggregation='monthly'
+                )
+            zone_trend_data = st.session_state[bx_trend_cache_key]
+            
+            if any(zone_trend_data.get(z) for z in ['NP15', 'SP15', 'ZP26', 'Overall']):
+                fig = create_zone_bx_trend_chart(zone_trend_data, bx_type=selected_bx)
+                st.plotly_chart(fig, use_container_width=True)
         
         elif analysis_mode == "By Node Selection":
             # Node selection mode - show stats for selected nodes
@@ -387,6 +405,65 @@ def render_dashboard_tab():
                         st.metric("Max", f"${bx_stats['max_price']:.2f}/MWh" if bx_stats.get('max_price') else "N/A")
                     with stat_col4:
                         st.metric("Nodes", f"{bx_stats.get('node_count', 0):,}")
+                    
+                    # Hourly price chart for selected nodes
+                    node_hourly_key = f"hourly_nodes_{hash(tuple(sorted(selected_nodes)))}_{selected_year}"
+                    if node_hourly_key not in st.session_state:
+                        st.session_state[node_hourly_key] = bx_calc.get_hourly_averages_for_nodes(
+                            nodes=selected_nodes,
+                            year=selected_year
+                        )
+                    node_hourly_data = st.session_state[node_hourly_key]
+                    
+                    if node_hourly_data:
+                        fig = create_node_hourly_chart(node_hourly_data, title=f'Hourly Price Average ({len(selected_nodes)} nodes, {selected_year})')
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    # BX trend chart per node (or average if many nodes)
+                    if len(selected_nodes) <= 10:
+                        node_trend_key = f"bx_trend_nodes_{hash(tuple(sorted(selected_nodes)))}_{selected_bx}_{selected_year}"
+                        if node_trend_key not in st.session_state:
+                            st.session_state[node_trend_key] = bx_calc.get_bx_trend_per_node(
+                                bx=selected_bx,
+                                nodes=selected_nodes,
+                                year=selected_year,
+                                aggregation='monthly'
+                            )
+                        node_trend_data = st.session_state[node_trend_key]
+                        
+                        if node_trend_data:
+                            fig = create_node_bx_trend_chart(node_trend_data, bx_type=selected_bx)
+                            st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        # For many nodes, show average trend only
+                        avg_trend = bx_calc.get_bx_trend(
+                            bx=selected_bx,
+                            start_date=date(selected_year, 1, 1),
+                            end_date=date(selected_year, 12, 31),
+                            nodes=selected_nodes,
+                            aggregation='monthly'
+                        )
+                        if avg_trend:
+                            import pandas as pd
+                            df = pd.DataFrame(avg_trend)
+                            df.rename(columns={'date': 'opr_dt'}, inplace=True)
+                            fig = create_bx_trend_chart(df, bx_type=selected_bx, title=f'B{selected_bx} Average Trend ({len(selected_nodes)} nodes)')
+                            st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Box plot for node comparison (outlier detection)
+                    if len(selected_nodes) > 1:
+                        box_key = f"box_nodes_{hash(tuple(sorted(selected_nodes)))}_{selected_bx}_{selected_year}"
+                        if box_key not in st.session_state:
+                            st.session_state[box_key] = bx_calc.get_node_summary_statistics(
+                                bx=selected_bx,
+                                nodes=selected_nodes,
+                                year=selected_year
+                            )
+                        box_data = st.session_state[box_key]
+                        
+                        if box_data:
+                            fig = create_node_box_plot(box_data, title=f'B{selected_bx} Price Distribution by Node ({selected_year})')
+                            st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.info("No data found for selected nodes.")
     

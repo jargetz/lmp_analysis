@@ -410,3 +410,199 @@ def apply_dark_theme(fig: go.Figure) -> go.Figure:
         plot_bgcolor='rgba(0,0,0,0)'
     )
     return fig
+
+
+def create_node_hourly_chart(
+    hourly_data: list,
+    title: str = 'Hourly Price (Selected Nodes)'
+) -> go.Figure:
+    """
+    Create a line chart showing hourly prices for selected nodes.
+    
+    Args:
+        hourly_data: List of {'hour': int, 'avg_price': float} dicts
+        title: Chart title
+        
+    Returns:
+        Plotly Figure object
+    """
+    if not hourly_data:
+        return create_empty_chart("No hourly data available")
+    
+    hours = [d['hour'] for d in hourly_data]
+    prices = [d['avg_price'] for d in hourly_data]
+    
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=hours,
+        y=prices,
+        mode='lines',
+        name='Average',
+        line=dict(color='#1f77b4', width=2),
+        hovertemplate='Hour %{x}: $%{y:.2f}/MWh<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title='Hour of Day',
+        yaxis_title='Price ($/MWh)',
+        hovermode='x unified',
+        xaxis=dict(tickmode='linear', dtick=2, range=[-0.5, 23.5]),
+        margin=dict(l=40, r=40, t=50, b=40)
+    )
+    
+    return fig
+
+
+def create_zone_bx_trend_chart(
+    zone_data: dict,
+    bx_type: int,
+    title: str = None
+) -> go.Figure:
+    """
+    Create a multi-line chart showing BX price trend for all zones.
+    
+    Args:
+        zone_data: Dict with zone names as keys, each containing list of
+                   {'date': date, 'avg_price': float} dicts
+        bx_type: BX value (4-10) for title
+        title: Custom title (default: "B{X} Price Trend by Zone")
+        
+    Returns:
+        Plotly Figure object
+    """
+    fig = go.Figure()
+    title = title or f'B{bx_type} Price Trend by Zone'
+    
+    colors = {
+        'NP15': '#1f77b4',
+        'SP15': '#ff7f0e',
+        'ZP26': '#2ca02c',
+        'Overall': '#7f7f7f'
+    }
+    
+    zone_order = ['NP15', 'SP15', 'ZP26', 'Overall']
+    
+    for zone in zone_order:
+        data = zone_data.get(zone, [])
+        if data:
+            dates = [d['date'] for d in data]
+            prices = [d['avg_price'] for d in data]
+            
+            fig.add_trace(go.Scatter(
+                x=dates,
+                y=prices,
+                mode='lines+markers',
+                name=zone,
+                line=dict(color=colors.get(zone, '#000000'), width=2),
+                marker=dict(size=6),
+                hovertemplate=f'{zone}: $%{{y:.2f}}/MWh<extra></extra>'
+            ))
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title='Date',
+        yaxis_title='Avg Price ($/MWh)',
+        hovermode='x unified',
+        margin=dict(l=40, r=40, t=50, b=40),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
+    )
+    
+    return fig
+
+
+def create_node_bx_trend_chart(
+    node_data: dict,
+    bx_type: int,
+    title: str = None
+) -> go.Figure:
+    """
+    Create a multi-line chart showing BX price trend for each node.
+    
+    Args:
+        node_data: Dict with node names as keys, each containing list of
+                   {'date': date, 'avg_price': float} dicts
+        bx_type: BX value (4-10) for title
+        title: Custom title
+        
+    Returns:
+        Plotly Figure object
+    """
+    fig = go.Figure()
+    title = title or f'B{bx_type} Price Trend by Node'
+    
+    for i, (node, data) in enumerate(node_data.items()):
+        if data:
+            dates = [d['date'] for d in data]
+            prices = [d['avg_price'] for d in data]
+            
+            fig.add_trace(go.Scatter(
+                x=dates,
+                y=prices,
+                mode='lines',
+                name=node,
+                line=dict(width=1.5),
+                hovertemplate=f'{node}: $%{{y:.2f}}/MWh<extra></extra>'
+            ))
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title='Date',
+        yaxis_title='Avg Price ($/MWh)',
+        hovermode='x unified',
+        margin=dict(l=40, r=40, t=50, b=40),
+        showlegend=len(node_data) <= 10,
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
+    )
+    
+    return fig
+
+
+def create_node_box_plot(
+    stats_data: list,
+    title: str = 'Price Distribution by Node'
+) -> go.Figure:
+    """
+    Create a box plot showing price distribution for each node.
+    
+    Args:
+        stats_data: List of dicts with node, min, q1, median, q3, max, mean
+        title: Chart title
+        
+    Returns:
+        Plotly Figure object
+    """
+    if not stats_data:
+        return create_empty_chart("No data for box plot")
+    
+    fig = go.Figure()
+    
+    nodes = [stat['node'] for stat in stats_data]
+    
+    for stat in stats_data:
+        fig.add_trace(go.Box(
+            name=stat['node'],
+            y=[stat['min'], stat['q1'], stat['median'], stat['q3'], stat['max']],
+            boxpoints=False,
+            hoverinfo='name+y'
+        ))
+    
+    # Add mean markers as separate scatter trace
+    fig.add_trace(go.Scatter(
+        x=nodes,
+        y=[stat['mean'] for stat in stats_data],
+        mode='markers',
+        name='Mean',
+        marker=dict(symbol='diamond', size=10, color='red'),
+        hovertemplate='Mean: $%{y:.2f}/MWh<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title=title,
+        yaxis_title='Price ($/MWh)',
+        showlegend=True,
+        margin=dict(l=40, r=40, t=50, b=100),
+        xaxis=dict(tickangle=45)
+    )
+    
+    return fig
