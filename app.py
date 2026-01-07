@@ -26,7 +26,8 @@ from charts import (
     create_bx_trend_chart,
     create_zone_comparison_bar,
     create_top_nodes_bar,
-    create_empty_chart
+    create_empty_chart,
+    create_zone_hourly_chart
 )
 
 def main():
@@ -306,6 +307,16 @@ def render_dashboard_tab():
                         )
                     else:
                         st.metric(zone_name, "N/A")
+            
+            # Hourly price chart by zone (cached)
+            hourly_cache_key = f"hourly_zone_{selected_year}"
+            if hourly_cache_key not in st.session_state:
+                st.session_state[hourly_cache_key] = bx_calc.get_hourly_averages_by_zone(year=selected_year)
+            hourly_zone_data = st.session_state[hourly_cache_key]
+            
+            if any(hourly_zone_data.get(z) for z in ['NP15', 'SP15', 'ZP26', 'Overall']):
+                fig = create_zone_hourly_chart(hourly_zone_data, title=f'Hourly Price by Zone ({selected_year})')
+                st.plotly_chart(fig, use_container_width=True)
         
         elif analysis_mode == "By Node Selection":
             # Node selection mode - show stats for selected nodes

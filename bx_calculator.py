@@ -854,6 +854,55 @@ class BXCalculator:
         
         return results
 
+    def get_hourly_averages_by_zone(self, year: int = None) -> Dict[str, Any]:
+        """
+        Get hourly price averages for each zone plus overall.
+        
+        Returns dict with zone names as keys, each containing list of 24 hourly averages.
+        """
+        zones = ['NP15', 'SP15', 'ZP26']
+        results = {}
+        
+        year_filter = f"AND EXTRACT(YEAR FROM l.interval_start_time_gmt) = {year}" if year else ""
+        
+        # Query for each zone
+        for zone in zones:
+            query = f"""
+                SELECT 
+                    EXTRACT(HOUR FROM l.interval_start_time_gmt) as hour,
+                    AVG(l.mw) as avg_price
+                FROM caiso.lmp_data l
+                JOIN caiso.node_zone_mapping m ON l.node = m.pnode_id
+                WHERE m.zone = %s {year_filter}
+                GROUP BY EXTRACT(HOUR FROM l.interval_start_time_gmt)
+                ORDER BY hour
+            """
+            try:
+                data = self.db.execute_query(query, (zone,))
+                results[zone] = [{'hour': int(r['hour']), 'avg_price': float(r['avg_price'])} for r in data] if data else []
+            except Exception as e:
+                self.logger.error(f"Error getting hourly averages for {zone}: {str(e)}")
+                results[zone] = []
+        
+        # Overall (no zone filter)
+        query = f"""
+            SELECT 
+                EXTRACT(HOUR FROM interval_start_time_gmt) as hour,
+                AVG(mw) as avg_price
+            FROM caiso.lmp_data
+            WHERE 1=1 {year_filter}
+            GROUP BY EXTRACT(HOUR FROM interval_start_time_gmt)
+            ORDER BY hour
+        """
+        try:
+            data = self.db.execute_query(query)
+            results['Overall'] = [{'hour': int(r['hour']), 'avg_price': float(r['avg_price'])} for r in data] if data else []
+        except Exception as e:
+            self.logger.error(f"Error getting overall hourly averages: {str(e)}")
+            results['Overall'] = []
+        
+        return results
+
     def get_all_nodes(self) -> List[str]:
         """Get all distinct node names for autocomplete. Sorted alphabetically."""
         try:

@@ -57,6 +57,60 @@ def create_hourly_price_chart(
     return fig
 
 
+def create_zone_hourly_chart(
+    zone_data: dict,
+    title: str = 'Hourly Price by Zone'
+) -> go.Figure:
+    """
+    Create a multi-line chart showing hourly prices for all zones.
+    
+    Args:
+        zone_data: Dict with zone names as keys, each containing list of 
+                   {'hour': int, 'avg_price': float} dicts
+        title: Chart title
+        
+    Returns:
+        Plotly Figure object
+    """
+    fig = go.Figure()
+    
+    colors = {
+        'NP15': '#1f77b4',    # Blue
+        'SP15': '#ff7f0e',    # Orange
+        'ZP26': '#2ca02c',    # Green
+        'Overall': '#7f7f7f'  # Gray
+    }
+    
+    zone_order = ['NP15', 'SP15', 'ZP26', 'Overall']
+    
+    for zone in zone_order:
+        data = zone_data.get(zone, [])
+        if data:
+            hours = [d['hour'] for d in data]
+            prices = [d['avg_price'] for d in data]
+            
+            fig.add_trace(go.Scatter(
+                x=hours,
+                y=prices,
+                mode='lines',
+                name=zone,
+                line=dict(color=colors.get(zone, '#000000'), width=2),
+                hovertemplate=f'{zone}: $%{{y:.2f}}/MWh<extra></extra>'
+            ))
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title='Hour of Day',
+        yaxis_title='Price ($/MWh)',
+        hovermode='x unified',
+        xaxis=dict(tickmode='linear', dtick=2, range=[-0.5, 23.5]),
+        margin=dict(l=40, r=40, t=50, b=40),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
+    )
+    
+    return fig
+
+
 def create_bx_trend_chart(
     df: pd.DataFrame,
     date_col: str = 'opr_dt',
