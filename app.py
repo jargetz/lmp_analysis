@@ -233,11 +233,11 @@ def render_dashboard_tab():
         )
     
     with filter_col4:
-        # Year/Month selector based on time period
-        bx_calc_for_options = BXCalculator()
-        available_years = bx_calc_for_options.get_available_years()
-        if not available_years:
-            available_years = [2024]
+        # Year/Month selector based on time period (cached)
+        if 'available_years' not in st.session_state:
+            bx_calc_for_options = BXCalculator()
+            st.session_state.available_years = bx_calc_for_options.get_available_years() or [2024]
+        available_years = st.session_state.available_years
         
         if time_period == "Annual":
             selected_year = st.selectbox(
@@ -276,16 +276,22 @@ def render_dashboard_tab():
     st.subheader(f"B{selected_bx} Price Summary ({period_label})")
     
     try:
-        bx_calc = BXCalculator()
+        # Cache BXCalculator in session state
+        if 'bx_calc' not in st.session_state:
+            st.session_state.bx_calc = BXCalculator()
+        bx_calc = st.session_state.bx_calc
         
         if analysis_mode == "By Zone":
-            # Show all zones side-by-side with overall average
-            zone_stats = bx_calc.get_all_zones_bx_average(
-                bx=selected_bx,
-                year=selected_year,
-                time_period=time_period,
-                month=selected_month
-            )
+            # Cache zone stats with key based on filters
+            cache_key = f"zone_stats_{selected_bx}_{selected_year}_{time_period}_{selected_month}"
+            if cache_key not in st.session_state:
+                st.session_state[cache_key] = bx_calc.get_all_zones_bx_average(
+                    bx=selected_bx,
+                    year=selected_year,
+                    time_period=time_period,
+                    month=selected_month
+                )
+            zone_stats = st.session_state[cache_key]
             
             # Display zones in columns: NP15, SP15, ZP26, Overall
             zone_cols = st.columns(4)
