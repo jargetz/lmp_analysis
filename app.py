@@ -187,7 +187,7 @@ def render_dashboard_tab():
         help="Choose to analyze by zone or select specific nodes"
     )
     
-    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
     
     # Initialize filter variables
     selected_zone = None
@@ -244,18 +244,44 @@ def render_dashboard_tab():
         )
     
     with filter_col3:
-        # Date range filter
-        date_range = st.date_input(
-            "Date Range",
-            value=(date.today() - timedelta(days=30), date.today()),
-            help="Filter by date range"
+        # Time period selector (Annual/Monthly)
+        time_period = st.selectbox(
+            "Time Period",
+            options=["Annual", "Monthly"],
+            help="Choose annual or monthly view"
         )
-        # Parse date range (returns tuple if both dates selected)
-        if isinstance(date_range, tuple) and len(date_range) == 2:
-            start_date, end_date = date_range
+    
+    with filter_col4:
+        # Year/Month selector based on time period
+        bx_calc_for_options = BXCalculator()
+        available_years = bx_calc_for_options.get_available_years()
+        if not available_years:
+            available_years = [2024]
+        
+        if time_period == "Annual":
+            selected_year = st.selectbox(
+                "Year",
+                options=available_years,
+                help="Select year"
+            )
+            selected_month = None
         else:
-            start_date = date_range if isinstance(date_range, date) else date.today() - timedelta(days=30)
-            end_date = date.today()
+            # Year selector for monthly view
+            selected_year = st.selectbox(
+                "Year",
+                options=available_years,
+                key="monthly_year",
+                help="Select year"
+            )
+            # Month selector
+            month_options = ["January", "February", "March", "April", "May", "June", 
+                           "July", "August", "September", "October", "November", "December"]
+            selected_month_name = st.selectbox(
+                "Month",
+                options=month_options,
+                help="Select month"
+            )
+            selected_month = month_options.index(selected_month_name) + 1
     
     st.divider()
     
@@ -264,13 +290,29 @@ def render_dashboard_tab():
     
     try:
         bx_calc = BXCalculator()
-        bx_stats = bx_calc.get_bx_average(
-            bx=selected_bx,
-            zone=selected_zone if analysis_mode == "By Zone" else None,
-            nodes=selected_nodes if analysis_mode == "By Node Selection" and selected_nodes else None,
-            start_date=start_date,
-            end_date=end_date
-        )
+        
+        # Use annual summary for annual view, daily for monthly
+        if time_period == "Annual":
+            bx_stats = bx_calc.get_annual_bx_average(
+                bx=selected_bx,
+                year=selected_year,
+                zone=selected_zone if analysis_mode == "By Zone" else None,
+                nodes=selected_nodes if analysis_mode == "By Node Selection" and selected_nodes else None
+            )
+        else:
+            # For monthly view, use daily aggregation with date range
+            from calendar import monthrange
+            start_date = date(selected_year, selected_month, 1)
+            _, last_day = monthrange(selected_year, selected_month)
+            end_date = date(selected_year, selected_month, last_day)
+            
+            bx_stats = bx_calc.get_bx_average(
+                bx=selected_bx,
+                zone=selected_zone if analysis_mode == "By Zone" else None,
+                nodes=selected_nodes if analysis_mode == "By Node Selection" and selected_nodes else None,
+                start_date=start_date,
+                end_date=end_date
+            )
         
         # Show prompt to select nodes if in node mode with no selection
         if analysis_mode == "By Node Selection" and not selected_nodes:

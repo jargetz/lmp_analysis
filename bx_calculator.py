@@ -110,6 +110,72 @@ class BXCalculator:
             self.logger.error(f"Error creating bx_daily_summary table: {str(e)}")
             return False
     
+    def create_monthly_summary_table(self) -> bool:
+        """Create monthly BX summary table for fast dashboard queries."""
+        create_sql = """
+        CREATE TABLE IF NOT EXISTS caiso.bx_monthly_summary (
+            id SERIAL PRIMARY KEY,
+            node VARCHAR(100) NOT NULL,
+            year_month VARCHAR(7) NOT NULL,
+            bx_type SMALLINT NOT NULL,
+            avg_price DECIMAL(10,2) NOT NULL,
+            min_price DECIMAL(10,2),
+            max_price DECIMAL(10,2),
+            day_count INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(node, year_month, bx_type)
+        );
+        
+        CREATE INDEX IF NOT EXISTS idx_bx_monthly_lookup 
+            ON caiso.bx_monthly_summary(bx_type, year_month);
+        CREATE INDEX IF NOT EXISTS idx_bx_monthly_node 
+            ON caiso.bx_monthly_summary(node, bx_type);
+        """
+        
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(create_sql)
+                    conn.commit()
+            self.logger.info("Created bx_monthly_summary table")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error creating bx_monthly_summary table: {str(e)}")
+            return False
+    
+    def create_annual_summary_table(self) -> bool:
+        """Create annual BX summary table for fast dashboard defaults."""
+        create_sql = """
+        CREATE TABLE IF NOT EXISTS caiso.bx_annual_summary (
+            id SERIAL PRIMARY KEY,
+            node VARCHAR(100) NOT NULL,
+            year INTEGER NOT NULL,
+            bx_type SMALLINT NOT NULL,
+            avg_price DECIMAL(10,2) NOT NULL,
+            min_price DECIMAL(10,2),
+            max_price DECIMAL(10,2),
+            day_count INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(node, year, bx_type)
+        );
+        
+        CREATE INDEX IF NOT EXISTS idx_bx_annual_lookup 
+            ON caiso.bx_annual_summary(bx_type, year);
+        CREATE INDEX IF NOT EXISTS idx_bx_annual_node 
+            ON caiso.bx_annual_summary(node, bx_type);
+        """
+        
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(create_sql)
+                    conn.commit()
+            self.logger.info("Created bx_annual_summary table")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error creating bx_annual_summary table: {str(e)}")
+            return False
+    
     def calculate_all_bx_for_date(
         self, 
         target_date: date,
@@ -535,6 +601,242 @@ class BXCalculator:
             ]
         except Exception as e:
             self.logger.error(f"Error getting B{bx} trend: {str(e)}")
+            return []
+    
+    def aggregate_monthly_summaries(self, year: int = None, month: int = None) -> Dict[str, Any]:
+        """
+        Aggregate daily BX summaries into monthly summaries.
+        
+        Args:
+            year: Optional year filter (aggregates all years if not provided)
+            month: Optional month filter (1-12, aggregates all months if not provided)
+            
+        Returns:
+            Dict with aggregation results
+        """
+        self.create_monthly_summary_table()
+        
+        conditions = []
+        params = []
+        
+        if year:
+            conditions.append("EXTRACT(YEAR FROM opr_dt) = %s")
+            params.append(year)
+        if month:
+            conditions.append("EXTRACT(MONTH FROM opr_dt) = %s")
+            params.append(month)
+        
+        where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+        
+        query = f"""
+            INSERT INTO caiso.bx_monthly_summary (node, year_month, bx_type, avg_price, min_price, max_price, day_count)
+            SELECT 
+                node,
+                TO_CHAR(opr_dt, 'YYYY-MM') as year_month,
+                bx_type,
+                ROUND(AVG(avg_price)::numeric, 2) as avg_price,
+                ROUND(MIN(avg_price)::numeric, 2) as min_price,
+                ROUND(MAX(avg_price)::numeric, 2) as max_price,
+                COUNT(DISTINCT opr_dt) as day_count
+            FROM caiso.bx_daily_summary
+            {where_clause}
+            GROUP BY node, TO_CHAR(opr_dt, 'YYYY-MM'), bx_type
+            ON CONFLICT (node, year_month, bx_type) DO UPDATE SET
+                avg_price = EXCLUDED.avg_price,
+                min_price = EXCLUDED.min_price,
+                max_price = EXCLUDED.max_price,
+                day_count = EXCLUDED.day_count,
+                created_at = CURRENT_TIMESTAMP
+        """
+        
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    rows_affected = cur.rowcount
+                    conn.commit()
+            
+            self.logger.info(f"Aggregated {rows_affected} monthly summary records")
+            return {'success': True, 'rows_affected': rows_affected}
+        except Exception as e:
+            self.logger.error(f"Error aggregating monthly summaries: {str(e)}")
+            return {'success': False, 'error': str(e)}
+    
+    def aggregate_annual_summaries(self, year: int = None) -> Dict[str, Any]:
+        """
+        Aggregate daily BX summaries into annual summaries.
+        
+        Args:
+            year: Optional year filter (aggregates all years if not provided)
+            
+        Returns:
+            Dict with aggregation results
+        """
+        self.create_annual_summary_table()
+        
+        conditions = []
+        params = []
+        
+        if year:
+            conditions.append("EXTRACT(YEAR FROM opr_dt) = %s")
+            params.append(year)
+        
+        where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+        
+        query = f"""
+            INSERT INTO caiso.bx_annual_summary (node, year, bx_type, avg_price, min_price, max_price, day_count)
+            SELECT 
+                node,
+                EXTRACT(YEAR FROM opr_dt)::integer as year,
+                bx_type,
+                ROUND(AVG(avg_price)::numeric, 2) as avg_price,
+                ROUND(MIN(avg_price)::numeric, 2) as min_price,
+                ROUND(MAX(avg_price)::numeric, 2) as max_price,
+                COUNT(DISTINCT opr_dt) as day_count
+            FROM caiso.bx_daily_summary
+            {where_clause}
+            GROUP BY node, EXTRACT(YEAR FROM opr_dt), bx_type
+            ON CONFLICT (node, year, bx_type) DO UPDATE SET
+                avg_price = EXCLUDED.avg_price,
+                min_price = EXCLUDED.min_price,
+                max_price = EXCLUDED.max_price,
+                day_count = EXCLUDED.day_count,
+                created_at = CURRENT_TIMESTAMP
+        """
+        
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    rows_affected = cur.rowcount
+                    conn.commit()
+            
+            self.logger.info(f"Aggregated {rows_affected} annual summary records")
+            return {'success': True, 'rows_affected': rows_affected}
+        except Exception as e:
+            self.logger.error(f"Error aggregating annual summaries: {str(e)}")
+            return {'success': False, 'error': str(e)}
+    
+    def run_post_import_aggregation(self) -> Dict[str, Any]:
+        """
+        Run full aggregation after data import.
+        Creates monthly and annual summaries from daily data.
+        
+        Returns:
+            Dict with aggregation results
+        """
+        self.logger.info("Running post-import aggregation...")
+        
+        monthly_result = self.aggregate_monthly_summaries()
+        annual_result = self.aggregate_annual_summaries()
+        
+        return {
+            'success': monthly_result['success'] and annual_result['success'],
+            'monthly': monthly_result,
+            'annual': annual_result
+        }
+    
+    def get_annual_bx_average(
+        self,
+        bx: int,
+        year: int = None,
+        zone: str = None,
+        nodes: List[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get average BX price from annual summary table (fast).
+        
+        Args:
+            bx: BX type (4-10)
+            year: Year to query (defaults to most recent)
+            zone: Optional zone filter
+            nodes: Optional list of node names
+            
+        Returns:
+            Dict with average price and stats
+        """
+        conditions = ["bx_type = %s"]
+        params = [bx]
+        
+        if year:
+            conditions.append("s.year = %s")
+            params.append(year)
+        
+        if nodes:
+            if isinstance(nodes, str):
+                nodes = [nodes]
+            placeholders = ','.join(['%s'] * len(nodes))
+            conditions.append(f"s.node IN ({placeholders})")
+            params.extend(nodes)
+        
+        zone_join = ""
+        if zone:
+            zone_join = "JOIN caiso.node_zone_mapping m ON s.node = m.pnode_id"
+            conditions.append("m.zone = %s")
+            params.append(zone)
+        
+        where_clause = " AND ".join(conditions)
+        
+        query = f"""
+            SELECT 
+                s.year,
+                AVG(s.avg_price) as avg_bx_price,
+                MIN(s.min_price) as min_bx_price,
+                MAX(s.max_price) as max_bx_price,
+                COUNT(DISTINCT s.node) as node_count,
+                SUM(s.day_count) / COUNT(DISTINCT s.node) as avg_days
+            FROM caiso.bx_annual_summary s
+            {zone_join}
+            WHERE {where_clause}
+            GROUP BY s.year
+            ORDER BY s.year DESC
+            LIMIT 1
+        """
+        
+        try:
+            result = self.db.execute_query(query, params, fetch_all=False)
+            return {
+                'success': True,
+                'bx_type': bx,
+                'year': result['year'] if result else None,
+                'avg_price': float(result['avg_bx_price']) if result and result.get('avg_bx_price') else None,
+                'min_price': float(result['min_bx_price']) if result and result.get('min_bx_price') else None,
+                'max_price': float(result['max_bx_price']) if result and result.get('max_bx_price') else None,
+                'node_count': result['node_count'] if result else 0,
+                'avg_days': int(result['avg_days']) if result and result.get('avg_days') else 0
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting annual B{bx} average: {str(e)}")
+            return {'success': False, 'error': str(e)}
+
+
+    def get_available_years(self) -> List[int]:
+        """Get list of years with data in annual summary table."""
+        try:
+            query = "SELECT DISTINCT year FROM caiso.bx_annual_summary ORDER BY year DESC"
+            results = self.db.execute_query(query)
+            return [r['year'] for r in results] if results else []
+        except Exception:
+            # Fallback to daily summary if annual not populated
+            try:
+                query = "SELECT DISTINCT EXTRACT(YEAR FROM opr_dt)::integer as year FROM caiso.bx_daily_summary ORDER BY year DESC"
+                results = self.db.execute_query(query)
+                return [r['year'] for r in results] if results else [2024]
+            except Exception:
+                return [2024]
+    
+    def get_available_months(self, year: int) -> List[str]:
+        """Get list of months with data for a given year."""
+        try:
+            query = """
+                SELECT DISTINCT year_month 
+                FROM caiso.bx_monthly_summary 
+                WHERE year_month LIKE %s
+                ORDER BY year_month
+            """
+            results = self.db.execute_query(query, (f"{year}-%",))
+            return [r['year_month'] for r in results] if results else []
+        except Exception:
             return []
 
 

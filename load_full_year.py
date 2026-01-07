@@ -95,7 +95,17 @@ def main():
         print(f"\n💡 Run again to process next batch (up to {batch_size} files)")
         print(f"   Estimated runs needed: {(remaining + batch_size - 1) // batch_size}")
     else:
-        print("\n✅ All files processed! BX data is ready for analysis.")
+        print("\n✅ All files processed!")
+        
+        # Run post-import aggregation to create monthly/annual summaries
+        print("\n📊 Running post-import aggregation...")
+        from bx_calculator import BXCalculator
+        calc = BXCalculator()
+        agg_result = calc.run_post_import_aggregation()
+        if agg_result['success']:
+            print(f"   Monthly summaries: {agg_result['monthly'].get('rows_affected', 0):,} records")
+            print(f"   Annual summaries: {agg_result['annual'].get('rows_affected', 0):,} records")
+            print("\n✅ Data ready for analysis!")
 
 if __name__ == "__main__":
     main()
