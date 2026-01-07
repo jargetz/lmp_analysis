@@ -199,26 +199,20 @@ def render_dashboard_tab():
             st.markdown("**Zone Comparison**")
             st.caption("Showing NP15, SP15, ZP26, and Overall averages")
         else:
-            # Node search and selection
-            search_term = st.text_input(
-                "Search Nodes",
-                placeholder="Type to search (e.g., PGE, SCE, SLAP)...",
-                help="Enter part of a node name to search"
-            )
+            # Cache node list in session state for fast autocomplete
+            if 'all_nodes' not in st.session_state:
+                with st.spinner("Loading nodes..."):
+                    bx_calc_nodes = BXCalculator()
+                    st.session_state.all_nodes = bx_calc_nodes.get_all_nodes()
             
-            if search_term and len(search_term) >= 2:
-                matching_nodes = st.session_state.analytics.search_nodes(search_term, limit=100)
-                if matching_nodes:
-                    selected_nodes = st.multiselect(
-                        "Select from results",
-                        options=matching_nodes,
-                        default=[],
-                        help="Select one or more nodes from search results"
-                    )
-                else:
-                    st.info("No nodes found matching your search.")
-            else:
-                st.caption("Enter at least 2 characters to search")
+            # Multiselect with built-in autocomplete (type to filter)
+            selected_nodes = st.multiselect(
+                "Select Nodes",
+                options=st.session_state.all_nodes,
+                default=[],
+                placeholder="Type to search nodes...",
+                help="Start typing to filter nodes (e.g., PGE, SCE, SLAP)"
+            )
     
     with filter_col2:
         # BX selector

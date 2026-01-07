@@ -854,6 +854,16 @@ class BXCalculator:
         
         return results
 
+    def get_all_nodes(self) -> List[str]:
+        """Get all distinct node names for autocomplete. Sorted alphabetically."""
+        try:
+            query = "SELECT DISTINCT node FROM caiso.bx_daily_summary ORDER BY node"
+            results = self.db.execute_query(query)
+            return [r['node'] for r in results] if results else []
+        except Exception as e:
+            self.logger.error(f"Error getting all nodes: {str(e)}")
+            return []
+
     def get_available_years(self) -> List[int]:
         """Get list of years with data in annual summary table."""
         try:
