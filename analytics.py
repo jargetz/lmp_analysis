@@ -56,6 +56,58 @@ class LMPAnalytics:
     def __init__(self):
         self.db = DatabaseManager()
         self.logger = logging.getLogger(__name__)
+        self._node_cache = None
+    
+    def get_all_nodes(self, limit=None):
+        """
+        Get all unique node names from the database.
+        Used for autocomplete node selection.
+        
+        Args:
+            limit: Maximum number of nodes to return (for performance)
+            
+        Returns:
+            list: List of node names sorted alphabetically
+        """
+        if self._node_cache is not None:
+            return self._node_cache[:limit] if limit else self._node_cache
+            
+        try:
+            query = "SELECT DISTINCT node FROM caiso.lmp_data ORDER BY node"
+            if limit:
+                query += f" LIMIT {int(limit)}"
+            
+            results = self.db.execute_query(query)
+            self._node_cache = [r['node'] for r in results] if results else []
+            return self._node_cache
+        except Exception as e:
+            self.logger.error(f"Error getting nodes: {str(e)}")
+            return []
+    
+    def search_nodes(self, search_term, limit=50):
+        """
+        Search nodes by partial name match for autocomplete.
+        
+        Args:
+            search_term: Search string to match against node names
+            limit: Maximum results to return
+            
+        Returns:
+            list: Matching node names
+        """
+        try:
+            query = """
+                SELECT DISTINCT node 
+                FROM caiso.lmp_data 
+                WHERE node ILIKE %s
+                ORDER BY node
+                LIMIT %s
+            """
+            results = self.db.execute_query(query, (f"%{search_term}%", limit))
+            return [r['node'] for r in results] if results else []
+        except Exception as e:
+            self.logger.error(f"Error searching nodes: {str(e)}")
+            return []
     
     def _build_where_conditions(self, start_date=None, end_date=None, nodes=None, exclude_zero=True):
         """

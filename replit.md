@@ -78,6 +78,17 @@ Preferred communication style: Simple, everyday language.
 
 ## Recent Changes
 
+### January 7, 2026
+- **Node Selection Mode**: Added toggle between "By Zone" and "By Node Selection" analysis modes
+  - Zone mode: Filter by NP15, SP15, ZP26 zones (existing functionality)
+  - Node mode: Search-based node selection with autocomplete (new)
+- **BX Calculator Optimization**: Simplified to only store daily summaries (~112k rows/day vs ~1.1M)
+  - Removed `bx_hours` table usage for better performance
+  - Queries now support filtering by both zones and specific node lists
+- **Node Search**: Added `search_nodes()` method for efficient server-side search
+  - Handles 16k+ nodes without loading them all at once
+  - Returns matching nodes with ILIKE pattern matching
+
 ### December 10, 2025
 - **Dashboard-First UI**: Restructured app.py into two tabs: Dashboard (primary) and AI Assistant
 - **Node-to-Zone Mapping**: Created `node_zone_mapping.py` module to map PNODE_ID to zones (NP15, SP15, ZP26)
@@ -86,7 +97,7 @@ Preferred communication style: Simple, everyday language.
 - **BX Calculator**: Created `bx_calculator.py` with support for B4-B10 (cheapest X hours analysis)
   - Unified table approach with `bx_type` column instead of separate B6/B8 tables
   - Efficient single-query-per-date design
-  - Query methods: `get_bx_average()`, `get_bx_trend()` with zone filtering
+  - Query methods: `get_bx_average()`, `get_bx_trend()` with zone and node filtering
 - **Dashboard Features**: Zone filter, BX selector, summary statistics cards, hourly price chart
 
 ### October 25, 2025  

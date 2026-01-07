@@ -179,8 +179,7 @@ class BXCalculator:
                     node_hours[node] = []
                 node_hours[node].append(row)
             
-            # Build records for all BX values from the cached data
-            bx_records = []
+            # Build summary records only (skip detailed hour records for performance)
             summary_records = []
             nodes_processed = 0
             
@@ -191,7 +190,7 @@ class BXCalculator:
                 
                 nodes_processed += 1
                 
-                # For each BX type, extract the cheapest X hours
+                # For each BX type, extract the cheapest X hours and compute summary
                 for bx in bx_values:
                     if len(hours) < bx:
                         continue
@@ -200,18 +199,7 @@ class BXCalculator:
                     prices = [float(h['mw']) for h in cheapest_hours]
                     hours_used = [h['opr_hr'] for h in cheapest_hours]
                     
-                    # Build hour records
-                    for rank, hour_data in enumerate(cheapest_hours, 1):
-                        bx_records.append({
-                            'node': node,
-                            'opr_dt': hour_data['opr_dt'],
-                            'opr_hr': hour_data['opr_hr'],
-                            'mw': hour_data['mw'],
-                            'hour_rank': rank,
-                            'bx_type': bx
-                        })
-                    
-                    # Build summary record
+                    # Build summary record only
                     summary_records.append({
                         'node': node,
                         'opr_dt': target_date,
@@ -221,8 +209,7 @@ class BXCalculator:
                         'max_hour': max(hours_used)
                     })
             
-            # Bulk insert all records
-            hours_inserted = self._insert_bx_hours(bx_records) if bx_records else 0
+            # Bulk insert summary records only
             summary_inserted = self._insert_bx_summary(summary_records) if summary_records else 0
             
             return {
@@ -230,7 +217,6 @@ class BXCalculator:
                 'date': target_date,
                 'bx_values': bx_values,
                 'nodes_processed': nodes_processed,
-                'hours_inserted': hours_inserted,
                 'summaries_inserted': summary_inserted
             }
             
@@ -243,12 +229,7 @@ class BXCalculator:
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    # Delete from bx_hours
-                    cur.execute(
-                        "DELETE FROM caiso.bx_hours WHERE opr_dt = %s AND bx_type = ANY(%s)",
-                        (target_date, bx_values)
-                    )
-                    # Delete from bx_daily_summary
+                    # Delete from bx_daily_summary only (we no longer use bx_hours)
                     cur.execute(
                         "DELETE FROM caiso.bx_daily_summary WHERE opr_dt = %s AND bx_type = ANY(%s)",
                         (target_date, bx_values)
@@ -278,8 +259,7 @@ class BXCalculator:
         """
         bx_values = bx_values or SUPPORTED_BX_VALUES
         
-        # Ensure tables exist
-        self.create_bx_table()
+        # Ensure summary table exists (we only use summaries now)
         self.create_bx_summary_table()
         
         # Build list of dates
@@ -291,7 +271,7 @@ class BXCalculator:
         
         total_dates = len(dates)
         processed = 0
-        total_records = 0
+        total_summaries = 0
         
         for i, d in enumerate(dates):
             if progress_callback:
@@ -301,13 +281,13 @@ class BXCalculator:
             
             if result.get('success'):
                 processed += 1
-                total_records += result.get('hours_inserted', 0)
+                total_summaries += result.get('summaries_inserted', 0)
         
         return {
             'success': True,
             'dates_processed': processed,
             'total_dates': total_dates,
-            'total_records': total_records,
+            'total_summaries': total_summaries,
             'bx_values': bx_values
         }
     
@@ -338,7 +318,7 @@ class BXCalculator:
         try:
             query = """
                 SELECT COUNT(*) as count 
-                FROM caiso.bx_hours 
+                FROM caiso.bx_daily_summary 
                 WHERE opr_dt = %s AND bx_type = %s 
                 LIMIT 1
             """
@@ -405,7 +385,7 @@ class BXCalculator:
         start_date: date = None,
         end_date: date = None,
         zone: str = None,
-        node: str = None
+        nodes: List[str] = None
     ) -> Dict[str, Any]:
         """
         Get average BX price with optional filters.
@@ -415,7 +395,7 @@ class BXCalculator:
             start_date: Optional start date filter
             end_date: Optional end date filter
             zone: Optional zone filter (requires node_zone_mapping table)
-            node: Optional specific node filter
+            nodes: Optional list of node names to filter by
             
         Returns:
             Dict with average price and supporting stats
@@ -431,9 +411,12 @@ class BXCalculator:
             conditions.append("s.opr_dt <= %s")
             params.append(end_date)
         
-        if node:
-            conditions.append("s.node = %s")
-            params.append(node)
+        if nodes:
+            if isinstance(nodes, str):
+                nodes = [nodes]
+            placeholders = ','.join(['%s'] * len(nodes))
+            conditions.append(f"s.node IN ({placeholders})")
+            params.extend(nodes)
         
         # Build zone join if needed
         zone_join = ""
@@ -477,6 +460,7 @@ class BXCalculator:
         start_date: date = None,
         end_date: date = None,
         zone: str = None,
+        nodes: List[str] = None,
         aggregation: str = 'daily'
     ) -> List[Dict]:
         """
@@ -487,6 +471,7 @@ class BXCalculator:
             start_date: Optional start date
             end_date: Optional end date
             zone: Optional zone filter
+            nodes: Optional list of node names to filter by
             aggregation: 'daily', 'weekly', or 'monthly'
             
         Returns:
@@ -502,6 +487,13 @@ class BXCalculator:
         if end_date:
             conditions.append("s.opr_dt <= %s")
             params.append(end_date)
+        
+        if nodes:
+            if isinstance(nodes, str):
+                nodes = [nodes]
+            placeholders = ','.join(['%s'] * len(nodes))
+            conditions.append(f"s.node IN ({placeholders})")
+            params.extend(nodes)
         
         zone_join = ""
         if zone:

@@ -174,29 +174,64 @@ def render_dashboard_tab():
     This is the primary interface for exploring LMP data.
     """
     st.header("LMP Dashboard")
-    st.markdown("Analyze electricity pricing by zone and BX hours")
+    st.markdown("Analyze electricity pricing by zone or specific nodes")
     
     # Filter Panel
     st.subheader("Filters")
+    
+    # Analysis mode toggle
+    analysis_mode = st.radio(
+        "Analysis Mode",
+        options=["By Zone", "By Node Selection"],
+        horizontal=True,
+        help="Choose to analyze by zone or select specific nodes"
+    )
+    
     filter_col1, filter_col2, filter_col3 = st.columns(3)
     
+    # Initialize filter variables
+    selected_zone = None
+    selected_nodes = []
+    
     with filter_col1:
-        # Zone selector
-        try:
-            mapper = NodeZoneMapper()
-            available_zones = mapper.get_available_zones()
-            if not available_zones:
+        if analysis_mode == "By Zone":
+            # Zone selector
+            try:
+                mapper = NodeZoneMapper()
+                available_zones = mapper.get_available_zones()
+                if not available_zones:
+                    available_zones = VALID_ZONES
+            except Exception:
                 available_zones = VALID_ZONES
-        except Exception:
-            available_zones = VALID_ZONES
-        
-        selected_zone = st.selectbox(
-            "Zone",
-            options=["All Zones"] + available_zones,
-            help="Filter results by CAISO zone"
-        )
-        if selected_zone == "All Zones":
-            selected_zone = None
+            
+            selected_zone = st.selectbox(
+                "Zone",
+                options=["All Zones"] + available_zones,
+                help="Filter results by CAISO zone"
+            )
+            if selected_zone == "All Zones":
+                selected_zone = None
+        else:
+            # Node search and selection
+            search_term = st.text_input(
+                "Search Nodes",
+                placeholder="Type to search (e.g., PGE, SCE, SLAP)...",
+                help="Enter part of a node name to search"
+            )
+            
+            if search_term and len(search_term) >= 2:
+                matching_nodes = st.session_state.analytics.search_nodes(search_term, limit=100)
+                if matching_nodes:
+                    selected_nodes = st.multiselect(
+                        "Select from results",
+                        options=matching_nodes,
+                        default=[],
+                        help="Select one or more nodes from search results"
+                    )
+                else:
+                    st.info("No nodes found matching your search.")
+            else:
+                st.caption("Enter at least 2 characters to search")
     
     with filter_col2:
         # BX selector
@@ -231,12 +266,16 @@ def render_dashboard_tab():
         bx_calc = BXCalculator()
         bx_stats = bx_calc.get_bx_average(
             bx=selected_bx,
-            zone=selected_zone,
+            zone=selected_zone if analysis_mode == "By Zone" else None,
+            nodes=selected_nodes if analysis_mode == "By Node Selection" and selected_nodes else None,
             start_date=start_date,
             end_date=end_date
         )
         
-        if bx_stats.get('success') and bx_stats.get('avg_price'):
+        # Show prompt to select nodes if in node mode with no selection
+        if analysis_mode == "By Node Selection" and not selected_nodes:
+            st.info("Select one or more nodes above to see BX statistics.")
+        elif bx_stats.get('success') and bx_stats.get('avg_price'):
             stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
             
             with stat_col1:
