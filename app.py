@@ -208,15 +208,50 @@ def render_dashboard_tab():
             st.markdown("**Zone Comparison**")
             st.caption("Showing NP15, SP15, ZP26, and Overall averages")
         else:
+            # Quick add by prefix
+            prefix_col, add_col = st.columns([3, 1])
+            with prefix_col:
+                prefix = st.text_input(
+                    "Add nodes by prefix",
+                    placeholder="e.g., PGE, SCE, SLAP",
+                    help="Type a prefix and click Add to select all matching nodes",
+                    key="node_prefix"
+                )
+            with add_col:
+                st.markdown("<br>", unsafe_allow_html=True)  # Align button
+                if st.button("Add All", key="add_prefix"):
+                    if prefix and len(prefix) >= 2:
+                        matching = [n for n in st.session_state.all_nodes if n.upper().startswith(prefix.upper())]
+                        if matching:
+                            current = st.session_state.get('selected_nodes_list', [])
+                            updated = list(set(current + matching))
+                            st.session_state.selected_nodes_list = updated
+                            st.rerun()
+            
+            # Initialize selected nodes from session state
+            if 'selected_nodes_list' not in st.session_state:
+                st.session_state.selected_nodes_list = []
+            
             # Multiselect with built-in autocomplete (type to filter)
             # Nodes are preloaded at dashboard startup
             selected_nodes = st.multiselect(
-                "Select Nodes",
+                "Selected Nodes",
                 options=st.session_state.all_nodes,
-                default=[],
-                placeholder="Type to search nodes...",
-                help="Start typing to filter nodes (e.g., PGE, SCE, SLAP)"
+                default=st.session_state.selected_nodes_list,
+                placeholder="Type to search or use prefix above...",
+                help="Select individual nodes or use prefix above to add many at once",
+                key="node_multiselect"
             )
+            
+            # Sync selection back to session state
+            st.session_state.selected_nodes_list = selected_nodes
+            
+            # Show count and clear button
+            if selected_nodes:
+                st.caption(f"{len(selected_nodes)} nodes selected")
+                if st.button("Clear All", key="clear_nodes"):
+                    st.session_state.selected_nodes_list = []
+                    st.rerun()
     
     with filter_col2:
         # BX selector
