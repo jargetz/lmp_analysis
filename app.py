@@ -195,22 +195,9 @@ def render_dashboard_tab():
     
     with filter_col1:
         if analysis_mode == "By Zone":
-            # Zone selector
-            try:
-                mapper = NodeZoneMapper()
-                available_zones = mapper.get_available_zones()
-                if not available_zones:
-                    available_zones = VALID_ZONES
-            except Exception:
-                available_zones = VALID_ZONES
-            
-            selected_zone = st.selectbox(
-                "Zone",
-                options=["All Zones"] + available_zones,
-                help="Filter results by CAISO zone"
-            )
-            if selected_zone == "All Zones":
-                selected_zone = None
+            # Zone mode shows all zones - no individual zone filter needed
+            st.markdown("**Zone Comparison**")
+            st.caption("Showing NP15, SP15, ZP26, and Overall averages")
         else:
             # Node search and selection
             search_term = st.text_input(
@@ -285,110 +272,83 @@ def render_dashboard_tab():
     
     st.divider()
     
-    # Summary Statistics Cards
-    st.subheader("Summary Statistics")
+    # BX Price Summary - title reflects the selection
+    if time_period == "Annual":
+        period_label = str(selected_year)
+    else:
+        month_names = ["January", "February", "March", "April", "May", "June", 
+                       "July", "August", "September", "October", "November", "December"]
+        period_label = f"{month_names[selected_month-1]} {selected_year}"
+    st.subheader(f"B{selected_bx} Price Summary ({period_label})")
     
     try:
         bx_calc = BXCalculator()
         
-        # Use annual summary for annual view, daily for monthly
-        if time_period == "Annual":
-            bx_stats = bx_calc.get_annual_bx_average(
+        if analysis_mode == "By Zone":
+            # Show all zones side-by-side with overall average
+            zone_stats = bx_calc.get_all_zones_bx_average(
                 bx=selected_bx,
                 year=selected_year,
-                zone=selected_zone if analysis_mode == "By Zone" else None,
-                nodes=selected_nodes if analysis_mode == "By Node Selection" and selected_nodes else None
+                time_period=time_period,
+                month=selected_month
             )
-        else:
-            # For monthly view, use daily aggregation with date range
-            from calendar import monthrange
-            start_date = date(selected_year, selected_month, 1)
-            _, last_day = monthrange(selected_year, selected_month)
-            end_date = date(selected_year, selected_month, last_day)
             
-            bx_stats = bx_calc.get_bx_average(
-                bx=selected_bx,
-                zone=selected_zone if analysis_mode == "By Zone" else None,
-                nodes=selected_nodes if analysis_mode == "By Node Selection" and selected_nodes else None,
-                start_date=start_date,
-                end_date=end_date
-            )
+            # Display zones in columns: NP15, SP15, ZP26, Overall
+            zone_cols = st.columns(4)
+            zone_order = ['NP15', 'SP15', 'ZP26', 'Overall']
+            
+            for col, zone_name in zip(zone_cols, zone_order):
+                with col:
+                    stats = zone_stats.get(zone_name, {})
+                    if stats.get('success') and stats.get('avg_price'):
+                        st.metric(
+                            zone_name,
+                            f"${stats['avg_price']:.2f}/MWh",
+                            help=f"Nodes: {stats.get('node_count', 0):,}"
+                        )
+                    else:
+                        st.metric(zone_name, "N/A")
         
-        # Show prompt to select nodes if in node mode with no selection
-        if analysis_mode == "By Node Selection" and not selected_nodes:
-            st.info("Select one or more nodes above to see BX statistics.")
-        elif bx_stats.get('success') and bx_stats.get('avg_price'):
-            stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
-            
-            with stat_col1:
-                st.metric(
-                    f"Average B{selected_bx} Price",
-                    f"${bx_stats['avg_price']:.2f}/MWh"
-                )
-            
-            with stat_col2:
-                st.metric(
-                    "Min B{} Price".format(selected_bx),
-                    f"${bx_stats['min_price']:.2f}/MWh" if bx_stats.get('min_price') else "N/A"
-                )
-            
-            with stat_col3:
-                st.metric(
-                    "Max B{} Price".format(selected_bx),
-                    f"${bx_stats['max_price']:.2f}/MWh" if bx_stats.get('max_price') else "N/A"
-                )
-            
-            with stat_col4:
-                st.metric(
-                    "Nodes Analyzed",
-                    f"{bx_stats.get('node_count', 0):,}"
-                )
-        else:
-            st.info("No BX data available. Load data and run BX calculations first.")
-            
-            # Show how to calculate BX data
-            with st.expander("How to calculate BX data"):
-                st.markdown("""
-                BX data needs to be pre-calculated from the raw LMP data.
+        elif analysis_mode == "By Node Selection":
+            # Node selection mode - show stats for selected nodes
+            if not selected_nodes:
+                st.info("Select one or more nodes above to see BX statistics.")
+            else:
+                if time_period == "Annual":
+                    bx_stats = bx_calc.get_annual_bx_average(
+                        bx=selected_bx,
+                        year=selected_year,
+                        nodes=selected_nodes
+                    )
+                else:
+                    from calendar import monthrange
+                    start_date = date(selected_year, selected_month, 1)
+                    _, last_day = monthrange(selected_year, selected_month)
+                    end_date = date(selected_year, selected_month, last_day)
+                    bx_stats = bx_calc.get_bx_average(
+                        bx=selected_bx,
+                        nodes=selected_nodes,
+                        start_date=start_date,
+                        end_date=end_date
+                    )
                 
-                Once LMP data is loaded, run the BX calculator:
-                ```python
-                from bx_calculator import BXCalculator
-                calc = BXCalculator()
-                calc.calculate_bx_for_date_range(start_date, end_date)
-                ```
-                """)
+                if bx_stats.get('success') and bx_stats.get('avg_price'):
+                    stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
+                    
+                    with stat_col1:
+                        st.metric("Average", f"${bx_stats['avg_price']:.2f}/MWh")
+                    with stat_col2:
+                        st.metric("Min", f"${bx_stats['min_price']:.2f}/MWh" if bx_stats.get('min_price') else "N/A")
+                    with stat_col3:
+                        st.metric("Max", f"${bx_stats['max_price']:.2f}/MWh" if bx_stats.get('max_price') else "N/A")
+                    with stat_col4:
+                        st.metric("Nodes", f"{bx_stats.get('node_count', 0):,}")
+                else:
+                    st.info("No data found for selected nodes.")
     
     except Exception as e:
         st.warning(f"Could not load BX statistics: {str(e)}")
         st.info("Make sure LMP data is loaded and BX calculations have been run.")
-    
-    st.divider()
-    
-    # Quick Analytics Section
-    st.subheader("Quick Analytics")
-    
-    analytics_col1, analytics_col2 = st.columns(2)
-    
-    with analytics_col1:
-        st.markdown("**Price Statistics**")
-        try:
-            price_stats = st.session_state.analytics.get_price_statistics()
-            if not price_stats.empty:
-                st.dataframe(price_stats.head(10), use_container_width=True)
-            else:
-                st.info("No price statistics available")
-        except Exception as e:
-            st.error(f"Error loading price statistics: {str(e)}")
-    
-    with analytics_col2:
-        st.markdown("**Hourly Price Patterns**")
-        try:
-            hourly_avg = st.session_state.analytics.get_hourly_averages()
-            fig = create_hourly_price_chart(hourly_avg)
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            st.error(f"Error loading hourly averages: {str(e)}")
 
 
 def render_ai_assistant_tab():

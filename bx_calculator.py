@@ -810,6 +810,50 @@ class BXCalculator:
             return {'success': False, 'error': str(e)}
 
 
+    def get_all_zones_bx_average(
+        self,
+        bx: int,
+        year: int = None,
+        time_period: str = "Annual",
+        month: int = None
+    ) -> Dict[str, Any]:
+        """
+        Get BX average for all zones plus overall average.
+        
+        Returns dict with keys: 'NP15', 'SP15', 'ZP26', 'Overall'
+        """
+        zones = ['NP15', 'SP15', 'ZP26']
+        results = {}
+        
+        # Get stats for each zone
+        for zone in zones:
+            if time_period == "Annual":
+                stats = self.get_annual_bx_average(bx=bx, year=year, zone=zone)
+            else:
+                from calendar import monthrange
+                from datetime import date
+                start_date = date(year, month, 1)
+                _, last_day = monthrange(year, month)
+                end_date = date(year, month, last_day)
+                stats = self.get_bx_average(bx=bx, zone=zone, start_date=start_date, end_date=end_date)
+            
+            results[zone] = stats
+        
+        # Get overall stats (no zone filter)
+        if time_period == "Annual":
+            overall = self.get_annual_bx_average(bx=bx, year=year)
+        else:
+            from calendar import monthrange
+            from datetime import date
+            start_date = date(year, month, 1)
+            _, last_day = monthrange(year, month)
+            end_date = date(year, month, last_day)
+            overall = self.get_bx_average(bx=bx, start_date=start_date, end_date=end_date)
+        
+        results['Overall'] = overall
+        
+        return results
+
     def get_available_years(self) -> List[int]:
         """Get list of years with data in annual summary table."""
         try:
