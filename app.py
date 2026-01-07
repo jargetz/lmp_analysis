@@ -57,10 +57,15 @@ def main():
     with st.sidebar:
         st.header("Data Status")
         
-        # Check database data status only (fast, no S3 checks)
+        # Cache database status check (runs once per session)
+        if 'db_summary' not in st.session_state:
+            try:
+                st.session_state.db_summary = st.session_state.processor.get_data_summary_from_db()
+            except Exception:
+                st.session_state.db_summary = None
+        
+        summary = st.session_state.db_summary
         try:
-            summary = st.session_state.processor.get_data_summary_from_db()
-            
             if summary and summary.get('total_records', 0) > 0:
                 st.success("✅ Data loaded and ready")
                 st.metric("Records in Database", f"{summary.get('total_records', 0):,}")
@@ -120,19 +125,13 @@ def main():
             st.error(f"Error checking database status: {str(e)}")
             st.session_state.data_loaded = False
         
-        # Additional database details (if data exists)
-        if st.session_state.data_loaded:
-            try:
-                summary = st.session_state.processor.get_data_summary_from_db()
-                if summary:
-                    st.subheader("Database Details")
-                    st.metric("Unique Nodes", summary.get('unique_nodes', 0))
-                    
-                    if summary.get('earliest_date') and summary.get('latest_date'):
-                        st.metric("Date Range", f"{summary['earliest_date']} to {summary['latest_date']}")
-                        
-            except Exception as e:
-                st.error(f"Error loading database details: {str(e)}")
+        # Additional database details (if data exists) - use cached summary
+        if st.session_state.data_loaded and summary:
+            st.subheader("Database Details")
+            st.metric("Unique Nodes", summary.get('unique_nodes', 0))
+            
+            if summary.get('earliest_date') and summary.get('latest_date'):
+                st.metric("Date Range", f"{summary['earliest_date']} to {summary['latest_date']}")
     
     # Main content area
     if not st.session_state.data_loaded:
