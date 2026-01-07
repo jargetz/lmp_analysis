@@ -79,6 +79,14 @@ Preferred communication style: Simple, everyday language.
 ## Recent Changes
 
 ### January 7, 2026
+- **Pre-computed Summary Tables**: Added `bx_monthly_summary` and `bx_annual_summary` tables for fast dashboard queries
+  - Annual summaries: ~1.3M rows/year vs 35M daily rows (90% reduction)
+  - Post-import aggregation runs automatically after S3 data load completes
+  - Methods: `aggregate_monthly_summaries()`, `aggregate_annual_summaries()`, `run_post_import_aggregation()`
+- **Dashboard Time Period Selector**: Replaced date range with Annual/Monthly selector
+  - Annual view uses pre-computed `get_annual_bx_average()` for fast queries
+  - Monthly view uses daily aggregation with date range
+  - Dynamic year dropdown via `get_available_years()` method
 - **Node Selection Mode**: Added toggle between "By Zone" and "By Node Selection" analysis modes
   - Zone mode: Filter by NP15, SP15, ZP26 zones (existing functionality)
   - Node mode: Search-based node selection with autocomplete (new)
