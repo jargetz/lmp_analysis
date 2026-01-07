@@ -173,6 +173,15 @@ def render_dashboard_tab():
     
     This is the primary interface for exploring LMP data.
     """
+    # Preload all cached data at startup (runs once)
+    if 'dashboard_initialized' not in st.session_state:
+        with st.spinner("Loading dashboard data..."):
+            bx_calc_init = BXCalculator()
+            st.session_state.bx_calc = bx_calc_init
+            st.session_state.all_nodes = bx_calc_init.get_all_nodes()
+            st.session_state.available_years = bx_calc_init.get_available_years() or [2024]
+            st.session_state.dashboard_initialized = True
+    
     st.header("LMP Dashboard")
     st.markdown("Analyze electricity pricing by zone or specific nodes")
     
@@ -199,13 +208,8 @@ def render_dashboard_tab():
             st.markdown("**Zone Comparison**")
             st.caption("Showing NP15, SP15, ZP26, and Overall averages")
         else:
-            # Cache node list in session state for fast autocomplete
-            if 'all_nodes' not in st.session_state:
-                with st.spinner("Loading nodes..."):
-                    bx_calc_nodes = BXCalculator()
-                    st.session_state.all_nodes = bx_calc_nodes.get_all_nodes()
-            
             # Multiselect with built-in autocomplete (type to filter)
+            # Nodes are preloaded at dashboard startup
             selected_nodes = st.multiselect(
                 "Select Nodes",
                 options=st.session_state.all_nodes,
@@ -233,10 +237,7 @@ def render_dashboard_tab():
         )
     
     with filter_col4:
-        # Year/Month selector based on time period (cached)
-        if 'available_years' not in st.session_state:
-            bx_calc_for_options = BXCalculator()
-            st.session_state.available_years = bx_calc_for_options.get_available_years() or [2024]
+        # Year/Month selector (years preloaded at startup)
         available_years = st.session_state.available_years
         
         if time_period == "Annual":
@@ -276,9 +277,7 @@ def render_dashboard_tab():
     st.subheader(f"B{selected_bx} Price Summary ({period_label})")
     
     try:
-        # Cache BXCalculator in session state
-        if 'bx_calc' not in st.session_state:
-            st.session_state.bx_calc = BXCalculator()
+        # Use cached BXCalculator (preloaded at startup)
         bx_calc = st.session_state.bx_calc
         
         if analysis_mode == "By Zone":
