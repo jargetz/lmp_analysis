@@ -56,12 +56,14 @@ class DatabaseManager:
             raise
     
     def bulk_insert_lmp_data(self, df):
-        """Bulk insert LMP data using pandas to_sql for efficiency"""
+        """Bulk insert LMP data using PostgreSQL COPY for maximum speed"""
         try:
+            import io
+            
             # Prepare the dataframe
             df_clean = df.copy()
             
-            # CRITICAL FIX: Remove duplicate columns that cause to_sql errors
+            # CRITICAL FIX: Remove duplicate columns that cause errors
             df_clean = df_clean.loc[:, ~df_clean.columns.duplicated()]
             
             # Rename columns to match database schema
@@ -94,15 +96,20 @@ class DatabaseManager:
             # Keep only columns that should be in the database
             df_final = df_clean[[col for col in expected_columns if col in df_clean.columns]]
             
-            # Use to_sql for efficient bulk insert
-            df_final.to_sql(
-                'lmp_data', 
-                self.engine, 
-                schema='caiso',
-                if_exists='append', 
-                index=False,
-                method='multi'
-            )
+            # Use PostgreSQL COPY for maximum insert speed
+            buffer = io.StringIO()
+            df_final.to_csv(buffer, index=False, header=False, na_rep='\\N')
+            buffer.seek(0)
+            
+            columns = list(df_final.columns)
+            
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.copy_expert(
+                        f"COPY caiso.lmp_data ({','.join(columns)}) FROM STDIN WITH CSV NULL '\\N'",
+                        buffer
+                    )
+                    conn.commit()
             
             return len(df_final)
             
