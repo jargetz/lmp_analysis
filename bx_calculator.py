@@ -810,6 +810,97 @@ class BXCalculator:
             return {'success': False, 'error': str(e)}
 
 
+    def get_zone_level_bx(
+        self,
+        bx: int,
+        zone: str = None,
+        year: int = None,
+        start_date: date = None,
+        end_date: date = None
+    ) -> Dict[str, Any]:
+        """
+        Calculate zone-level BX correctly: find the X cheapest hours per day
+        based on zone-average prices, then average those.
+        
+        This is different from averaging per-node BX values.
+        
+        Args:
+            bx: BX type (4-10)
+            zone: Zone filter (NP15, SP15, ZP26) or None for overall
+            year: Year to query (used if start/end not specified)
+            start_date: Optional start date
+            end_date: Optional end date
+            
+        Returns:
+            Dict with avg_price and stats
+        """
+        zone_join = ""
+        zone_condition = ""
+        params = []
+        
+        if zone:
+            zone_join = "JOIN caiso.node_zone_mapping m ON l.node = m.pnode_id"
+            zone_condition = "AND m.zone = %s"
+            params.append(zone)
+        
+        date_condition = ""
+        if start_date and end_date:
+            date_condition = "AND l.opr_dt >= %s AND l.opr_dt <= %s"
+            params.extend([start_date, end_date])
+        elif year:
+            date_condition = "AND EXTRACT(YEAR FROM l.opr_dt) = %s"
+            params.append(year)
+        
+        query = f"""
+            WITH zone_hourly AS (
+                SELECT 
+                    l.opr_dt,
+                    EXTRACT(HOUR FROM l.interval_start_time_gmt) as hour,
+                    AVG(l.mw) as zone_avg_price
+                FROM caiso.lmp_data l
+                {zone_join}
+                WHERE 1=1 {zone_condition} {date_condition}
+                GROUP BY l.opr_dt, EXTRACT(HOUR FROM l.interval_start_time_gmt)
+            ),
+            ranked_hours AS (
+                SELECT 
+                    opr_dt,
+                    hour,
+                    zone_avg_price,
+                    ROW_NUMBER() OVER (PARTITION BY opr_dt ORDER BY zone_avg_price ASC) as rn
+                FROM zone_hourly
+            ),
+            daily_bx AS (
+                SELECT 
+                    opr_dt,
+                    AVG(zone_avg_price) as bx_price
+                FROM ranked_hours
+                WHERE rn <= %s
+                GROUP BY opr_dt
+            )
+            SELECT 
+                AVG(bx_price) as avg_bx_price,
+                MIN(bx_price) as min_bx_price,
+                MAX(bx_price) as max_bx_price,
+                COUNT(*) as day_count
+            FROM daily_bx
+        """
+        params.append(bx)
+        
+        try:
+            result = self.db.execute_query(query, params, fetch_all=False)
+            return {
+                'success': True,
+                'bx_type': bx,
+                'avg_price': float(result['avg_bx_price']) if result and result.get('avg_bx_price') else None,
+                'min_price': float(result['min_bx_price']) if result and result.get('min_bx_price') else None,
+                'max_price': float(result['max_bx_price']) if result and result.get('max_bx_price') else None,
+                'day_count': result['day_count'] if result else 0
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting zone-level B{bx}: {str(e)}")
+            return {'success': False, 'error': str(e)}
+
     def get_all_zones_bx_average(
         self,
         bx: int,
@@ -818,38 +909,43 @@ class BXCalculator:
         month: int = None
     ) -> Dict[str, Any]:
         """
-        Get BX average for all zones plus overall average.
+        Get zone-level BX average for all zones plus overall.
+        
+        Uses zone-level BX calculation (cheapest X hours based on zone-average prices)
+        rather than averaging per-node BX values.
         
         Returns dict with keys: 'NP15', 'SP15', 'ZP26', 'Overall'
         """
+        from calendar import monthrange
+        
         zones = ['NP15', 'SP15', 'ZP26']
         results = {}
         
-        # Get stats for each zone
-        for zone in zones:
-            if time_period == "Annual":
-                stats = self.get_annual_bx_average(bx=bx, year=year, zone=zone)
-            else:
-                from calendar import monthrange
-                from datetime import date
-                start_date = date(year, month, 1)
-                _, last_day = monthrange(year, month)
-                end_date = date(year, month, last_day)
-                stats = self.get_bx_average(bx=bx, zone=zone, start_date=start_date, end_date=end_date)
-            
-            results[zone] = stats
-        
-        # Get overall stats (no zone filter)
         if time_period == "Annual":
-            overall = self.get_annual_bx_average(bx=bx, year=year)
+            start_date = None
+            end_date = None
         else:
-            from calendar import monthrange
-            from datetime import date
             start_date = date(year, month, 1)
             _, last_day = monthrange(year, month)
             end_date = date(year, month, last_day)
-            overall = self.get_bx_average(bx=bx, start_date=start_date, end_date=end_date)
         
+        for zone in zones:
+            stats = self.get_zone_level_bx(
+                bx=bx,
+                zone=zone,
+                year=year if time_period == "Annual" else None,
+                start_date=start_date,
+                end_date=end_date
+            )
+            results[zone] = stats
+        
+        overall = self.get_zone_level_bx(
+            bx=bx,
+            zone=None,
+            year=year if time_period == "Annual" else None,
+            start_date=start_date,
+            end_date=end_date
+        )
         results['Overall'] = overall
         
         return results
