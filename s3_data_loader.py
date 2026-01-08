@@ -95,8 +95,8 @@ class S3DataLoader:
                         with zip_ref.open(file_name) as csv_file:
                             content = csv_file.read().decode('utf-8')
                             
-                            # Process and store in database
-                            result = self.processor.process_csv_content_to_db(content, s3_key)
+                            # Process and store in database (fast mode - bypasses pandas)
+                            result = self.processor.process_csv_content_to_db_fast(content, s3_key)
                             records_inserted = result.get('records_inserted', 0)
                             
                             # Calculate BX for this day if requested

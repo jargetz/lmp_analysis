@@ -55,6 +55,28 @@ class DatabaseManager:
             self.logger.error(f"Error executing batch query: {str(e)}")
             raise
     
+    def bulk_insert_lmp_data_raw(self, buffer, row_count: int) -> int:
+        """Fast bulk insert from pre-formatted StringIO buffer (bypasses pandas)"""
+        try:
+            columns = [
+                'interval_start_time_gmt', 'node', 'mw', 'mcc', 'mlc', 'pos',
+                'day_of_week', 'source_file', 'opr_hr', 'opr_dt'
+            ]
+            
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.copy_expert(
+                        f"COPY caiso.lmp_data ({','.join(columns)}) FROM STDIN WITH CSV NULL '\\N'",
+                        buffer
+                    )
+                    conn.commit()
+            
+            return row_count
+            
+        except Exception as e:
+            self.logger.error(f"Error in fast bulk insert: {str(e)}")
+            raise
+
     def bulk_insert_lmp_data(self, df):
         """Bulk insert LMP data using PostgreSQL COPY for maximum speed"""
         try:

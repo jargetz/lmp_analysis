@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, date
 import io
+import csv
 import logging
 from typing import Dict, Any
 from database import DatabaseManager
@@ -15,6 +16,89 @@ class CAISODataProcessor:
         self.db = DatabaseManager()
         self.logger = logging.getLogger(__name__)
         
+    def process_csv_content_to_db_fast(self, csv_content: str, source_file: str = "") -> Dict[str, Any]:
+        """Fast CSV processing - bypasses pandas, streams directly to PostgreSQL COPY"""
+        try:
+            lines = csv_content.strip().split('\n')
+            if len(lines) < 2:
+                return {'records_inserted': 0, 'error': 'Empty or invalid CSV'}
+            
+            reader = csv.reader(lines)
+            header = [col.upper() for col in next(reader)]
+            
+            ts_idx = next((i for i, c in enumerate(header) if 'INTERVALSTARTTIME' in c and 'GMT' in c), None)
+            node_idx = next((i for i, c in enumerate(header) if c == 'NODE' or 'PNODE' in c), None)
+            mw_idx = next((i for i, c in enumerate(header) if c == 'MW'), None)
+            mcc_idx = next((i for i, c in enumerate(header) if c == 'MCC'), None)
+            mlc_idx = next((i for i, c in enumerate(header) if c == 'MLC'), None)
+            pos_idx = next((i for i, c in enumerate(header) if c == 'POS'), None)
+            
+            if ts_idx is None or node_idx is None or mw_idx is None:
+                return {'records_inserted': 0, 'error': 'Missing required columns'}
+            
+            output = io.StringIO()
+            writer = csv.writer(output)
+            row_count = 0
+            
+            for row in reader:
+                try:
+                    if len(row) <= max(ts_idx, node_idx, mw_idx):
+                        continue
+                    
+                    ts_str = row[ts_idx].strip()
+                    if not ts_str:
+                        continue
+                    
+                    try:
+                        if 'T' in ts_str:
+                            dt = datetime.fromisoformat(ts_str.replace('Z', '+00:00').split('+')[0])
+                        else:
+                            dt = datetime.strptime(ts_str, '%Y-%m-%dT%H:%M:%S')
+                    except:
+                        dt = datetime.strptime(ts_str[:19], '%Y-%m-%dT%H:%M:%S')
+                    
+                    opr_dt = dt.date().isoformat()
+                    opr_hr = dt.hour
+                    day_of_week = dt.weekday()
+                    
+                    node = row[node_idx].strip()
+                    mw = row[mw_idx].strip()
+                    if not mw or not node:
+                        continue
+                    try:
+                        float(mw)
+                    except:
+                        continue
+                    
+                    mcc = row[mcc_idx].strip() if mcc_idx is not None and mcc_idx < len(row) else ''
+                    mlc = row[mlc_idx].strip() if mlc_idx is not None and mlc_idx < len(row) else ''
+                    pos = row[pos_idx].strip() if pos_idx is not None and pos_idx < len(row) else ''
+                    
+                    mcc = mcc if mcc and mcc.replace('.','').replace('-','').isdigit() else '\\N'
+                    mlc = mlc if mlc and mlc.replace('.','').replace('-','').isdigit() else '\\N'
+                    pos = pos if pos and pos.replace('.','').replace('-','').isdigit() else '\\N'
+                    
+                    writer.writerow([ts_str, node, mw, mcc, mlc, pos, day_of_week, source_file, opr_hr, opr_dt])
+                    row_count += 1
+                except Exception:
+                    continue
+            
+            if row_count == 0:
+                return {'records_inserted': 0, 'error': 'No valid rows after processing'}
+            
+            output.seek(0)
+            records_inserted = self.db.bulk_insert_lmp_data_raw(output, row_count)
+            
+            return {
+                'records_inserted': records_inserted,
+                'source_file': source_file,
+                'total_rows_processed': row_count
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error in fast CSV processing from {source_file}: {str(e)}")
+            return {'records_inserted': 0, 'error': str(e)}
+
     def process_csv_content_to_db(self, csv_content: str, source_file: str = "") -> Dict[str, Any]:
         """Process CSV content and store directly in database"""
         try:
