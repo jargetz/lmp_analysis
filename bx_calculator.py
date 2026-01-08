@@ -999,6 +999,59 @@ class BXCalculator:
         
         return results
 
+    def get_month_hour_averages(self, zone: str = None, year: int = None) -> List[Dict]:
+        """
+        Get average prices by month and hour for heatmap display.
+        
+        Args:
+            zone: Optional zone filter (NP15, SP15, ZP26)
+            year: Optional year filter
+            
+        Returns:
+            List of dicts with 'month', 'hour', 'avg_price'
+        """
+        zone_join = ""
+        zone_condition = ""
+        params = []
+        
+        if zone:
+            zone_join = "JOIN caiso.node_zone_mapping m ON l.node = m.pnode_id"
+            zone_condition = "AND m.zone = %s"
+            params.append(zone)
+        
+        year_filter = ""
+        if year:
+            year_filter = "AND EXTRACT(YEAR FROM l.opr_dt) = %s"
+            params.append(year)
+        
+        query = f"""
+            SELECT 
+                EXTRACT(MONTH FROM l.opr_dt) as month,
+                EXTRACT(HOUR FROM l.interval_start_time_gmt) as hour,
+                AVG(l.mw) as avg_price
+            FROM caiso.lmp_data l
+            {zone_join}
+            WHERE 1=1 {zone_condition} {year_filter}
+            GROUP BY 
+                EXTRACT(MONTH FROM l.opr_dt),
+                EXTRACT(HOUR FROM l.interval_start_time_gmt)
+            ORDER BY month, hour
+        """
+        
+        try:
+            result = self.db.execute_query(query, params if params else None)
+            return [
+                {
+                    'month': int(r['month']),
+                    'hour': int(r['hour']),
+                    'avg_price': float(r['avg_price'])
+                }
+                for r in result
+            ] if result else []
+        except Exception as e:
+            self.logger.error(f"Error getting month/hour averages: {str(e)}")
+            return []
+
     def get_all_nodes(self) -> List[str]:
         """Get all distinct node names for autocomplete. Sorted alphabetically."""
         try:

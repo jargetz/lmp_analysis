@@ -31,7 +31,8 @@ from charts import (
     create_node_hourly_chart,
     create_zone_bx_trend_chart,
     create_node_bx_trend_chart,
-    create_node_box_plot
+    create_node_box_plot,
+    create_month_hour_heatmap
 )
 
 def main():
@@ -349,15 +350,27 @@ def render_dashboard_tab():
                     else:
                         st.metric(zone_name, "N/A")
             
-            # Hourly price chart by zone (cached)
-            hourly_cache_key = f"hourly_zone_{selected_year}"
-            if hourly_cache_key not in st.session_state:
-                st.session_state[hourly_cache_key] = bx_calc.get_hourly_averages_by_zone(year=selected_year)
-            hourly_zone_data = st.session_state[hourly_cache_key]
+            # Month x Hour heatmap (select zone with tabs)
+            st.subheader("Averages - Day Ahead LMP")
+            heatmap_zones = ['Overall', 'NP15', 'SP15', 'ZP26']
+            heatmap_tabs = st.tabs(heatmap_zones)
             
-            if any(hourly_zone_data.get(z) for z in ['NP15', 'SP15', 'ZP26', 'Overall']):
-                fig = create_zone_hourly_chart(hourly_zone_data, title=f'Hourly Price by Zone ({selected_year})')
-                st.plotly_chart(fig, use_container_width=True)
+            for tab, zone_name in zip(heatmap_tabs, heatmap_zones):
+                with tab:
+                    heatmap_cache_key = f"heatmap_{zone_name}_{selected_year}"
+                    if heatmap_cache_key not in st.session_state:
+                        zone_filter = None if zone_name == 'Overall' else zone_name
+                        st.session_state[heatmap_cache_key] = bx_calc.get_month_hour_averages(
+                            zone=zone_filter,
+                            year=selected_year
+                        )
+                    heatmap_data = st.session_state[heatmap_cache_key]
+                    
+                    if heatmap_data:
+                        fig = create_month_hour_heatmap(heatmap_data, zone=zone_name)
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No data available for this zone")
             
             # BX trend chart by zone (cached)
             bx_trend_cache_key = f"bx_trend_zone_{selected_bx}_{selected_year}"

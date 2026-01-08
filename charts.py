@@ -558,6 +558,83 @@ def create_node_bx_trend_chart(
     return fig
 
 
+def create_month_hour_heatmap(
+    data: list,
+    title: str = 'Averages - Day Ahead LMP',
+    zone: str = None
+) -> go.Figure:
+    """
+    Create a heatmap table showing average prices by month (rows) and hour (columns).
+    
+    Args:
+        data: List of dicts with 'month', 'hour', 'avg_price'
+        title: Chart title
+        zone: Optional zone name for title
+        
+    Returns:
+        Plotly Figure object
+    """
+    if not data:
+        return create_empty_chart("No data for heatmap")
+    
+    df = pd.DataFrame(data)
+    
+    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    
+    pivot = df.pivot(index='month', columns='hour', values='avg_price')
+    pivot = pivot.reindex(range(1, 13))
+    pivot.columns = [int(h) + 1 for h in pivot.columns]
+    
+    z_values = pivot.values
+    x_labels = [str(h) for h in range(1, 25)]
+    y_labels = month_names[:len(pivot)]
+    
+    text_values = [[f'{val:.2f}' if pd.notna(val) else '' for val in row] for row in z_values]
+    
+    fig = go.Figure(data=go.Heatmap(
+        z=z_values,
+        x=x_labels,
+        y=y_labels,
+        text=text_values,
+        texttemplate='%{text}',
+        textfont=dict(size=10),
+        colorscale=[
+            [0.0, '#3366cc'],
+            [0.25, '#66aaff'],
+            [0.5, '#ffff99'],
+            [0.75, '#ff9966'],
+            [1.0, '#cc3300']
+        ],
+        hovertemplate='%{y} Hour %{x}: $%{z:.2f}/MWh<extra></extra>',
+        showscale=True,
+        colorbar=dict(title='$/MWh', tickformat='.0f')
+    ))
+    
+    display_title = f"{title} - {zone}" if zone else title
+    
+    fig.update_layout(
+        title=display_title,
+        xaxis_title='Hour Ending',
+        yaxis_title='',
+        xaxis=dict(
+            tickmode='linear',
+            dtick=1,
+            side='bottom'
+        ),
+        yaxis=dict(
+            autorange='reversed',
+            tickmode='array',
+            ticktext=y_labels,
+            tickvals=list(range(len(y_labels)))
+        ),
+        margin=dict(l=60, r=40, t=50, b=60),
+        height=400
+    )
+    
+    return fig
+
+
 def create_node_box_plot(
     stats_data: list,
     title: str = 'Price Distribution by Node'
