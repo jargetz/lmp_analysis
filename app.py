@@ -137,7 +137,8 @@ def main():
             
             if summary.get('earliest_date') and summary.get('latest_date'):
                 st.markdown("**Date Range**")
-                st.markdown(f"📅 {summary['earliest_date']} → {summary['latest_date']}")
+                st.markdown(f"📅 Start: {summary['earliest_date']}")
+                st.markdown(f"📅 End: {summary['latest_date']}")
     
     # Main content area
     if not st.session_state.data_loaded:
