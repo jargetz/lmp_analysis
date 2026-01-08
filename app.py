@@ -136,7 +136,8 @@ def main():
             st.metric("Unique Nodes", summary.get('unique_nodes', 0))
             
             if summary.get('earliest_date') and summary.get('latest_date'):
-                st.metric("Date Range", f"{summary['earliest_date']} to {summary['latest_date']}")
+                st.markdown("**Date Range**")
+                st.markdown(f"📅 {summary['earliest_date']} → {summary['latest_date']}")
     
     # Main content area
     if not st.session_state.data_loaded:
