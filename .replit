@@ -1,6 +1,6 @@
 modules = ["python-3.11", "python3", "postgresql-16"]
 [agent]
-integrations = ["python_openai:1.0.0"]
+integrations = ["python_openai:1.0.0", "streamlit_database:1.0.0"]
 
 [nix]
 channel = "stable-25_05"
