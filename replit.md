@@ -67,16 +67,46 @@ Preferred communication style: Simple, everyday language.
 - **Run Tests**: `pytest test_analytics_baseline.py -v`
 - **Philosophy**: Minimal but useful - catches breaking changes without slowing iteration
 
+## Data Storage Architecture (Hybrid)
+
+The system uses a hybrid storage approach to handle the full year of data within Replit's 10GB PostgreSQL limit:
+
+### Storage Breakdown
+- **Raw LMP Data**: Stored as Parquet files in AWS S3 (`lmp_parquet/year=YYYY/month=MM/YYYY-MM-DD.parquet`)
+- **BX Aggregates**: Stored in PostgreSQL (`caiso.bx_daily_summary` - ~16k nodes × 7 BX types per day)
+- **Zone Mappings**: PostgreSQL (`caiso.node_zone_mapping`)
+
+### Why Hybrid?
+- Full year raw data = ~39GB (exceeds 10GB limit)
+- BX aggregates only = ~10GB (fits within limit)
+- Parquet in S3 = unlimited, cost-effective for raw data
+
+### Key Files
+- `parquet_storage.py`: Read/write Parquet to S3
+- `s3_data_loader.py`: Hybrid loader (parquet + BX aggregates)
+- `bx_calculator.py`: BX computation and storage
+
 ## Data Loading
 
 - **Source**: 312 ZIP files stored in AWS S3 bucket (full year of CAISO Day Ahead LMP data)
-- **Loading Strategy**: Resumable batch processing to handle platform execution time limits
+- **Loading Strategy**: Hybrid - raw data to S3 parquet, BX aggregates to PostgreSQL
 - **Batch Size**: Configurable (default 20 files per run)
-- **Progress Tracking**: Automatic duplicate detection via `source_file` column
+- **Speed**: ~7 seconds per file (parquet write + BX computation)
+- **Progress Tracking**: Automatic duplicate detection via parquet file existence in S3
 - **How to Load**: Run `python3 load_full_year.py` multiple times until complete
 - **Full Guide**: See `DATALOAD_GUIDE.md` for detailed instructions
 
 ## Recent Changes
+
+### January 9, 2026
+- **Hybrid Storage Architecture**: Implemented new storage strategy to fit full year within 10GB limit
+  - Raw LMP data now stored as Parquet files in S3 (unlimited, ~39GB for full year)
+  - Only BX aggregates stored in PostgreSQL (~10GB for full year)
+  - `parquet_storage.py`: New module for Parquet read/write to S3
+  - `s3_data_loader.py`: Updated to use hybrid approach (parquet + BX computation)
+- **Lean Schema**: Reduced lmp_data columns from 14 to 5 (node, mw, opr_dt, opr_hr, source_file)
+- **Optimized BX Calculation**: Vectorized pandas operations for faster processing (~7s per file)
+- **Database Cleanup**: Truncated raw lmp_data table (now using parquet), freed 8.2GB
 
 ### January 7, 2026
 - **Pre-computed Summary Tables**: Added `bx_monthly_summary` and `bx_annual_summary` tables for fast dashboard queries

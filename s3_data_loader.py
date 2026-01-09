@@ -125,11 +125,11 @@ class S3DataLoader:
     def _compute_bx_from_records(self, records: List[Dict], opr_date: date) -> Dict[str, Any]:
         """Compute BX averages from in-memory records and store in PostgreSQL.
         
+        Stores per-node daily BX summaries for dashboard queries.
         Uses vectorized pandas operations for speed.
         """
         try:
             import pandas as pd
-            import numpy as np
             
             df = pd.DataFrame(records)
             
