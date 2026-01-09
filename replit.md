@@ -78,8 +78,9 @@ The system uses a hybrid storage approach to handle the full year of data within
 
 ### Why Hybrid?
 - Full year raw data = ~39GB (exceeds 10GB limit)
-- BX aggregates only = ~10GB (fits within limit)
+- Zone-level BX aggregates = ~20MB (fits easily)
 - Parquet in S3 = unlimited, cost-effective for raw data
+- Node-level drill-downs computed on-demand from parquet
 
 ### Key Files
 - `parquet_storage.py`: Read/write Parquet to S3

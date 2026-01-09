@@ -876,10 +876,10 @@ class BXCalculator:
         end_date: date = None
     ) -> Dict[str, Any]:
         """
-        Calculate zone-level BX correctly: find the X cheapest hours per day
-        based on zone-average prices, then average those.
+        Get zone-level BX average from bx_daily_summary table.
         
-        This is different from averaging per-node BX values.
+        The bx_daily_summary table now stores zone-level data directly
+        with zone names in the 'node' column (NP15, SP15, ZP26, Overall).
         
         Args:
             bx: BX type (4-10)
@@ -890,6 +890,59 @@ class BXCalculator:
             
         Returns:
             Dict with avg_price and stats
+        """
+        conditions = ["bx_type = %s"]
+        params = [bx]
+        
+        zone_name = zone if zone else 'Overall'
+        conditions.append("node = %s")
+        params.append(zone_name)
+        
+        if start_date and end_date:
+            conditions.append("opr_dt >= %s AND opr_dt <= %s")
+            params.extend([start_date, end_date])
+        elif year:
+            conditions.append("EXTRACT(YEAR FROM opr_dt) = %s")
+            params.append(year)
+        
+        where_clause = " AND ".join(conditions)
+        
+        query = f"""
+            SELECT 
+                AVG(avg_price) as avg_bx_price,
+                MIN(avg_price) as min_bx_price,
+                MAX(avg_price) as max_bx_price,
+                COUNT(*) as day_count
+            FROM caiso.bx_daily_summary
+            WHERE {where_clause}
+        """
+        
+        try:
+            result = self.db.execute_query(query, params, fetch_all=False)
+            return {
+                'success': True,
+                'bx_type': bx,
+                'avg_price': float(result['avg_bx_price']) if result and result.get('avg_bx_price') else None,
+                'min_price': float(result['min_bx_price']) if result and result.get('min_bx_price') else None,
+                'max_price': float(result['max_bx_price']) if result and result.get('max_bx_price') else None,
+                'day_count': result['day_count'] if result else 0
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting zone-level B{bx}: {str(e)}")
+            return {'success': False, 'error': str(e)}
+
+
+    def get_zone_level_bx_OLD(
+        self,
+        bx: int,
+        zone: str = None,
+        year: int = None,
+        start_date: date = None,
+        end_date: date = None
+    ) -> Dict[str, Any]:
+        """
+        DEPRECATED: Old method that computed from raw lmp_data.
+        Kept for reference only.
         """
         zone_join = ""
         zone_condition = ""

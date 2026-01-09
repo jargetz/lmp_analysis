@@ -125,30 +125,53 @@ class S3DataLoader:
     def _compute_bx_from_records(self, records: List[Dict], opr_date: date) -> Dict[str, Any]:
         """Compute BX averages from in-memory records and store in PostgreSQL.
         
-        Stores per-node daily BX summaries for dashboard queries.
-        Uses vectorized pandas operations for speed.
+        Only stores ZONE-LEVEL aggregates to fit within 10GB limit.
+        Node-level data is available on-demand from parquet files.
         """
         try:
             import pandas as pd
             
             df = pd.DataFrame(records)
             
-            df_sorted = df.sort_values(['node', 'mw'])
-            df_sorted['rank'] = df_sorted.groupby('node').cumcount() + 1
+            zone_mapping = self._get_zone_mapping()
+            df['zone'] = df['node'].map(zone_mapping).fillna('UNMAPPED')
             
             results = {}
             for bx in range(4, 11):
-                bx_df = df_sorted[df_sorted['rank'] <= bx]
-                node_bx = bx_df.groupby('node')['mw'].mean().to_dict()
+                zone_bx = {}
                 
-                self.bx_calculator.store_daily_bx_batch(opr_date, node_bx, bx)
-                results[f'B{bx}'] = len(node_bx)
+                for zone in ['NP15', 'SP15', 'ZP26', 'Overall']:
+                    if zone == 'Overall':
+                        zone_df = df
+                    else:
+                        zone_df = df[df['zone'] == zone]
+                    
+                    if len(zone_df) == 0:
+                        continue
+                    
+                    zone_sorted = zone_df.sort_values(['node', 'mw'])
+                    zone_sorted['rank'] = zone_sorted.groupby('node').cumcount() + 1
+                    bx_df = zone_sorted[zone_sorted['rank'] <= bx]
+                    
+                    zone_bx[zone] = bx_df['mw'].mean()
+                
+                self.bx_calculator.store_daily_bx_batch(opr_date, zone_bx, bx)
+                results[f'B{bx}'] = len(zone_bx)
             
             return {'success': True, 'date': str(opr_date), 'bx_computed': results}
             
         except Exception as e:
             logging.error(f"Error computing BX for {opr_date}: {str(e)}")
             return {'success': False, 'error': str(e)}
+    
+    def _get_zone_mapping(self) -> Dict[str, str]:
+        """Get node to zone mapping from database."""
+        try:
+            query = "SELECT pnode_id, zone FROM caiso.node_zone_mapping WHERE zone IS NOT NULL"
+            results = self.processor.db.execute_query(query)
+            return {r['pnode_id']: r['zone'] for r in results} if results else {}
+        except:
+            return {}
     
     def load_all_data(
         self, 
