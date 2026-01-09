@@ -56,12 +56,10 @@ class DatabaseManager:
             raise
     
     def bulk_insert_lmp_data_raw(self, buffer, row_count: int) -> int:
-        """Fast bulk insert from pre-formatted StringIO buffer (bypasses pandas)"""
+        """Fast bulk insert from pre-formatted StringIO buffer - lean schema"""
         try:
-            columns = [
-                'interval_start_time_gmt', 'node', 'mw', 'mcc', 'mlc', 'pos',
-                'day_of_week', 'source_file', 'opr_hr', 'opr_dt'
-            ]
+            # Lean schema: only 5 columns
+            columns = ['node', 'mw', 'opr_dt', 'opr_hr', 'source_file']
             
             with self.get_connection() as conn:
                 with conn.cursor() as cur:

@@ -855,12 +855,12 @@ class BXCalculator:
             WITH zone_hourly AS (
                 SELECT 
                     l.opr_dt,
-                    EXTRACT(HOUR FROM l.interval_start_time_gmt) as hour,
+                    l.opr_hr as hour,
                     AVG(l.mw) as zone_avg_price
                 FROM caiso.lmp_data l
                 {zone_join}
                 WHERE 1=1 {zone_condition} {date_condition}
-                GROUP BY l.opr_dt, EXTRACT(HOUR FROM l.interval_start_time_gmt)
+                GROUP BY l.opr_dt, l.opr_hr
             ),
             ranked_hours AS (
                 SELECT 
@@ -959,18 +959,18 @@ class BXCalculator:
         zones = ['NP15', 'SP15', 'ZP26']
         results = {}
         
-        year_filter = f"AND EXTRACT(YEAR FROM l.interval_start_time_gmt) = {year}" if year else ""
+        year_filter = f"AND EXTRACT(YEAR FROM l.opr_dt) = {year}" if year else ""
         
         # Query for each zone
         for zone in zones:
             query = f"""
                 SELECT 
-                    EXTRACT(HOUR FROM l.interval_start_time_gmt) as hour,
+                    l.opr_hr as hour,
                     AVG(l.mw) as avg_price
                 FROM caiso.lmp_data l
                 JOIN caiso.node_zone_mapping m ON l.node = m.pnode_id
                 WHERE m.zone = %s {year_filter}
-                GROUP BY EXTRACT(HOUR FROM l.interval_start_time_gmt)
+                GROUP BY l.opr_hr
                 ORDER BY hour
             """
             try:
@@ -983,11 +983,11 @@ class BXCalculator:
         # Overall (no zone filter)
         query = f"""
             SELECT 
-                EXTRACT(HOUR FROM interval_start_time_gmt) as hour,
+                opr_hr as hour,
                 AVG(mw) as avg_price
             FROM caiso.lmp_data
             WHERE 1=1 {year_filter}
-            GROUP BY EXTRACT(HOUR FROM interval_start_time_gmt)
+            GROUP BY opr_hr
             ORDER BY hour
         """
         try:
@@ -1027,14 +1027,14 @@ class BXCalculator:
         query = f"""
             SELECT 
                 EXTRACT(MONTH FROM l.opr_dt) as month,
-                EXTRACT(HOUR FROM l.interval_start_time_gmt) as hour,
+                l.opr_hr as hour,
                 AVG(l.mw) as avg_price
             FROM caiso.lmp_data l
             {zone_join}
             WHERE 1=1 {zone_condition} {year_filter}
             GROUP BY 
                 EXTRACT(MONTH FROM l.opr_dt),
-                EXTRACT(HOUR FROM l.interval_start_time_gmt)
+                l.opr_hr
             ORDER BY month, hour
         """
         
@@ -1102,15 +1102,15 @@ class BXCalculator:
             return []
         
         placeholders = ','.join(['%s'] * len(nodes))
-        year_filter = f"AND EXTRACT(YEAR FROM interval_start_time_gmt) = {year}" if year else ""
+        year_filter = f"AND EXTRACT(YEAR FROM opr_dt) = {year}" if year else ""
         
         query = f"""
             SELECT 
-                EXTRACT(HOUR FROM interval_start_time_gmt) as hour,
+                opr_hr as hour,
                 AVG(mw) as avg_price
             FROM caiso.lmp_data
             WHERE node IN ({placeholders}) {year_filter}
-            GROUP BY EXTRACT(HOUR FROM interval_start_time_gmt)
+            GROUP BY opr_hr
             ORDER BY hour
         """
         try:

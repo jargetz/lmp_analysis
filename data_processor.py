@@ -17,7 +17,7 @@ class CAISODataProcessor:
         self.logger = logging.getLogger(__name__)
         
     def process_csv_content_to_db_fast(self, csv_content: str, source_file: str = "") -> Dict[str, Any]:
-        """Fast CSV processing - bypasses pandas, streams directly to PostgreSQL COPY"""
+        """Fast CSV processing - lean schema (node, mw, opr_dt, opr_hr, source_file only)"""
         try:
             lines = csv_content.strip().split('\n')
             if len(lines) < 2:
@@ -29,9 +29,6 @@ class CAISODataProcessor:
             ts_idx = next((i for i, c in enumerate(header) if 'INTERVALSTARTTIME' in c and 'GMT' in c), None)
             node_idx = next((i for i, c in enumerate(header) if c == 'NODE' or 'PNODE' in c), None)
             mw_idx = next((i for i, c in enumerate(header) if c == 'MW'), None)
-            mcc_idx = next((i for i, c in enumerate(header) if c == 'MCC'), None)
-            mlc_idx = next((i for i, c in enumerate(header) if c == 'MLC'), None)
-            pos_idx = next((i for i, c in enumerate(header) if c == 'POS'), None)
             
             if ts_idx is None or node_idx is None or mw_idx is None:
                 return {'records_inserted': 0, 'error': 'Missing required columns'}
@@ -59,7 +56,6 @@ class CAISODataProcessor:
                     
                     opr_dt = dt.date().isoformat()
                     opr_hr = dt.hour
-                    day_of_week = dt.weekday()
                     
                     node = row[node_idx].strip()
                     mw = row[mw_idx].strip()
@@ -70,15 +66,8 @@ class CAISODataProcessor:
                     except:
                         continue
                     
-                    mcc = row[mcc_idx].strip() if mcc_idx is not None and mcc_idx < len(row) else ''
-                    mlc = row[mlc_idx].strip() if mlc_idx is not None and mlc_idx < len(row) else ''
-                    pos = row[pos_idx].strip() if pos_idx is not None and pos_idx < len(row) else ''
-                    
-                    mcc = mcc if mcc and mcc.replace('.','').replace('-','').isdigit() else '\\N'
-                    mlc = mlc if mlc and mlc.replace('.','').replace('-','').isdigit() else '\\N'
-                    pos = pos if pos and pos.replace('.','').replace('-','').isdigit() else '\\N'
-                    
-                    writer.writerow([ts_str, node, mw, mcc, mlc, pos, day_of_week, source_file, opr_hr, opr_dt])
+                    # Lean schema: only 5 columns
+                    writer.writerow([node, mw, opr_dt, opr_hr, source_file])
                     row_count += 1
                 except Exception:
                     continue
