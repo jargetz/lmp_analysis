@@ -350,27 +350,27 @@ def render_dashboard_tab():
                     else:
                         st.metric(zone_name, "N/A")
             
-            # Month x Hour heatmap (select zone - loads only selected zone for speed)
-            heatmap_col1, heatmap_col2 = st.columns([3, 1])
-            with heatmap_col1:
-                st.subheader("Averages - Day Ahead LMP")
-            with heatmap_col2:
-                heatmap_zone = st.selectbox("Zone", ['Overall', 'NP15', 'SP15', 'ZP26'], key="heatmap_zone_select")
+            # Month x Hour heatmap (select zone with tabs)
+            st.subheader("Averages - Day Ahead LMP")
+            heatmap_zones = ['Overall', 'NP15', 'SP15', 'ZP26']
+            heatmap_tabs = st.tabs(heatmap_zones)
             
-            heatmap_cache_key = f"heatmap_{heatmap_zone}_{selected_year}"
-            if heatmap_cache_key not in st.session_state:
-                zone_filter = None if heatmap_zone == 'Overall' else heatmap_zone
-                st.session_state[heatmap_cache_key] = bx_calc.get_month_hour_averages(
-                    zone=zone_filter,
-                    year=selected_year
-                )
-            heatmap_data = st.session_state[heatmap_cache_key]
-            
-            if heatmap_data:
-                fig = create_month_hour_heatmap(heatmap_data, zone=heatmap_zone)
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No data available for this zone")
+            for tab, zone_name in zip(heatmap_tabs, heatmap_zones):
+                with tab:
+                    heatmap_cache_key = f"heatmap_{zone_name}_{selected_year}"
+                    if heatmap_cache_key not in st.session_state:
+                        zone_filter = None if zone_name == 'Overall' else zone_name
+                        st.session_state[heatmap_cache_key] = bx_calc.get_month_hour_averages(
+                            zone=zone_filter,
+                            year=selected_year
+                        )
+                    heatmap_data = st.session_state[heatmap_cache_key]
+                    
+                    if heatmap_data:
+                        fig = create_month_hour_heatmap(heatmap_data, zone=zone_name)
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No data available for this zone")
             
             # BX trend chart by zone (cached)
             bx_trend_cache_key = f"bx_trend_zone_{selected_bx}_{selected_year}"
