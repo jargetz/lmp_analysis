@@ -125,24 +125,21 @@ class S3DataLoader:
     def _compute_bx_from_records(self, records: List[Dict], opr_date: date) -> Dict[str, Any]:
         """Compute BX averages from in-memory records and store in PostgreSQL.
         
-        Args:
-            records: List of dicts with node, mw, opr_hr
-            opr_date: Operating date
-            
-        Returns:
-            Dict with success status and computed values
+        Uses vectorized pandas operations for speed.
         """
         try:
             import pandas as pd
+            import numpy as np
+            
             df = pd.DataFrame(records)
+            
+            df_sorted = df.sort_values(['node', 'mw'])
+            df_sorted['rank'] = df_sorted.groupby('node').cumcount() + 1
             
             results = {}
             for bx in range(4, 11):
-                node_bx = {}
-                for node in df['node'].unique():
-                    node_data = df[df['node'] == node]
-                    cheapest = node_data.nsmallest(bx, 'mw')['mw'].mean()
-                    node_bx[node] = cheapest
+                bx_df = df_sorted[df_sorted['rank'] <= bx]
+                node_bx = bx_df.groupby('node')['mw'].mean().to_dict()
                 
                 self.bx_calculator.store_daily_bx_batch(opr_date, node_bx, bx)
                 results[f'B{bx}'] = len(node_bx)
