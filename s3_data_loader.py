@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional
 from data_processor import CAISODataProcessor
 from preprocessing import CAISOPreprocessor
 from bx_calculator import BXCalculator
+from parquet_storage import ParquetStorage
 
 class S3DataLoader:
     """Handles loading CAISO LMP data from S3 bucket"""
@@ -23,6 +24,7 @@ class S3DataLoader:
         self.processor = CAISODataProcessor()
         self.preprocessor = CAISOPreprocessor()
         self.bx_calculator = BXCalculator()
+        self.parquet_storage = ParquetStorage()
     
     def _extract_date_from_filename(self, filename: str) -> Optional[date]:
         """Extract date from CAISO filename like 20240101_20240101_DAM_LMP..."""
@@ -51,66 +53,66 @@ class S3DataLoader:
             return []
     
     def check_file_already_processed(self, s3_key: str) -> bool:
-        """Check if S3 file has already been processed"""
+        """Check if S3 file has already been processed (parquet exists in S3)"""
         try:
-            # Simple check - see if we have any data from this source file
-            query = "SELECT COUNT(*) as count FROM caiso.lmp_data WHERE source_file = %s LIMIT 1"
-            result = self.processor.db.execute_query(query, (s3_key,))
-            if result and len(result) > 0 and isinstance(result[0], dict):
-                count_value = result[0].get('count', 0)
-                return count_value > 0
+            file_date = self._extract_date_from_filename(s3_key)
+            if file_date:
+                return self.parquet_storage.check_date_exists(file_date)
             return False
         except:
             return False
     
-    def download_and_process_file(self, s3_key: str, calculate_bx: bool = False) -> Dict[str, Any]:
-        """Download a single zip file from S3 and process it.
+    def download_and_process_file(self, s3_key: str, calculate_bx: bool = True) -> Dict[str, Any]:
+        """Download a single zip file from S3 and process it using hybrid storage.
+        
+        Hybrid approach:
+        - Raw data → Parquet in S3
+        - BX aggregates → PostgreSQL
         
         Args:
             s3_key: The S3 key for the zip file
-            calculate_bx: If True, calculate BX for the day after loading
+            calculate_bx: If True (default), calculate BX aggregates for PostgreSQL
         """
         try:
-            # Skip if already processed (prevent duplicates)
             if self.check_file_already_processed(s3_key):
                 return {
                     'success': True,
-                    'records_inserted': 0,
+                    'records_saved': 0,
                     'file': s3_key,
                     'skipped': True,
-                    'reason': 'Already processed'
+                    'reason': 'Already processed (parquet exists)'
                 }
             
-            # Download file from S3
             response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)
             zip_content = response['Body'].read()
             
-            # Process the zip file
             with zipfile.ZipFile(io.BytesIO(zip_content), 'r') as zip_ref:
                 for file_name in zip_ref.namelist():
-                    # Only process the main LMP CSV file (PRC_LMP_DAM_LMP)
-                    # Skip MCC, MCE, MCL files as they contain component data
                     if 'PRC_LMP_DAM_LMP' in file_name and file_name.endswith('.csv'):
                         logging.info(f"Processing {file_name} from {s3_key}")
                         with zip_ref.open(file_name) as csv_file:
                             content = csv_file.read().decode('utf-8')
                             
-                            # Process and store in database (fast mode - bypasses pandas)
-                            result = self.processor.process_csv_content_to_db_fast(content, s3_key)
-                            records_inserted = result.get('records_inserted', 0)
+                            opr_date, records = self.processor.parse_csv_to_records(content)
                             
-                            # Calculate BX for this day if requested
+                            if not records or opr_date is None:
+                                return {'success': False, 'error': 'No valid records parsed'}
+                            
+                            parquet_result = self.parquet_storage.write_day_to_parquet(records, opr_date)
+                            
+                            if not parquet_result['success']:
+                                return {'success': False, 'error': f"Parquet write failed: {parquet_result.get('error')}"}
+                            
                             bx_result = None
-                            if calculate_bx and records_inserted > 0:
-                                file_date = self._extract_date_from_filename(s3_key)
-                                if file_date:
-                                    logging.info(f"Calculating BX for {file_date}")
-                                    bx_result = self.bx_calculator.calculate_all_bx_for_date(file_date)
+                            if calculate_bx:
+                                logging.info(f"Computing BX for {opr_date} from in-memory data")
+                                bx_result = self._compute_bx_from_records(records, opr_date)
                             
                             return {
                                 'success': True,
-                                'records_inserted': records_inserted,
+                                'records_saved': len(records),
                                 'file': s3_key,
+                                'parquet_key': parquet_result.get('s3_key'),
                                 'bx_calculated': bx_result
                             }
             
@@ -118,6 +120,37 @@ class S3DataLoader:
             
         except Exception as e:
             logging.error(f"Error processing S3 file {s3_key}: {str(e)}")
+            return {'success': False, 'error': str(e)}
+    
+    def _compute_bx_from_records(self, records: List[Dict], opr_date: date) -> Dict[str, Any]:
+        """Compute BX averages from in-memory records and store in PostgreSQL.
+        
+        Args:
+            records: List of dicts with node, mw, opr_hr
+            opr_date: Operating date
+            
+        Returns:
+            Dict with success status and computed values
+        """
+        try:
+            import pandas as pd
+            df = pd.DataFrame(records)
+            
+            results = {}
+            for bx in range(4, 11):
+                node_bx = {}
+                for node in df['node'].unique():
+                    node_data = df[df['node'] == node]
+                    cheapest = node_data.nsmallest(bx, 'mw')['mw'].mean()
+                    node_bx[node] = cheapest
+                
+                self.bx_calculator.store_daily_bx_batch(opr_date, node_bx, bx)
+                results[f'B{bx}'] = len(node_bx)
+            
+            return {'success': True, 'date': str(opr_date), 'bx_computed': results}
+            
+        except Exception as e:
+            logging.error(f"Error computing BX for {opr_date}: {str(e)}")
             return {'success': False, 'error': str(e)}
     
     def load_all_data(
@@ -171,7 +204,7 @@ class S3DataLoader:
                     skipped_files += 1
                 else:
                     processed_files += 1
-                    total_records += result.get('records_inserted', 0)
+                    total_records += result.get('records_saved', 0)
                     if result.get('bx_calculated'):
                         bx_calculated_days += 1
             else:

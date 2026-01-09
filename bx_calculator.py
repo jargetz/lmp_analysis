@@ -75,6 +75,63 @@ class BXCalculator:
             self.logger.error(f"Error creating bx_hours table: {str(e)}")
             return False
     
+    def store_daily_bx_batch(self, opr_date: date, node_bx_prices: Dict[str, float], bx_type: int) -> int:
+        """Store pre-computed BX averages for multiple nodes in a single batch.
+        
+        Args:
+            opr_date: The operating date
+            node_bx_prices: Dict mapping node name to BX average price
+            bx_type: The BX type (4-10)
+            
+        Returns:
+            Number of records inserted
+        """
+        if not node_bx_prices:
+            return 0
+        
+        try:
+            import io
+            import csv
+            
+            output = io.StringIO()
+            writer = csv.writer(output)
+            for node, avg_price in node_bx_prices.items():
+                writer.writerow([node, opr_date.isoformat(), bx_type, round(avg_price, 4)])
+            
+            output.seek(0)
+            
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        CREATE TEMP TABLE tmp_bx_import (
+                            node VARCHAR(100),
+                            opr_dt DATE,
+                            bx_type INTEGER,
+                            avg_price NUMERIC(12,4)
+                        ) ON COMMIT DROP
+                    """)
+                    
+                    cur.copy_expert(
+                        "COPY tmp_bx_import (node, opr_dt, bx_type, avg_price) FROM STDIN WITH CSV",
+                        output
+                    )
+                    
+                    cur.execute("""
+                        INSERT INTO caiso.bx_daily_summary (node, opr_dt, bx_type, avg_price)
+                        SELECT node, opr_dt, bx_type, avg_price FROM tmp_bx_import
+                        ON CONFLICT (opr_dt, node, bx_type) DO UPDATE SET
+                            avg_price = EXCLUDED.avg_price
+                    """)
+                    
+                    inserted = cur.rowcount
+                    conn.commit()
+                    
+            return inserted
+            
+        except Exception as e:
+            self.logger.error(f"Error storing BX batch for {opr_date}: {str(e)}")
+            return 0
+
     def create_bx_summary_table(self) -> bool:
         """
         Create BX summary table with average prices for each BX type.

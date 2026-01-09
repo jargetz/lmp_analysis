@@ -4,7 +4,7 @@ from datetime import datetime, date
 import io
 import csv
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple
 from database import DatabaseManager
 
 class CAISODataProcessor:
@@ -87,6 +87,68 @@ class CAISODataProcessor:
         except Exception as e:
             self.logger.error(f"Error in fast CSV processing from {source_file}: {str(e)}")
             return {'records_inserted': 0, 'error': str(e)}
+
+    def parse_csv_to_records(self, csv_content: str) -> Tuple[date, List[Dict]]:
+        """Parse CSV content and return (operating_date, list of records).
+        
+        Returns:
+            Tuple of (opr_date, records) where records is list of dicts with node, mw, opr_hr
+        """
+        lines = csv_content.strip().split('\n')
+        if len(lines) < 2:
+            return None, []
+        
+        reader = csv.reader(lines)
+        header = [col.upper() for col in next(reader)]
+        
+        ts_idx = next((i for i, c in enumerate(header) if 'INTERVALSTARTTIME' in c and 'GMT' in c), None)
+        node_idx = next((i for i, c in enumerate(header) if c == 'NODE' or 'PNODE' in c), None)
+        mw_idx = next((i for i, c in enumerate(header) if c == 'MW'), None)
+        
+        if ts_idx is None or node_idx is None or mw_idx is None:
+            return None, []
+        
+        records = []
+        opr_date = None
+        
+        for row in reader:
+            try:
+                if len(row) <= max(ts_idx, node_idx, mw_idx):
+                    continue
+                
+                ts_str = row[ts_idx].strip()
+                if not ts_str:
+                    continue
+                
+                try:
+                    if 'T' in ts_str:
+                        dt = datetime.fromisoformat(ts_str.replace('Z', '+00:00').split('+')[0])
+                    else:
+                        dt = datetime.strptime(ts_str, '%Y-%m-%dT%H:%M:%S')
+                except:
+                    dt = datetime.strptime(ts_str[:19], '%Y-%m-%dT%H:%M:%S')
+                
+                if opr_date is None:
+                    opr_date = dt.date()
+                
+                node = row[node_idx].strip()
+                mw_str = row[mw_idx].strip()
+                if not mw_str or not node:
+                    continue
+                try:
+                    mw = float(mw_str)
+                except:
+                    continue
+                
+                records.append({
+                    'node': node,
+                    'mw': mw,
+                    'opr_hr': dt.hour
+                })
+            except Exception:
+                continue
+        
+        return opr_date, records
 
     def process_csv_content_to_db(self, csv_content: str, source_file: str = "") -> Dict[str, Any]:
         """Process CSV content and store directly in database"""
