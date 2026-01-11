@@ -53,11 +53,17 @@ class S3DataLoader:
             return []
     
     def check_file_already_processed(self, s3_key: str) -> bool:
-        """Check if S3 file has already been processed (parquet exists in S3)"""
+        """Check if S3 file has already been processed (parquet exists in S3).
+        
+        Note: CAISO Day Ahead files contain data for the NEXT day.
+        File 20240102 contains data for 2024-01-03 (Day Ahead pricing).
+        """
         try:
+            from datetime import timedelta
             file_date = self._extract_date_from_filename(s3_key)
             if file_date:
-                return self.parquet_storage.check_date_exists(file_date)
+                data_date = file_date + timedelta(days=1)
+                return self.parquet_storage.check_date_exists(data_date)
             return False
         except:
             return False
