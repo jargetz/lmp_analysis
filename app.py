@@ -409,7 +409,7 @@ def render_dashboard_tab():
                     stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
                     
                     with stat_col1:
-                        st.metric("Average", f"${bx_stats['avg_price']:.2f}/MWh")
+                        st.metric(f"B{selected_bx} Average", f"${bx_stats['avg_price']:.2f}/MWh")
                     with stat_col2:
                         st.metric("Min", f"${bx_stats['min_price']:.2f}/MWh" if bx_stats.get('min_price') else "N/A")
                     with stat_col3:
