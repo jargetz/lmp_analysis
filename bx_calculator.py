@@ -1153,11 +1153,11 @@ class BXCalculator:
             return []
 
     def get_all_nodes(self) -> List[str]:
-        """Get all distinct node names for autocomplete. Sorted alphabetically."""
+        """Get all distinct PNODE names for autocomplete. Sorted alphabetically."""
         try:
-            query = "SELECT DISTINCT node FROM caiso.bx_daily_summary ORDER BY node"
+            query = "SELECT DISTINCT pnode_id FROM caiso.node_zone_mapping ORDER BY pnode_id"
             results = self.db.execute_query(query)
-            return [r['node'] for r in results] if results else []
+            return [r['pnode_id'] for r in results] if results else []
         except Exception as e:
             self.logger.error(f"Error getting all nodes: {str(e)}")
             return []
