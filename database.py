@@ -138,17 +138,20 @@ class DatabaseManager:
             raise
     
     def get_data_summary(self) -> Dict[str, Any]:
-        """Get summary statistics of stored data"""
+        """Get summary statistics of stored data.
+        
+        Uses bx_daily_summary table since raw LMP data is now in S3 parquet files.
+        """
         query = """
         SELECT 
             COUNT(*) as total_records,
             COUNT(DISTINCT node) as unique_nodes,
             MIN(opr_dt) as earliest_date,
             MAX(opr_dt) as latest_date,
-            AVG(mw) as avg_price,
-            MIN(mw) as min_price,
-            MAX(mw) as max_price
-        FROM caiso.lmp_data
+            AVG(avg_price) as avg_price,
+            MIN(avg_price) as min_price,
+            MAX(avg_price) as max_price
+        FROM caiso.bx_daily_summary
         """
         
         result = self.execute_query(query, fetch_all=False)
