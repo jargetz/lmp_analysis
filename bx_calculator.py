@@ -1226,13 +1226,14 @@ class BXCalculator:
             return []
 
     def get_available_years(self) -> List[int]:
-        """Get list of years with data in annual summary table."""
+        """Get list of years with zone data available."""
         try:
-            query = "SELECT DISTINCT year FROM caiso.bx_annual_summary ORDER BY year DESC"
+            # Use zone_hourly_lmp as primary source for years (EIA zone data)
+            query = "SELECT DISTINCT EXTRACT(YEAR FROM opr_dt)::integer as year FROM caiso.zone_hourly_lmp ORDER BY year DESC"
             results = self.db.execute_query(query)
-            return [r['year'] for r in results] if results else []
+            return [r['year'] for r in results] if results else [2024]
         except Exception:
-            # Fallback to daily summary if annual not populated
+            # Fallback to bx_daily_summary
             try:
                 query = "SELECT DISTINCT EXTRACT(YEAR FROM opr_dt)::integer as year FROM caiso.bx_daily_summary ORDER BY year DESC"
                 results = self.db.execute_query(query)
