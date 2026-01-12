@@ -74,9 +74,12 @@ def main():
         try:
             if summary and summary.get('total_records', 0) > 0:
                 st.success("✅ Data loaded and ready")
-                st.metric("Records in Database", f"{summary.get('total_records', 0):,}")
-                if summary.get('latest_date'):
-                    st.metric("Latest Data", summary['latest_date'].strftime('%Y-%m-%d'))
+                # Calculate days from records: 4 zones × 7 BX types = 28 records per day
+                days_loaded = summary.get('total_records', 0) // 28
+                st.metric("Days Loaded", f"{days_loaded}")
+                if summary.get('earliest_date') and summary.get('latest_date'):
+                    st.caption(f"{summary['earliest_date'].strftime('%Y-%m-%d')} to {summary['latest_date'].strftime('%Y-%m-%d')}")
+                st.caption("Zone aggregates in DB, raw data in S3")
                 st.session_state.data_loaded = True
             else:
                 st.warning("⚠️ No data in database")
