@@ -353,9 +353,27 @@ def render_dashboard_tab():
                     else:
                         st.metric(zone_name, "N/A")
             
-            # Month x Hour heatmap - requires raw data (stored in S3 parquet)
+            # Month x Hour heatmap (from pre-computed summary table)
             st.subheader("Averages - Day Ahead LMP")
-            st.caption("Month x Hour heatmap is computed from raw data stored in S3. This feature is coming soon.")
+            heatmap_zones = ['Overall', 'NP15', 'SP15', 'ZP26']
+            heatmap_tabs = st.tabs(heatmap_zones)
+            
+            for tab, zone_name in zip(heatmap_tabs, heatmap_zones):
+                with tab:
+                    heatmap_cache_key = f"heatmap_{zone_name}_{selected_year}"
+                    if heatmap_cache_key not in st.session_state:
+                        zone_filter = None if zone_name == 'Overall' else zone_name
+                        st.session_state[heatmap_cache_key] = bx_calc.get_month_hour_averages(
+                            zone=zone_filter,
+                            year=selected_year
+                        )
+                    heatmap_data = st.session_state[heatmap_cache_key]
+                    
+                    if heatmap_data:
+                        fig = create_month_hour_heatmap(heatmap_data, zone=zone_name)
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No heatmap data available yet. Run backfill_month_hour.py to populate.")
             
             # BX trend chart by zone (cached)
             bx_trend_cache_key = f"bx_trend_zone_{selected_bx}_{selected_year}"

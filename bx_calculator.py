@@ -1113,43 +1113,33 @@ class BXCalculator:
         """
         Get average prices by month and hour for heatmap display.
         
+        Uses pre-computed month_hour_summary table.
+        
         Args:
-            zone: Optional zone filter (NP15, SP15, ZP26)
+            zone: Optional zone filter (NP15, SP15, ZP26), None for Overall
             year: Optional year filter
             
         Returns:
             List of dicts with 'month', 'hour', 'avg_price'
         """
-        zone_join = ""
-        zone_condition = ""
         params = []
-        
-        if zone:
-            zone_join = "JOIN caiso.node_zone_mapping m ON l.node = m.pnode_id"
-            zone_condition = "AND m.zone = %s"
-            params.append(zone)
+        zone_filter = "zone = %s"
+        params.append(zone if zone else 'Overall')
         
         year_filter = ""
         if year:
-            year_filter = "AND EXTRACT(YEAR FROM l.opr_dt) = %s"
+            year_filter = "AND year = %s"
             params.append(year)
         
         query = f"""
-            SELECT 
-                EXTRACT(MONTH FROM l.opr_dt) as month,
-                l.opr_hr as hour,
-                AVG(l.mw) as avg_price
-            FROM caiso.lmp_data l
-            {zone_join}
-            WHERE 1=1 {zone_condition} {year_filter}
-            GROUP BY 
-                EXTRACT(MONTH FROM l.opr_dt),
-                l.opr_hr
+            SELECT month, hour, avg_price
+            FROM caiso.month_hour_summary
+            WHERE {zone_filter} {year_filter}
             ORDER BY month, hour
         """
         
         try:
-            result = self.db.execute_query(query, params if params else None)
+            result = self.db.execute_query(query, params)
             return [
                 {
                     'month': int(r['month']),
