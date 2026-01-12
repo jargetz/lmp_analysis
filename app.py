@@ -390,27 +390,20 @@ def render_dashboard_tab():
                 st.plotly_chart(fig, use_container_width=True)
         
         elif analysis_mode == "By Node Selection":
-            # Node selection mode - show stats for selected nodes
+            # Node selection mode - show stats for selected nodes from parquet
             if not selected_nodes:
                 st.info("Select one or more nodes above to see BX statistics.")
             else:
-                if time_period == "Annual":
-                    bx_stats = bx_calc.get_annual_bx_average(
-                        bx=selected_bx,
-                        year=selected_year,
-                        nodes=selected_nodes
-                    )
-                else:
-                    from calendar import monthrange
-                    start_date = date(selected_year, selected_month, 1)
-                    _, last_day = monthrange(selected_year, selected_month)
-                    end_date = date(selected_year, selected_month, last_day)
-                    bx_stats = bx_calc.get_bx_average(
-                        bx=selected_bx,
-                        nodes=selected_nodes,
-                        start_date=start_date,
-                        end_date=end_date
-                    )
+                # Cache key for node BX stats
+                node_bx_key = f"node_bx_{hash(tuple(sorted(selected_nodes)))}_{selected_bx}_{selected_year}"
+                if node_bx_key not in st.session_state:
+                    with st.spinner(f"Computing B{selected_bx} for {len(selected_nodes)} node(s)..."):
+                        st.session_state[node_bx_key] = bx_calc.get_node_bx_from_parquet(
+                            bx=selected_bx,
+                            nodes=selected_nodes,
+                            year=selected_year
+                        )
+                bx_stats = st.session_state[node_bx_key]
                 
                 if bx_stats.get('success') and bx_stats.get('avg_price'):
                     stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)

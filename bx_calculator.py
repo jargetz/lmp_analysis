@@ -19,9 +19,11 @@ Usage:
 """
 
 import logging
+import pandas as pd
 from datetime import date, timedelta
 from typing import Dict, Any, List, Optional
 from database import DatabaseManager
+from parquet_storage import ParquetStorage
 
 # Supported BX values
 SUPPORTED_BX_VALUES = [4, 5, 6, 7, 8, 9, 10]
@@ -37,6 +39,14 @@ class BXCalculator:
     def __init__(self):
         self.db = DatabaseManager()
         self.logger = logging.getLogger(__name__)
+        self._parquet = None
+    
+    @property
+    def parquet(self):
+        """Lazy-load parquet storage"""
+        if self._parquet is None:
+            self._parquet = ParquetStorage()
+        return self._parquet
     
     def create_bx_table(self) -> bool:
         """
@@ -866,6 +876,59 @@ class BXCalculator:
             self.logger.error(f"Error getting annual B{bx} average: {str(e)}")
             return {'success': False, 'error': str(e)}
 
+    def get_node_bx_from_parquet(
+        self,
+        bx: int,
+        nodes: List[str],
+        year: int = 2024
+    ) -> Dict[str, Any]:
+        """
+        Compute BX average for specific nodes from parquet files.
+        
+        Used when individual node data is requested (not available in summary tables).
+        """
+        if not nodes:
+            return {'success': False, 'error': 'No nodes specified'}
+        
+        available_dates = self.parquet.list_available_dates(year=year)
+        if not available_dates:
+            return {'success': False, 'error': 'No parquet data available'}
+        
+        all_bx_prices = []
+        nodes_set = set(nodes)
+        
+        for d in available_dates:
+            try:
+                table = self.parquet.read_day_from_parquet(d)
+                if table is None:
+                    continue
+                
+                df = table.to_pandas()
+                node_data = df[df['node'].isin(nodes_set)]
+                if node_data.empty:
+                    continue
+                
+                for node in nodes_set:
+                    node_df = node_data[node_data['node'] == node]
+                    if len(node_df) >= bx:
+                        cheapest = node_df.nsmallest(bx, 'mw')['mw'].mean()
+                        all_bx_prices.append(cheapest)
+            except Exception as e:
+                self.logger.debug(f"Error processing {d}: {e}")
+                continue
+        
+        if not all_bx_prices:
+            return {'success': False, 'error': 'No data found for selected nodes'}
+        
+        return {
+            'success': True,
+            'bx_type': bx,
+            'avg_price': sum(all_bx_prices) / len(all_bx_prices),
+            'min_price': min(all_bx_prices),
+            'max_price': max(all_bx_prices),
+            'node_count': len(nodes),
+            'day_count': len(available_dates)
+        }
 
     def get_zone_level_bx(
         self,
