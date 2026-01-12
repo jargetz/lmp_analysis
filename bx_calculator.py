@@ -1257,31 +1257,42 @@ class BXCalculator:
 
     def get_hourly_averages_for_nodes(self, nodes: List[str], year: int = None) -> List[Dict]:
         """
-        Get hourly price averages for a list of nodes.
+        Get hourly price averages for a list of nodes from parquet files.
         
         Returns list of {'hour': int, 'avg_price': float} dicts.
         """
         if not nodes:
             return []
         
-        placeholders = ','.join(['%s'] * len(nodes))
-        year_filter = f"AND EXTRACT(YEAR FROM opr_dt) = {year}" if year else ""
-        
-        query = f"""
-            SELECT 
-                opr_hr as hour,
-                AVG(mw) as avg_price
-            FROM caiso.lmp_data
-            WHERE node IN ({placeholders}) {year_filter}
-            GROUP BY opr_hr
-            ORDER BY hour
-        """
-        try:
-            data = self.db.execute_query(query, nodes)
-            return [{'hour': int(r['hour']), 'avg_price': float(r['avg_price'])} for r in data] if data else []
-        except Exception as e:
-            self.logger.error(f"Error getting hourly averages for nodes: {str(e)}")
+        year = year or 2024
+        available_dates = self.parquet.list_available_dates(year=year)
+        if not available_dates:
             return []
+        
+        nodes_set = set(nodes)
+        hour_totals = {h: {'sum': 0, 'count': 0} for h in range(1, 25)}
+        
+        for d in available_dates:
+            try:
+                table = self.parquet.read_day_from_parquet(d)
+                if table is None:
+                    continue
+                df = table.to_pandas()
+                node_data = df[df['node'].isin(nodes_set)]
+                if node_data.empty:
+                    continue
+                for hour in range(1, 25):
+                    hour_df = node_data[node_data['opr_hr'] == hour]
+                    if not hour_df.empty:
+                        hour_totals[hour]['sum'] += hour_df['mw'].sum()
+                        hour_totals[hour]['count'] += len(hour_df)
+            except Exception:
+                continue
+        
+        return [
+            {'hour': h, 'avg_price': t['sum'] / t['count']}
+            for h, t in hour_totals.items() if t['count'] > 0
+        ]
     
     def get_bx_trend_by_zone(
         self,
@@ -1327,22 +1338,48 @@ class BXCalculator:
         aggregation: str = 'monthly'
     ) -> Dict[str, List[Dict]]:
         """
-        Get BX price trend for each specified node.
+        Get BX price trend for each specified node from parquet files.
         
         Returns dict with node names as keys, each containing list of
         {'date': date, 'avg_price': float} dicts.
         """
-        results = {}
+        if not nodes:
+            return {}
         
-        for node in nodes[:20]:  # Limit to 20 nodes to avoid chart clutter
-            trend = self.get_bx_trend(
-                bx=bx,
-                start_date=date(year, 1, 1),
-                end_date=date(year, 12, 31),
-                nodes=[node],
-                aggregation=aggregation
-            )
-            results[node] = trend
+        available_dates = self.parquet.list_available_dates(year=year)
+        if not available_dates:
+            return {}
+        
+        nodes_set = set(nodes[:20])
+        from collections import defaultdict
+        node_monthly = defaultdict(lambda: defaultdict(list))
+        
+        for d in available_dates:
+            try:
+                table = self.parquet.read_day_from_parquet(d)
+                if table is None:
+                    continue
+                df = table.to_pandas()
+                node_data = df[df['node'].isin(nodes_set)]
+                if node_data.empty:
+                    continue
+                
+                month_key = date(d.year, d.month, 1)
+                for node in nodes_set:
+                    node_df = node_data[node_data['node'] == node]
+                    if len(node_df) >= bx:
+                        bx_price = node_df.nsmallest(bx, 'mw')['mw'].mean()
+                        node_monthly[node][month_key].append(bx_price)
+            except Exception:
+                continue
+        
+        results = {}
+        for node in nodes_set:
+            monthly_data = node_monthly[node]
+            results[node] = [
+                {'date': m, 'avg_price': sum(prices) / len(prices)}
+                for m, prices in sorted(monthly_data.items()) if prices
+            ]
         
         return results
     
@@ -1353,51 +1390,57 @@ class BXCalculator:
         year: int
     ) -> List[Dict]:
         """
-        Get summary statistics (for box plot) for each node.
+        Get summary statistics (for box plot) for each node from parquet files.
         
         Returns list of dicts with node, avg, min, max, q1, median, q3.
         """
         if not nodes:
             return []
         
-        placeholders = ','.join(['%s'] * len(nodes))
-        params = [bx] + list(nodes) + [year]
-        
-        query = f"""
-            SELECT 
-                node,
-                AVG(avg_price) as mean_price,
-                MIN(avg_price) as min_price,
-                MAX(avg_price) as max_price,
-                PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY avg_price) as q1,
-                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY avg_price) as median,
-                PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY avg_price) as q3,
-                COUNT(*) as day_count
-            FROM caiso.bx_daily_summary
-            WHERE bx_type = %s 
-              AND node IN ({placeholders})
-              AND EXTRACT(YEAR FROM opr_dt) = %s
-            GROUP BY node
-            ORDER BY mean_price
-        """
-        try:
-            data = self.db.execute_query(query, params)
-            return [
-                {
-                    'node': r['node'],
-                    'mean': float(r['mean_price']) if r['mean_price'] else 0,
-                    'min': float(r['min_price']) if r['min_price'] else 0,
-                    'max': float(r['max_price']) if r['max_price'] else 0,
-                    'q1': float(r['q1']) if r['q1'] else 0,
-                    'median': float(r['median']) if r['median'] else 0,
-                    'q3': float(r['q3']) if r['q3'] else 0,
-                    'day_count': r['day_count']
-                }
-                for r in data
-            ] if data else []
-        except Exception as e:
-            self.logger.error(f"Error getting node summary statistics: {str(e)}")
+        import numpy as np
+        available_dates = self.parquet.list_available_dates(year=year)
+        if not available_dates:
             return []
+        
+        nodes_set = set(nodes[:20])
+        from collections import defaultdict
+        node_bx_prices = defaultdict(list)
+        
+        for d in available_dates:
+            try:
+                table = self.parquet.read_day_from_parquet(d)
+                if table is None:
+                    continue
+                df = table.to_pandas()
+                node_data = df[df['node'].isin(nodes_set)]
+                if node_data.empty:
+                    continue
+                
+                for node in nodes_set:
+                    node_df = node_data[node_data['node'] == node]
+                    if len(node_df) >= bx:
+                        bx_price = node_df.nsmallest(bx, 'mw')['mw'].mean()
+                        node_bx_prices[node].append(bx_price)
+            except Exception:
+                continue
+        
+        results = []
+        for node in nodes:
+            if node not in node_bx_prices or not node_bx_prices[node]:
+                continue
+            prices = node_bx_prices[node]
+            results.append({
+                'node': node,
+                'mean': float(np.mean(prices)),
+                'min': float(np.min(prices)),
+                'max': float(np.max(prices)),
+                'q1': float(np.percentile(prices, 25)),
+                'median': float(np.median(prices)),
+                'q3': float(np.percentile(prices, 75)),
+                'day_count': len(prices)
+            })
+        
+        return sorted(results, key=lambda x: x['mean'])
 
 
 if __name__ == "__main__":
