@@ -1303,30 +1303,43 @@ class BXCalculator:
         """
         Get BX price trend over time for each zone.
         
+        The bx_daily_summary table stores zone names directly in the 'node' column.
+        
         Returns dict with zone names as keys, each containing list of
         {'date': date, 'avg_price': float} dicts.
         """
-        zones = ['NP15', 'SP15', 'ZP26']
+        zones = ['NP15', 'SP15', 'ZP26', 'Overall']
         results = {}
         
-        for zone in zones:
-            trend = self.get_bx_trend(
-                bx=bx,
-                start_date=date(year, 1, 1),
-                end_date=date(year, 12, 31),
-                zone=zone,
-                aggregation=aggregation
-            )
-            results[zone] = trend
+        if aggregation == 'weekly':
+            date_expr = "DATE_TRUNC('week', opr_dt)"
+        elif aggregation == 'monthly':
+            date_expr = "DATE_TRUNC('month', opr_dt)"
+        else:
+            date_expr = "opr_dt"
         
-        # Overall (no zone filter)
-        overall = self.get_bx_trend(
-            bx=bx,
-            start_date=date(year, 1, 1),
-            end_date=date(year, 12, 31),
-            aggregation=aggregation
-        )
-        results['Overall'] = overall
+        for zone in zones:
+            query = f"""
+                SELECT 
+                    {date_expr} as period,
+                    AVG(avg_price) as avg_price,
+                    COUNT(*) as day_count
+                FROM caiso.bx_daily_summary
+                WHERE bx_type = %s 
+                  AND node = %s
+                  AND EXTRACT(YEAR FROM opr_dt) = %s
+                GROUP BY {date_expr}
+                ORDER BY period
+            """
+            try:
+                data = self.db.execute_query(query, [bx, zone, year])
+                results[zone] = [
+                    {'date': r['period'], 'avg_price': float(r['avg_price'])}
+                    for r in data
+                ] if data else []
+            except Exception as e:
+                self.logger.error(f"Error getting BX trend for {zone}: {e}")
+                results[zone] = []
         
         return results
     
