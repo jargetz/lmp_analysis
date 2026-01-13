@@ -454,6 +454,104 @@ def create_node_hourly_chart(
     return fig
 
 
+def create_node_hourly_lines_chart(
+    per_node_data: dict,
+    title: str = 'Hourly Price by Node'
+) -> go.Figure:
+    """
+    Create a multi-line chart showing hourly prices for each node individually.
+    
+    Args:
+        per_node_data: Dict with node names as keys, each containing list of 
+                       {'hour': int, 'avg_price': float} dicts
+        title: Chart title
+        
+    Returns:
+        Plotly Figure object
+    """
+    if not per_node_data:
+        return create_empty_chart("No per-node data available")
+    
+    fig = go.Figure()
+    
+    colors = px.colors.qualitative.Set2 + px.colors.qualitative.Set1
+    
+    for i, (node, data) in enumerate(sorted(per_node_data.items())):
+        if data:
+            hours = [d['hour'] for d in data]
+            prices = [d['avg_price'] for d in data]
+            color = colors[i % len(colors)]
+            
+            fig.add_trace(go.Scatter(
+                x=hours,
+                y=prices,
+                mode='lines',
+                name=node[:20] + '...' if len(node) > 20 else node,
+                line=dict(color=color, width=1.5),
+                hovertemplate=f'{node}<br>Hour %{{x}}: $%{{y:.2f}}/MWh<extra></extra>'
+            ))
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title='Hour of Day',
+        yaxis_title='Price ($/MWh)',
+        hovermode='x unified',
+        xaxis=dict(tickmode='linear', dtick=2, range=[-0.5, 23.5]),
+        margin=dict(l=40, r=40, t=50, b=40),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5),
+        showlegend=len(per_node_data) <= 10
+    )
+    
+    return fig
+
+
+def create_node_month_hour_heatmap(
+    heatmap_data: list,
+    title: str = 'Price Heatmap (Selected Nodes)'
+) -> go.Figure:
+    """
+    Create a month x hour heatmap for selected node data.
+    
+    Args:
+        heatmap_data: List of {'month': int, 'hour': int, 'avg_price': float} dicts
+        title: Chart title
+        
+    Returns:
+        Plotly Figure object
+    """
+    if not heatmap_data:
+        return create_empty_chart("No heatmap data available")
+    
+    df = pd.DataFrame(heatmap_data)
+    
+    month_names = {1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun',
+                   7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
+    df['month_name'] = df['month'].map(month_names)
+    
+    pivot = df.pivot_table(values='avg_price', index='hour', columns='month', aggfunc='mean')
+    
+    pivot = pivot.reindex(columns=sorted(pivot.columns))
+    
+    fig = go.Figure(data=go.Heatmap(
+        z=pivot.values,
+        x=[month_names.get(m, str(m)) for m in pivot.columns],
+        y=pivot.index,
+        colorscale='RdYlGn_r',
+        hovertemplate='Month: %{x}<br>Hour: %{y}<br>Avg Price: $%{z:.2f}/MWh<extra></extra>',
+        colorbar=dict(title='$/MWh')
+    ))
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title='Month',
+        yaxis_title='Hour of Day',
+        yaxis=dict(tickmode='linear', dtick=2),
+        margin=dict(l=40, r=40, t=50, b=40)
+    )
+    
+    return fig
+
+
 def create_zone_bx_trend_chart(
     zone_data: dict,
     bx_type: int,

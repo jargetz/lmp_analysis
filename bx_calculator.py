@@ -1263,7 +1263,8 @@ class BXCalculator:
             all_dates = self.parquet.list_available_dates()
             if not all_dates:
                 return [2024]
-            years = sorted(set(d.year for d in all_dates), reverse=True)
+            current_year = 2026
+            years = sorted(set(d.year for d in all_dates if 2015 <= d.year <= current_year), reverse=True)
             return years if years else [2024]
         except Exception:
             return [2024]
@@ -1320,6 +1321,94 @@ class BXCalculator:
         return [
             {'hour': h, 'avg_price': t['sum'] / t['count']}
             for h, t in hour_totals.items() if t['count'] > 0
+        ]
+    
+    def get_hourly_averages_per_node(self, nodes: List[str], year: int = None) -> Dict[str, List[Dict]]:
+        """
+        Get hourly price averages for each node individually from parquet files.
+        
+        Returns dict with node names as keys, each containing list of {'hour': int, 'avg_price': float} dicts.
+        """
+        if not nodes:
+            return {}
+        
+        year = year or 2024
+        available_dates = self.parquet.list_available_dates(year=year)
+        if not available_dates:
+            return {}
+        
+        nodes_set = set(nodes)
+        node_hour_totals = {node: {h: {'sum': 0, 'count': 0} for h in range(1, 25)} for node in nodes}
+        
+        for d in available_dates:
+            try:
+                table = self.parquet.read_day_from_parquet(d)
+                if table is None:
+                    continue
+                df = table.to_pandas()
+                node_data = df[df['node'].isin(nodes_set)]
+                if node_data.empty:
+                    continue
+                for _, row in node_data.iterrows():
+                    node = row['node']
+                    hour = row['opr_hr']
+                    if node in node_hour_totals and 1 <= hour <= 24:
+                        node_hour_totals[node][hour]['sum'] += row['mw']
+                        node_hour_totals[node][hour]['count'] += 1
+            except Exception:
+                continue
+        
+        result = {}
+        for node, hour_data in node_hour_totals.items():
+            hourly = [
+                {'hour': h, 'avg_price': t['sum'] / t['count']}
+                for h, t in hour_data.items() if t['count'] > 0
+            ]
+            if hourly:
+                result[node] = sorted(hourly, key=lambda x: x['hour'])
+        return result
+    
+    def get_node_month_hour_averages(self, nodes: List[str], year: int = None) -> List[Dict]:
+        """
+        Get month x hour heatmap data for selected nodes from parquet files.
+        
+        Returns list of {'month': int, 'hour': int, 'avg_price': float} dicts.
+        """
+        if not nodes:
+            return []
+        
+        year = year or 2024
+        available_dates = self.parquet.list_available_dates(year=year)
+        if not available_dates:
+            return []
+        
+        nodes_set = set(nodes)
+        totals = {}
+        
+        for d in available_dates:
+            try:
+                table = self.parquet.read_day_from_parquet(d)
+                if table is None:
+                    continue
+                df = table.to_pandas()
+                node_data = df[df['node'].isin(nodes_set)]
+                if node_data.empty:
+                    continue
+                month = d.month
+                for hour in range(1, 25):
+                    hour_df = node_data[node_data['opr_hr'] == hour]
+                    if not hour_df.empty:
+                        key = (month, hour)
+                        if key not in totals:
+                            totals[key] = {'sum': 0, 'count': 0}
+                        totals[key]['sum'] += hour_df['mw'].sum()
+                        totals[key]['count'] += len(hour_df)
+            except Exception:
+                continue
+        
+        return [
+            {'month': k[0], 'hour': k[1], 'avg_price': v['sum'] / v['count']}
+            for k, v in totals.items() if v['count'] > 0
         ]
     
     def get_bx_trend_by_zone(
