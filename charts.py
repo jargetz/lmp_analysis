@@ -531,7 +531,7 @@ def create_node_month_hour_heatmap(
     
     pivot = df.pivot_table(values='avg_price', index='month', columns='hour', aggfunc='mean')
     
-    pivot = pivot.reindex(index=sorted(pivot.index))
+    pivot = pivot.reindex(index=sorted(pivot.index, reverse=True))
     pivot = pivot.reindex(columns=sorted(pivot.columns))
     
     fig = go.Figure(data=go.Heatmap(

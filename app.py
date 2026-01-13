@@ -419,7 +419,7 @@ def render_dashboard_tab():
                     
                     if heatmap_data:
                         fig = create_month_hour_heatmap(heatmap_data, zone=zone_name)
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'zone_heatmap_{zone_name}_{selected_year}'}})
                     else:
                         st.info("No heatmap data available yet. Run backfill_month_hour.py to populate.")
             
@@ -435,7 +435,7 @@ def render_dashboard_tab():
             
             if any(zone_trend_data.get(z) for z in ['NP15', 'SP15', 'ZP26', 'Overall']):
                 fig = create_zone_bx_trend_chart(zone_trend_data, bx_type=selected_bx)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'zone_B{selected_bx}_trend_{selected_year}'}})
         
         elif analysis_mode == "By Node Selection":
             # Node selection mode - show stats for selected nodes from parquet
@@ -467,10 +467,15 @@ def render_dashboard_tab():
                     
                     # Per-node BX stats table
                     per_node = bx_stats.get('per_node', {})
+                    per_node_hours = bx_stats.get('per_node_hours', {})
                     if per_node:
                         st.subheader(f"B{selected_bx} by Node")
                         node_stats_df = pd.DataFrame([
-                            {'Node': node, f'B{selected_bx} Avg ($/MWh)': round(price, 2)}
+                            {
+                                'Node': node, 
+                                f'B{selected_bx} Avg ($/MWh)': round(price, 2),
+                                f'Most Common B{selected_bx} Hours': ', '.join(map(str, per_node_hours.get(node, [])))
+                            }
                             for node, price in sorted(per_node.items(), key=lambda x: x[1])
                         ])
                         st.dataframe(node_stats_df, use_container_width=True, hide_index=True)
@@ -487,7 +492,7 @@ def render_dashboard_tab():
                     
                     if node_heatmap_data:
                         fig = create_node_month_hour_heatmap(node_heatmap_data, title=f'Price Heatmap ({len(selected_nodes)} nodes, {selected_year})')
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_heatmap_{selected_year}'}})
                     
                     # Hourly price chart - AVERAGE across all nodes
                     node_hourly_key = f"hourly_nodes_{hash(tuple(sorted(selected_nodes)))}_{selected_year}"
@@ -501,10 +506,10 @@ def render_dashboard_tab():
                     
                     if node_hourly_data:
                         fig = create_node_hourly_chart(node_hourly_data, title=f'Hourly Price Average ({len(selected_nodes)} nodes, {selected_year})')
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_hourly_avg_{selected_year}'}})
                     
-                    # Hourly price chart - PER-NODE lines (limit to 10 nodes for readability)
-                    if len(selected_nodes) <= 10:
+                    # Hourly price chart - PER-NODE lines (limit to 25 nodes for readability)
+                    if len(selected_nodes) <= 25:
                         per_node_hourly_key = f"hourly_per_node_{hash(tuple(sorted(selected_nodes)))}_{selected_year}"
                         if per_node_hourly_key not in st.session_state:
                             with st.spinner("Loading per-node hourly prices..."):
@@ -516,12 +521,12 @@ def render_dashboard_tab():
                         
                         if per_node_data:
                             fig = create_node_hourly_lines_chart(per_node_data, title=f'Hourly Price by Node ({selected_year})')
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_hourly_per_node_{selected_year}'}})
                     else:
-                        st.info(f"Per-node hourly chart available for 10 or fewer nodes (currently {len(selected_nodes)} selected)")
+                        st.info(f"Per-node hourly chart available for 25 or fewer nodes (currently {len(selected_nodes)} selected)")
                     
                     # BX trend chart per node (or average if many nodes)
-                    if len(selected_nodes) <= 10:
+                    if len(selected_nodes) <= 25:
                         node_trend_key = f"bx_trend_nodes_{hash(tuple(sorted(selected_nodes)))}_{selected_bx}_{selected_year}"
                         if node_trend_key not in st.session_state:
                             with st.spinner("Loading BX trend per node..."):
@@ -535,7 +540,7 @@ def render_dashboard_tab():
                         
                         if node_trend_data:
                             fig = create_node_bx_trend_chart(node_trend_data, bx_type=selected_bx)
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_B{selected_bx}_trend_{selected_year}'}})
                     else:
                         # For many nodes, show average trend only
                         with st.spinner("Loading BX average trend..."):
@@ -550,7 +555,7 @@ def render_dashboard_tab():
                             df = pd.DataFrame(avg_trend)
                             df.rename(columns={'date': 'opr_dt'}, inplace=True)
                             fig = create_bx_trend_chart(df, bx_type=selected_bx, title=f'B{selected_bx} Average Trend ({len(selected_nodes)} nodes)')
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_B{selected_bx}_avg_trend_{selected_year}'}})
                     
                     # Box plot for node comparison (outlier detection)
                     if len(selected_nodes) > 1:
@@ -566,7 +571,7 @@ def render_dashboard_tab():
                         
                         if box_data:
                             fig = create_node_box_plot(box_data, title=f'B{selected_bx} Price Distribution by Node ({selected_year})')
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_B{selected_bx}_distribution_{selected_year}'}})
                 else:
                     error_msg = bx_stats.get('error', 'No data found')
                     st.warning(f"Could not compute statistics: {error_msg}")

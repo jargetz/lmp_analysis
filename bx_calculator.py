@@ -898,6 +898,7 @@ class BXCalculator:
         all_bx_prices = []
         nodes_set = set(nodes)
         per_node_totals = {node: {'sum': 0, 'count': 0} for node in nodes}
+        per_node_hour_counts = {node: {h: 0 for h in range(1, 25)} for node in nodes}
         
         for d in available_dates:
             try:
@@ -913,10 +914,13 @@ class BXCalculator:
                 for node in nodes_set:
                     node_df = node_data[node_data['node'] == node]
                     if len(node_df) >= bx:
-                        cheapest = node_df.nsmallest(bx, 'mw')['mw'].mean()
+                        cheapest_rows = node_df.nsmallest(bx, 'mw')
+                        cheapest = cheapest_rows['mw'].mean()
                         all_bx_prices.append(cheapest)
                         per_node_totals[node]['sum'] += cheapest
                         per_node_totals[node]['count'] += 1
+                        for hour in cheapest_rows['opr_hr'].values:
+                            per_node_hour_counts[node][int(hour)] += 1
             except Exception as e:
                 self.logger.debug(f"Error processing {d}: {e}")
                 continue
@@ -929,6 +933,12 @@ class BXCalculator:
             for node, t in per_node_totals.items() if t['count'] > 0
         }
         
+        per_node_bx_hours = {}
+        for node, hour_counts in per_node_hour_counts.items():
+            if any(hour_counts.values()):
+                top_hours = sorted(hour_counts.items(), key=lambda x: -x[1])[:bx]
+                per_node_bx_hours[node] = sorted([h for h, c in top_hours if c > 0])
+        
         return {
             'success': True,
             'bx_type': bx,
@@ -937,7 +947,8 @@ class BXCalculator:
             'max_price': max(all_bx_prices),
             'node_count': len(nodes),
             'day_count': len(available_dates),
-            'per_node': per_node_averages
+            'per_node': per_node_averages,
+            'per_node_hours': per_node_bx_hours
         }
 
     def get_zone_level_bx(
