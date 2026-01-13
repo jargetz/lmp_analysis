@@ -101,11 +101,12 @@ class CAISODataProcessor:
         reader = csv.reader(lines)
         header = [col.upper() for col in next(reader)]
         
-        ts_idx = next((i for i, c in enumerate(header) if 'INTERVALSTARTTIME' in c and 'GMT' in c), None)
+        opr_dt_idx = next((i for i, c in enumerate(header) if c == 'OPR_DT'), None)
+        opr_hr_idx = next((i for i, c in enumerate(header) if c == 'OPR_HR'), None)
         node_idx = next((i for i, c in enumerate(header) if c == 'NODE' or 'PNODE' in c), None)
         mw_idx = next((i for i, c in enumerate(header) if c == 'MW'), None)
         
-        if ts_idx is None or node_idx is None or mw_idx is None:
+        if opr_dt_idx is None or opr_hr_idx is None or node_idx is None or mw_idx is None:
             return None, []
         
         records = []
@@ -113,23 +114,20 @@ class CAISODataProcessor:
         
         for row in reader:
             try:
-                if len(row) <= max(ts_idx, node_idx, mw_idx):
+                if len(row) <= max(opr_dt_idx, opr_hr_idx, node_idx, mw_idx):
                     continue
                 
-                ts_str = row[ts_idx].strip()
-                if not ts_str:
+                opr_dt_str = row[opr_dt_idx].strip()
+                if not opr_dt_str:
                     continue
-                
-                try:
-                    if 'T' in ts_str:
-                        dt = datetime.fromisoformat(ts_str.replace('Z', '+00:00').split('+')[0])
-                    else:
-                        dt = datetime.strptime(ts_str, '%Y-%m-%dT%H:%M:%S')
-                except:
-                    dt = datetime.strptime(ts_str[:19], '%Y-%m-%dT%H:%M:%S')
                 
                 if opr_date is None:
-                    opr_date = dt.date()
+                    opr_date = datetime.strptime(opr_dt_str, '%Y-%m-%d').date()
+                
+                try:
+                    opr_hr = int(row[opr_hr_idx].strip())
+                except:
+                    continue
                 
                 node = row[node_idx].strip()
                 mw_str = row[mw_idx].strip()
@@ -143,7 +141,7 @@ class CAISODataProcessor:
                 records.append({
                     'node': node,
                     'mw': mw,
-                    'opr_hr': dt.hour
+                    'opr_hr': opr_hr
                 })
             except Exception:
                 continue
