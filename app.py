@@ -190,6 +190,7 @@ def render_dashboard_tab():
             st.session_state.bx_calc = bx_calc_init
             st.session_state.all_nodes = bx_calc_init.get_all_nodes()
             st.session_state.available_years = bx_calc_init.get_available_years() or [2024]
+            st.session_state.parquet_years = bx_calc_init.get_available_parquet_years() or [2024]
             st.session_state.dashboard_initialized = True
     
     st.header("LMP Dashboard")
@@ -313,6 +314,9 @@ def render_dashboard_tab():
                 selected_month = month_options.index(selected_month_name) + 1
     else:
         # Node mode: options in the side column
+        # Use parquet years (only years with node data)
+        parquet_years = st.session_state.get('parquet_years', [2024])
+        
         with options_col:
             selected_bx = st.selectbox(
                 "BX Hours",
@@ -328,19 +332,17 @@ def render_dashboard_tab():
                 help="Choose annual or monthly view"
             )
             
-            available_years = st.session_state.available_years
-            
             if time_period == "Annual":
                 selected_year = st.selectbox(
                     "Year",
-                    options=available_years,
-                    help="Select year"
+                    options=parquet_years,
+                    help="Select year (only years with node data)"
                 )
                 selected_month = None
             else:
                 selected_year = st.selectbox(
                     "Year",
-                    options=available_years,
+                    options=parquet_years,
                     key="monthly_year_node",
                     help="Select year"
                 )
@@ -435,21 +437,9 @@ def render_dashboard_tab():
         
         elif analysis_mode == "By Node Selection":
             # Node selection mode - show stats for selected nodes from parquet
-            st.write(f"DEBUG: selected_nodes = {selected_nodes}")
-            import os
-            st.write(f"DEBUG: AWS_S3_BUCKET = {os.getenv('AWS_S3_BUCKET')}")
-            st.write(f"DEBUG: Has AWS_ACCESS_KEY_ID = {bool(os.getenv('AWS_ACCESS_KEY_ID'))}")
             if not selected_nodes:
                 st.info("Select one or more nodes above to see BX statistics.")
             else:
-                st.write(f"DEBUG: Computing for {len(selected_nodes)} nodes...")
-                # Test parquet directly
-                try:
-                    dates = bx_calc.parquet.list_available_dates(year=selected_year)
-                    st.write(f"DEBUG: Parquet dates for {selected_year}: {len(dates) if dates else 0}")
-                except Exception as e:
-                    st.write(f"DEBUG: Parquet error: {e}")
-                
                 # Cache key for node BX stats
                 node_bx_key = f"node_bx_{hash(tuple(sorted(selected_nodes)))}_{selected_bx}_{selected_year}"
                 if node_bx_key not in st.session_state:
@@ -460,7 +450,6 @@ def render_dashboard_tab():
                             year=selected_year
                         )
                 bx_stats = st.session_state[node_bx_key]
-                st.write(f"DEBUG: bx_stats = {bx_stats}")
                 
                 if bx_stats.get('success') and bx_stats.get('avg_price'):
                     stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
@@ -533,7 +522,9 @@ def render_dashboard_tab():
                             fig = create_node_box_plot(box_data, title=f'B{selected_bx} Price Distribution by Node ({selected_year})')
                             st.plotly_chart(fig, use_container_width=True)
                 else:
-                    st.info("No data found for selected nodes.")
+                    error_msg = bx_stats.get('error', 'No data found')
+                    st.warning(f"Could not compute statistics: {error_msg}")
+                    st.info(f"Available years for node analysis: {st.session_state.get('parquet_years', [])}")
     
     except Exception as e:
         st.warning(f"Could not load BX statistics: {str(e)}")

@@ -1246,18 +1246,27 @@ class BXCalculator:
     def get_available_years(self) -> List[int]:
         """Get list of years with zone data available."""
         try:
-            # Use zone_hourly_lmp as primary source for years (EIA zone data)
             query = "SELECT DISTINCT EXTRACT(YEAR FROM opr_dt)::integer as year FROM caiso.zone_hourly_lmp ORDER BY year DESC"
             results = self.db.execute_query(query)
             return [r['year'] for r in results] if results else [2024]
         except Exception:
-            # Fallback to bx_daily_summary
             try:
                 query = "SELECT DISTINCT EXTRACT(YEAR FROM opr_dt)::integer as year FROM caiso.bx_daily_summary ORDER BY year DESC"
                 results = self.db.execute_query(query)
                 return [r['year'] for r in results] if results else [2024]
             except Exception:
                 return [2024]
+    
+    def get_available_parquet_years(self) -> List[int]:
+        """Get list of years with parquet node data available."""
+        try:
+            all_dates = self.parquet.list_available_dates()
+            if not all_dates:
+                return [2024]
+            years = sorted(set(d.year for d in all_dates), reverse=True)
+            return years if years else [2024]
+        except Exception:
+            return [2024]
     
     def get_available_months(self, year: int) -> List[str]:
         """Get list of months with data for a given year."""
