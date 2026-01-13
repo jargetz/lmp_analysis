@@ -511,7 +511,7 @@ def create_node_month_hour_heatmap(
 ) -> go.Figure:
     """
     Create a month x hour heatmap for selected node data.
-    Hours on x-axis, months on y-axis for consistency with other charts.
+    Hours on x-axis, months on y-axis for consistency with zone heatmaps.
     
     Args:
         heatmap_data: List of {'month': int, 'hour': int, 'avg_price': float} dicts
@@ -525,30 +525,55 @@ def create_node_month_hour_heatmap(
     
     df = pd.DataFrame(heatmap_data)
     
-    month_names = {1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun',
-                   7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
-    df['month_name'] = df['month'].map(month_names)
+    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     
     pivot = df.pivot_table(values='avg_price', index='month', columns='hour', aggfunc='mean')
+    pivot = pivot.reindex(index=range(1, 13))
+    pivot.columns = [int(h) + 1 for h in pivot.columns]
     
-    pivot = pivot.reindex(index=sorted(pivot.index, reverse=True))
-    pivot = pivot.reindex(columns=sorted(pivot.columns))
+    z_values = pivot.values
+    x_labels = [str(h) for h in range(1, 25)]
+    y_labels = month_names[:len(pivot)]
+    
+    text_values = [[f'{val:.2f}' if pd.notna(val) else '' for val in row] for row in z_values]
     
     fig = go.Figure(data=go.Heatmap(
-        z=pivot.values,
-        x=pivot.columns,
-        y=[month_names.get(m, str(m)) for m in pivot.index],
-        colorscale='RdYlGn_r',
-        hovertemplate='Hour: %{x}<br>Month: %{y}<br>Avg Price: $%{z:.2f}/MWh<extra></extra>',
-        colorbar=dict(title='$/MWh')
+        z=z_values,
+        x=x_labels,
+        y=y_labels,
+        text=text_values,
+        texttemplate='%{text}',
+        textfont=dict(size=10),
+        colorscale=[
+            [0.0, '#3366cc'],
+            [0.25, '#66aaff'],
+            [0.5, '#ffff99'],
+            [0.75, '#ff9966'],
+            [1.0, '#cc3300']
+        ],
+        hovertemplate='%{y} Hour %{x}: $%{z:.2f}/MWh<extra></extra>',
+        showscale=True,
+        colorbar=dict(title='$/MWh', tickformat='.0f')
     ))
     
     fig.update_layout(
         title=title,
-        xaxis_title='Hour of Day',
-        yaxis_title='Month',
-        xaxis=dict(tickmode='linear', dtick=2),
-        margin=dict(l=40, r=40, t=50, b=40)
+        xaxis_title='Hour Ending',
+        yaxis_title='',
+        xaxis=dict(
+            tickmode='linear',
+            dtick=1,
+            side='bottom'
+        ),
+        yaxis=dict(
+            autorange='reversed',
+            tickmode='array',
+            ticktext=y_labels,
+            tickvals=list(range(len(y_labels)))
+        ),
+        margin=dict(l=60, r=40, t=50, b=60),
+        height=400
     )
     
     return fig
