@@ -511,6 +511,7 @@ def create_node_month_hour_heatmap(
 ) -> go.Figure:
     """
     Create a month x hour heatmap for selected node data.
+    Hours on x-axis, months on y-axis for consistency with other charts.
     
     Args:
         heatmap_data: List of {'month': int, 'hour': int, 'avg_price': float} dicts
@@ -528,24 +529,25 @@ def create_node_month_hour_heatmap(
                    7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
     df['month_name'] = df['month'].map(month_names)
     
-    pivot = df.pivot_table(values='avg_price', index='hour', columns='month', aggfunc='mean')
+    pivot = df.pivot_table(values='avg_price', index='month', columns='hour', aggfunc='mean')
     
+    pivot = pivot.reindex(index=sorted(pivot.index))
     pivot = pivot.reindex(columns=sorted(pivot.columns))
     
     fig = go.Figure(data=go.Heatmap(
         z=pivot.values,
-        x=[month_names.get(m, str(m)) for m in pivot.columns],
-        y=pivot.index,
+        x=pivot.columns,
+        y=[month_names.get(m, str(m)) for m in pivot.index],
         colorscale='RdYlGn_r',
-        hovertemplate='Month: %{x}<br>Hour: %{y}<br>Avg Price: $%{z:.2f}/MWh<extra></extra>',
+        hovertemplate='Hour: %{x}<br>Month: %{y}<br>Avg Price: $%{z:.2f}/MWh<extra></extra>',
         colorbar=dict(title='$/MWh')
     ))
     
     fig.update_layout(
         title=title,
-        xaxis_title='Month',
-        yaxis_title='Hour of Day',
-        yaxis=dict(tickmode='linear', dtick=2),
+        xaxis_title='Hour of Day',
+        yaxis_title='Month',
+        xaxis=dict(tickmode='linear', dtick=2),
         margin=dict(l=40, r=40, t=50, b=40)
     )
     

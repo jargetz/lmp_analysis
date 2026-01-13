@@ -258,8 +258,8 @@ def render_dashboard_tab():
                 key="node_multiselect"
             )
             
-            # Sync selection back to session state
-            st.session_state.selected_nodes_list = selected_nodes
+            # Sync selection back to session state (ensure unique)
+            st.session_state.selected_nodes_list = list(dict.fromkeys(selected_nodes))
             
             # Show count and clear button
             if selected_nodes:
