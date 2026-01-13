@@ -547,7 +547,6 @@ def render_dashboard_tab():
                                 aggregation='monthly'
                             )
                         if avg_trend:
-                            import pandas as pd
                             df = pd.DataFrame(avg_trend)
                             df.rename(columns={'date': 'opr_dt'}, inplace=True)
                             fig = create_bx_trend_chart(df, bx_type=selected_bx, title=f'B{selected_bx} Average Trend ({len(selected_nodes)} nodes)')
