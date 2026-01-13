@@ -253,25 +253,29 @@ class CAISODataProcessor:
         return df_renamed
     
     def _parse_datetime(self, df):
-        """Parse datetime columns and create operational date/hour columns"""
-        if 'INTERVALSTARTTIME_GMT' in df.columns:
-            try:
-                # Parse the timestamp
-                timestamp_col = pd.to_datetime(df['INTERVALSTARTTIME_GMT'])
-                
-                # Create operational date and hour columns (required by new schema)
-                df['opr_dt'] = timestamp_col.dt.date
-                df['opr_hr'] = timestamp_col.dt.hour
-                
-                # Extract additional time-based features (optional)
-                df['DAY_OF_WEEK'] = timestamp_col.dt.day_name()
-                
-                # Keep the timestamp column (database requires it with NOT NULL constraint)
-                # Just ensure it's properly parsed
-                df['INTERVALSTARTTIME_GMT'] = timestamp_col
-                
-            except Exception as e:
-                logging.warning(f"Error parsing datetime: {str(e)}")
+        """Parse datetime columns and create operational date/hour columns.
+        
+        CRITICAL: OPR_HR and OPR_DT should come from CAISO's columns directly.
+        NEVER derive from INTERVALSTARTTIME_GMT (it's UTC, causes 8-hour offset).
+        Only use timestamp as fallback if OPR_HR/OPR_DT columns are missing.
+        """
+        if 'opr_hr' not in df.columns or 'opr_dt' not in df.columns:
+            if 'INTERVALSTARTTIME_GMT' in df.columns:
+                try:
+                    timestamp_col = pd.to_datetime(df['INTERVALSTARTTIME_GMT'])
+                    
+                    if 'opr_dt' not in df.columns:
+                        logging.warning("OPR_DT missing, falling back to GMT timestamp (may have offset)")
+                        df['opr_dt'] = timestamp_col.dt.date
+                    if 'opr_hr' not in df.columns:
+                        logging.warning("OPR_HR missing, falling back to GMT timestamp (may have offset)")
+                        df['opr_hr'] = timestamp_col.dt.hour
+                    
+                    df['DAY_OF_WEEK'] = timestamp_col.dt.day_name()
+                    df['INTERVALSTARTTIME_GMT'] = timestamp_col
+                    
+                except Exception as e:
+                    logging.warning(f"Error parsing datetime: {str(e)}")
         
         return df
     
