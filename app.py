@@ -206,20 +206,27 @@ def render_dashboard_tab():
         help="Choose to analyze by zone or select specific nodes"
     )
     
-    filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
-    
     # Initialize filter variables
     selected_zone = None
     selected_nodes = []
     
-    with filter_col1:
-        if analysis_mode == "By Zone":
-            # Zone mode shows all zones - no individual zone filter needed
+    if analysis_mode == "By Zone":
+        filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
+        
+        with filter_col1:
             st.markdown("**Zone Comparison**")
             st.caption("Showing NP15, SP15, ZP26, and Overall averages")
-        else:
+    else:
+        # Node mode: wider layout for node selection
+        node_col, options_col = st.columns([3, 1])
+        
+        with node_col:
+            # Initialize selected nodes from session state
+            if 'selected_nodes_list' not in st.session_state:
+                st.session_state.selected_nodes_list = []
+            
             # Quick add by prefix
-            prefix_col, add_col = st.columns([3, 1])
+            prefix_col, add_col = st.columns([4, 1])
             with prefix_col:
                 prefix = st.text_input(
                     "Add nodes by prefix",
@@ -228,7 +235,7 @@ def render_dashboard_tab():
                     key="node_prefix"
                 )
             with add_col:
-                st.markdown("<br>", unsafe_allow_html=True)  # Align button
+                st.markdown("<br>", unsafe_allow_html=True)
                 if st.button("Add All", key="add_prefix"):
                     if prefix and len(prefix) >= 2:
                         matching = [n for n in st.session_state.all_nodes if n.upper().startswith(prefix.upper())]
@@ -238,17 +245,12 @@ def render_dashboard_tab():
                             st.session_state.selected_nodes_list = updated
                             st.rerun()
             
-            # Initialize selected nodes from session state
-            if 'selected_nodes_list' not in st.session_state:
-                st.session_state.selected_nodes_list = []
-            
-            # Multiselect with built-in autocomplete (type to filter)
-            # Nodes are preloaded at dashboard startup
+            # Multiselect with wider display
             selected_nodes = st.multiselect(
                 "Selected Nodes",
                 options=st.session_state.all_nodes,
                 default=st.session_state.selected_nodes_list,
-                placeholder="Type to search or use prefix above...",
+                placeholder="Type to search nodes...",
                 help="Select individual nodes or use prefix above to add many at once",
                 key="node_multiselect"
             )
@@ -262,53 +264,95 @@ def render_dashboard_tab():
                 if st.button("Clear All", key="clear_nodes"):
                     st.session_state.selected_nodes_list = []
                     st.rerun()
-    
-    with filter_col2:
-        # BX selector
-        selected_bx = st.selectbox(
-            "BX Hours",
-            options=SUPPORTED_BX_VALUES,
-            index=4,  # Default to B8
-            format_func=lambda x: f"B{x} (Cheapest {x} hours)",
-            help="Number of cheapest hours to analyze"
-        )
-    
-    with filter_col3:
-        # Time period selector (Annual/Monthly)
-        time_period = st.selectbox(
-            "Time Period",
-            options=["Annual", "Monthly"],
-            help="Choose annual or monthly view"
-        )
-    
-    with filter_col4:
-        # Year/Month selector (years preloaded at startup)
-        available_years = st.session_state.available_years
         
-        if time_period == "Annual":
-            selected_year = st.selectbox(
-                "Year",
-                options=available_years,
-                help="Select year"
+        # Smaller options column for BX/Year selectors
+        filter_col1, filter_col2, filter_col3, filter_col4 = options_col, options_col, options_col, options_col
+    
+    # Common filters (BX, Time Period, Year)
+    if analysis_mode == "By Zone":
+        with filter_col2:
+            selected_bx = st.selectbox(
+                "BX Hours",
+                options=SUPPORTED_BX_VALUES,
+                index=4,
+                format_func=lambda x: f"B{x} (Cheapest {x} hours)",
+                help="Number of cheapest hours to analyze"
             )
-            selected_month = None
-        else:
-            # Year selector for monthly view
-            selected_year = st.selectbox(
-                "Year",
-                options=available_years,
-                key="monthly_year",
-                help="Select year"
+        
+        with filter_col3:
+            time_period = st.selectbox(
+                "Time Period",
+                options=["Annual", "Monthly"],
+                help="Choose annual or monthly view"
             )
-            # Month selector
-            month_options = ["January", "February", "March", "April", "May", "June", 
-                           "July", "August", "September", "October", "November", "December"]
-            selected_month_name = st.selectbox(
-                "Month",
-                options=month_options,
-                help="Select month"
+        
+        with filter_col4:
+            available_years = st.session_state.available_years
+            
+            if time_period == "Annual":
+                selected_year = st.selectbox(
+                    "Year",
+                    options=available_years,
+                    help="Select year"
+                )
+                selected_month = None
+            else:
+                selected_year = st.selectbox(
+                    "Year",
+                    options=available_years,
+                    key="monthly_year",
+                    help="Select year"
+                )
+                month_options = ["January", "February", "March", "April", "May", "June", 
+                               "July", "August", "September", "October", "November", "December"]
+                selected_month_name = st.selectbox(
+                    "Month",
+                    options=month_options,
+                    help="Select month"
+                )
+                selected_month = month_options.index(selected_month_name) + 1
+    else:
+        # Node mode: options in the side column
+        with options_col:
+            selected_bx = st.selectbox(
+                "BX Hours",
+                options=SUPPORTED_BX_VALUES,
+                index=4,
+                format_func=lambda x: f"B{x}",
+                help="Number of cheapest hours to analyze"
             )
-            selected_month = month_options.index(selected_month_name) + 1
+            
+            time_period = st.selectbox(
+                "Time Period",
+                options=["Annual", "Monthly"],
+                help="Choose annual or monthly view"
+            )
+            
+            available_years = st.session_state.available_years
+            
+            if time_period == "Annual":
+                selected_year = st.selectbox(
+                    "Year",
+                    options=available_years,
+                    help="Select year"
+                )
+                selected_month = None
+            else:
+                selected_year = st.selectbox(
+                    "Year",
+                    options=available_years,
+                    key="monthly_year_node",
+                    help="Select year"
+                )
+                month_options = ["January", "February", "March", "April", "May", "June", 
+                               "July", "August", "September", "October", "November", "December"]
+                selected_month_name = st.selectbox(
+                    "Month",
+                    options=month_options,
+                    key="monthly_month_node",
+                    help="Select month"
+                )
+                selected_month = month_options.index(selected_month_name) + 1
     
     st.divider()
     
