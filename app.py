@@ -435,9 +435,11 @@ def render_dashboard_tab():
         
         elif analysis_mode == "By Node Selection":
             # Node selection mode - show stats for selected nodes from parquet
+            st.write(f"DEBUG: selected_nodes = {selected_nodes}")
             if not selected_nodes:
                 st.info("Select one or more nodes above to see BX statistics.")
             else:
+                st.write(f"DEBUG: Computing for {len(selected_nodes)} nodes...")
                 # Cache key for node BX stats
                 node_bx_key = f"node_bx_{hash(tuple(sorted(selected_nodes)))}_{selected_bx}_{selected_year}"
                 if node_bx_key not in st.session_state:
@@ -448,6 +450,7 @@ def render_dashboard_tab():
                             year=selected_year
                         )
                 bx_stats = st.session_state[node_bx_key]
+                st.write(f"DEBUG: bx_stats = {bx_stats}")
                 
                 if bx_stats.get('success') and bx_stats.get('avg_price'):
                     stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
