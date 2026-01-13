@@ -1216,13 +1216,31 @@ class BXCalculator:
             return []
 
     def get_all_nodes(self) -> List[str]:
-        """Get all distinct PNODE names for autocomplete. Sorted alphabetically."""
+        """Get all distinct PNODE names from parquet files for autocomplete. Sorted alphabetically."""
+        try:
+            available_dates = self.parquet.list_available_dates(year=2024)
+            if not available_dates:
+                return self._get_nodes_from_mapping()
+            
+            sample_date = available_dates[len(available_dates) // 2]
+            table = self.parquet.read_day_from_parquet(sample_date)
+            if table is None:
+                return self._get_nodes_from_mapping()
+            
+            df = table.to_pandas()
+            nodes = sorted(df['node'].unique().tolist())
+            return nodes
+        except Exception as e:
+            self.logger.error(f"Error getting nodes from parquet: {str(e)}")
+            return self._get_nodes_from_mapping()
+    
+    def _get_nodes_from_mapping(self) -> List[str]:
+        """Fallback: get nodes from zone mapping table."""
         try:
             query = "SELECT DISTINCT pnode_id FROM caiso.node_zone_mapping ORDER BY pnode_id"
             results = self.db.execute_query(query)
             return [r['pnode_id'] for r in results] if results else []
-        except Exception as e:
-            self.logger.error(f"Error getting all nodes: {str(e)}")
+        except Exception:
             return []
 
     def get_available_years(self) -> List[int]:
