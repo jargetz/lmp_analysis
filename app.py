@@ -436,6 +436,9 @@ def render_dashboard_tab():
         elif analysis_mode == "By Node Selection":
             # Node selection mode - show stats for selected nodes from parquet
             st.write(f"DEBUG: selected_nodes = {selected_nodes}")
+            import os
+            st.write(f"DEBUG: AWS_S3_BUCKET = {os.getenv('AWS_S3_BUCKET')}")
+            st.write(f"DEBUG: Has AWS_ACCESS_KEY_ID = {bool(os.getenv('AWS_ACCESS_KEY_ID'))}")
             if not selected_nodes:
                 st.info("Select one or more nodes above to see BX statistics.")
             else:
