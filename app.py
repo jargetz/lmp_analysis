@@ -443,6 +443,13 @@ def render_dashboard_tab():
                 st.info("Select one or more nodes above to see BX statistics.")
             else:
                 st.write(f"DEBUG: Computing for {len(selected_nodes)} nodes...")
+                # Test parquet directly
+                try:
+                    dates = bx_calc.parquet.list_available_dates(year=selected_year)
+                    st.write(f"DEBUG: Parquet dates for {selected_year}: {len(dates) if dates else 0}")
+                except Exception as e:
+                    st.write(f"DEBUG: Parquet error: {e}")
+                
                 # Cache key for node BX stats
                 node_bx_key = f"node_bx_{hash(tuple(sorted(selected_nodes)))}_{selected_bx}_{selected_year}"
                 if node_bx_key not in st.session_state:
