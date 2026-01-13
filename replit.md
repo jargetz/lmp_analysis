@@ -8,6 +8,17 @@ This is a Streamlit-based web application for analyzing CAISO (California Indepe
 
 Preferred communication style: Simple, everyday language.
 
+## Critical Data Rules
+
+**NEVER derive opr_hr from timestamps.** CAISO provides an `OPR_HR` column (1-24, Pacific time) that must be used directly. The `INTERVALSTARTTIME_GMT` column is in UTC/GMT which is 7-8 hours ahead of California time. Deriving hour from GMT timestamps causes an 8-hour offset that makes peak hours appear as off-peak and vice versa.
+
+**Correct approach:**
+- Use `OPR_HR` column directly from CAISO CSV files
+- Use `OPR_DT` column directly for the operating date
+
+**Wrong approach:**
+- Parsing `INTERVALSTARTTIME_GMT` and extracting `.hour` (causes timezone offset errors)
+
 ## System Architecture
 
 ### Frontend Architecture

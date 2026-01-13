@@ -11,13 +11,17 @@ class CAISODataProcessor:
     """Handles processing and cleaning of CAISO LMP data with PostgreSQL storage"""
     
     def __init__(self):
-        self.required_columns = ['NODE', 'MW']  # We'll create opr_dt and opr_hr from INTERVALSTARTTIME_GMT
+        self.required_columns = ['NODE', 'MW', 'OPR_DT', 'OPR_HR']  # Use CAISO's operating date/hour directly
         self.optional_columns = ['MCC', 'MLC', 'POS']  # Congestion, Loss, Position components
         self.db = DatabaseManager()
         self.logger = logging.getLogger(__name__)
         
     def process_csv_content_to_db_fast(self, csv_content: str, source_file: str = "") -> Dict[str, Any]:
-        """Fast CSV processing - lean schema (node, mw, opr_dt, opr_hr, source_file only)"""
+        """Fast CSV processing - lean schema (node, mw, opr_dt, opr_hr, source_file only)
+        
+        CRITICAL: Uses OPR_DT and OPR_HR columns directly from CAISO data.
+        NEVER derive hour from INTERVALSTARTTIME_GMT (it's UTC, causes 8-hour offset).
+        """
         try:
             lines = csv_content.strip().split('\n')
             if len(lines) < 2:
@@ -26,12 +30,13 @@ class CAISODataProcessor:
             reader = csv.reader(lines)
             header = [col.upper() for col in next(reader)]
             
-            ts_idx = next((i for i, c in enumerate(header) if 'INTERVALSTARTTIME' in c and 'GMT' in c), None)
+            opr_dt_idx = next((i for i, c in enumerate(header) if c == 'OPR_DT'), None)
+            opr_hr_idx = next((i for i, c in enumerate(header) if c == 'OPR_HR'), None)
             node_idx = next((i for i, c in enumerate(header) if c == 'NODE' or 'PNODE' in c), None)
             mw_idx = next((i for i, c in enumerate(header) if c == 'MW'), None)
             
-            if ts_idx is None or node_idx is None or mw_idx is None:
-                return {'records_inserted': 0, 'error': 'Missing required columns'}
+            if opr_dt_idx is None or opr_hr_idx is None or node_idx is None or mw_idx is None:
+                return {'records_inserted': 0, 'error': 'Missing required columns (OPR_DT, OPR_HR, NODE, MW)'}
             
             output = io.StringIO()
             writer = csv.writer(output)
@@ -39,23 +44,15 @@ class CAISODataProcessor:
             
             for row in reader:
                 try:
-                    if len(row) <= max(ts_idx, node_idx, mw_idx):
+                    if len(row) <= max(opr_dt_idx, opr_hr_idx, node_idx, mw_idx):
                         continue
                     
-                    ts_str = row[ts_idx].strip()
-                    if not ts_str:
+                    opr_dt_str = row[opr_dt_idx].strip()
+                    opr_hr_str = row[opr_hr_idx].strip()
+                    if not opr_dt_str or not opr_hr_str:
                         continue
                     
-                    try:
-                        if 'T' in ts_str:
-                            dt = datetime.fromisoformat(ts_str.replace('Z', '+00:00').split('+')[0])
-                        else:
-                            dt = datetime.strptime(ts_str, '%Y-%m-%dT%H:%M:%S')
-                    except:
-                        dt = datetime.strptime(ts_str[:19], '%Y-%m-%dT%H:%M:%S')
-                    
-                    opr_dt = dt.date().isoformat()
-                    opr_hr = dt.hour
+                    opr_hr = int(opr_hr_str)
                     
                     node = row[node_idx].strip()
                     mw = row[mw_idx].strip()
@@ -66,8 +63,7 @@ class CAISODataProcessor:
                     except:
                         continue
                     
-                    # Lean schema: only 5 columns
-                    writer.writerow([node, mw, opr_dt, opr_hr, source_file])
+                    writer.writerow([node, mw, opr_dt_str, opr_hr, source_file])
                     row_count += 1
                 except Exception:
                     continue
