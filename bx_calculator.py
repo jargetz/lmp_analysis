@@ -886,6 +886,7 @@ class BXCalculator:
         Compute BX average for specific nodes from parquet files.
         
         Used when individual node data is requested (not available in summary tables).
+        Returns both overall average and per-node averages.
         """
         if not nodes:
             return {'success': False, 'error': 'No nodes specified'}
@@ -896,6 +897,7 @@ class BXCalculator:
         
         all_bx_prices = []
         nodes_set = set(nodes)
+        per_node_totals = {node: {'sum': 0, 'count': 0} for node in nodes}
         
         for d in available_dates:
             try:
@@ -913,12 +915,19 @@ class BXCalculator:
                     if len(node_df) >= bx:
                         cheapest = node_df.nsmallest(bx, 'mw')['mw'].mean()
                         all_bx_prices.append(cheapest)
+                        per_node_totals[node]['sum'] += cheapest
+                        per_node_totals[node]['count'] += 1
             except Exception as e:
                 self.logger.debug(f"Error processing {d}: {e}")
                 continue
         
         if not all_bx_prices:
             return {'success': False, 'error': 'No data found for selected nodes'}
+        
+        per_node_averages = {
+            node: t['sum'] / t['count'] 
+            for node, t in per_node_totals.items() if t['count'] > 0
+        }
         
         return {
             'success': True,
@@ -927,7 +936,8 @@ class BXCalculator:
             'min_price': min(all_bx_prices),
             'max_price': max(all_bx_prices),
             'node_count': len(nodes),
-            'day_count': len(available_dates)
+            'day_count': len(available_dates),
+            'per_node': per_node_averages
         }
 
     def get_zone_level_bx(

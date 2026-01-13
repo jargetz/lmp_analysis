@@ -457,13 +457,23 @@ def render_dashboard_tab():
                     stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
                     
                     with stat_col1:
-                        st.metric(f"B{selected_bx} Average", f"${bx_stats['avg_price']:.2f}/MWh")
+                        st.metric(f"B{selected_bx} Overall Avg", f"${bx_stats['avg_price']:.2f}/MWh")
                     with stat_col2:
                         st.metric("Min", f"${bx_stats['min_price']:.2f}/MWh" if bx_stats.get('min_price') else "N/A")
                     with stat_col3:
                         st.metric("Max", f"${bx_stats['max_price']:.2f}/MWh" if bx_stats.get('max_price') else "N/A")
                     with stat_col4:
                         st.metric("Nodes", f"{bx_stats.get('node_count', 0):,}")
+                    
+                    # Per-node BX stats table
+                    per_node = bx_stats.get('per_node', {})
+                    if per_node:
+                        st.subheader(f"B{selected_bx} by Node")
+                        node_stats_df = pd.DataFrame([
+                            {'Node': node, f'B{selected_bx} Avg ($/MWh)': round(price, 2)}
+                            for node, price in sorted(per_node.items(), key=lambda x: x[1])
+                        ])
+                        st.dataframe(node_stats_df, use_container_width=True, hide_index=True)
                     
                     # Node price heatmap (month x hour)
                     node_heatmap_key = f"node_heatmap_{hash(tuple(sorted(selected_nodes)))}_{selected_year}"
