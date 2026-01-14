@@ -279,6 +279,7 @@ def render_dashboard_tab():
                 options=SUPPORTED_BX_VALUES,
                 index=4,
                 format_func=lambda x: f"B{x} (Cheapest {x} hours)",
+                key="zone_bx",
                 help="Number of cheapest hours to analyze"
             )
         
@@ -286,6 +287,7 @@ def render_dashboard_tab():
             time_period = st.selectbox(
                 "Time Period",
                 options=["Annual", "Monthly"],
+                key="zone_time_period",
                 help="Choose annual or monthly view"
             )
         
@@ -296,6 +298,7 @@ def render_dashboard_tab():
                 selected_year = st.selectbox(
                     "Year",
                     options=available_years,
+                    key="zone_annual_year",
                     help="Select year"
                 )
                 selected_month = None
@@ -325,12 +328,14 @@ def render_dashboard_tab():
                 options=SUPPORTED_BX_VALUES,
                 index=4,
                 format_func=lambda x: f"B{x}",
+                key="node_bx",
                 help="Number of cheapest hours to analyze"
             )
             
             time_period = st.selectbox(
                 "Time Period",
                 options=["Annual", "Monthly"],
+                key="node_time_period",
                 help="Choose annual or monthly view"
             )
             
@@ -338,6 +343,7 @@ def render_dashboard_tab():
                 selected_year = st.selectbox(
                     "Year",
                     options=parquet_years,
+                    key="node_annual_year",
                     help="Select year (only years with node data)"
                 )
                 selected_month = None
