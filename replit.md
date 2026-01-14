@@ -110,6 +110,15 @@ The system uses a hybrid storage approach to handle the full year of data within
 
 ## Recent Changes
 
+### January 14, 2026
+- **Cache Bug Fix**: Fixed year-switching cache bug in node analysis mode
+  - Removed session_state caching for node queries (BX stats, heatmap, hourly data, trends)
+  - Fresh data now fetched on each interaction to prevent stale data when switching years
+  - Trade-off: slightly slower loads but guaranteed correct data
+- **Node List Fix**: Updated `get_all_nodes()` to sample from all available years (2024, 2025, 2026) instead of just 2024
+- **Missing 2024 Data**: Processed 4 missing dates (Sept 9, Sept 15, Nov 9, Dec 15) - 2024 now has full 366 days
+- **Data Inventory**: 741 total days loaded (2024: 366 days, 2025: 362 days, 2026: 13 days)
+
 ### January 9, 2026
 - **Hybrid Storage Architecture**: Implemented new storage strategy to fit full year within 10GB limit
   - Raw LMP data now stored as Parquet files in S3 (unlimited, ~39GB for full year)
