@@ -1237,20 +1237,30 @@ class BXCalculator:
             return []
 
     def get_all_nodes(self) -> List[str]:
-        """Get all distinct PNODE names from parquet files for autocomplete. Sorted alphabetically."""
+        """Get all distinct PNODE names from parquet files for autocomplete. Sorted alphabetically.
+        
+        Samples from all available years to ensure all node names are included.
+        """
         try:
-            available_dates = self.parquet.list_available_dates(year=2024)
-            if not available_dates:
+            all_nodes = set()
+            available_years = self.get_available_parquet_years()
+            
+            for year in available_years:
+                available_dates = self.parquet.list_available_dates(year=year)
+                if not available_dates:
+                    continue
+                
+                # Sample from middle of the year
+                sample_date = available_dates[len(available_dates) // 2]
+                table = self.parquet.read_day_from_parquet(sample_date)
+                if table is not None:
+                    df = table.to_pandas()
+                    all_nodes.update(df['node'].unique().tolist())
+            
+            if not all_nodes:
                 return self._get_nodes_from_mapping()
             
-            sample_date = available_dates[len(available_dates) // 2]
-            table = self.parquet.read_day_from_parquet(sample_date)
-            if table is None:
-                return self._get_nodes_from_mapping()
-            
-            df = table.to_pandas()
-            nodes = sorted(df['node'].unique().tolist())
-            return nodes
+            return sorted(all_nodes)
         except Exception as e:
             self.logger.error(f"Error getting nodes from parquet: {str(e)}")
             return self._get_nodes_from_mapping()

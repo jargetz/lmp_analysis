@@ -442,16 +442,13 @@ def render_dashboard_tab():
             if not selected_nodes:
                 st.info("Select one or more nodes above to see BX statistics.")
             else:
-                # Cache key for node BX stats
-                node_bx_key = f"node_bx_{hash(tuple(sorted(selected_nodes)))}_{selected_bx}_{selected_year}"
-                if node_bx_key not in st.session_state:
-                    with st.spinner(f"Computing B{selected_bx} for {len(selected_nodes)} node(s)..."):
-                        st.session_state[node_bx_key] = bx_calc.get_node_bx_from_parquet(
-                            bx=selected_bx,
-                            nodes=selected_nodes,
-                            year=selected_year
-                        )
-                bx_stats = st.session_state[node_bx_key]
+                # Fetch fresh data each time to avoid stale cache issues when year changes
+                with st.spinner(f"Computing B{selected_bx} for {len(selected_nodes)} node(s)..."):
+                    bx_stats = bx_calc.get_node_bx_from_parquet(
+                        bx=selected_bx,
+                        nodes=selected_nodes,
+                        year=selected_year
+                    )
                 
                 if bx_stats.get('success') and bx_stats.get('avg_price'):
                     stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
@@ -480,29 +477,23 @@ def render_dashboard_tab():
                         ])
                         st.dataframe(node_stats_df, use_container_width=True, hide_index=True)
                     
-                    # Node price heatmap (month x hour)
-                    node_heatmap_key = f"node_heatmap_{hash(tuple(sorted(selected_nodes)))}_{selected_year}"
-                    if node_heatmap_key not in st.session_state:
-                        with st.spinner("Loading price heatmap..."):
-                            st.session_state[node_heatmap_key] = bx_calc.get_node_month_hour_averages(
-                                nodes=selected_nodes,
-                                year=selected_year
-                            )
-                    node_heatmap_data = st.session_state[node_heatmap_key]
+                    # Node price heatmap (month x hour) - fetch fresh to avoid stale data
+                    with st.spinner("Loading price heatmap..."):
+                        node_heatmap_data = bx_calc.get_node_month_hour_averages(
+                            nodes=selected_nodes,
+                            year=selected_year
+                        )
                     
                     if node_heatmap_data:
                         fig = create_node_month_hour_heatmap(node_heatmap_data, title=f'Price Heatmap ({len(selected_nodes)} nodes, {selected_year})')
                         st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_heatmap_{selected_year}'}})
                     
                     # Hourly price chart - AVERAGE across all nodes
-                    node_hourly_key = f"hourly_nodes_{hash(tuple(sorted(selected_nodes)))}_{selected_year}"
-                    if node_hourly_key not in st.session_state:
-                        with st.spinner("Loading average hourly prices..."):
-                            st.session_state[node_hourly_key] = bx_calc.get_hourly_averages_for_nodes(
-                                nodes=selected_nodes,
-                                year=selected_year
-                            )
-                    node_hourly_data = st.session_state[node_hourly_key]
+                    with st.spinner("Loading average hourly prices..."):
+                        node_hourly_data = bx_calc.get_hourly_averages_for_nodes(
+                            nodes=selected_nodes,
+                            year=selected_year
+                        )
                     
                     if node_hourly_data:
                         fig = create_node_hourly_chart(node_hourly_data, title=f'Hourly Price Average ({len(selected_nodes)} nodes, {selected_year})')
@@ -510,14 +501,11 @@ def render_dashboard_tab():
                     
                     # Hourly price chart - PER-NODE lines (limit to 25 nodes for readability)
                     if len(selected_nodes) <= 25:
-                        per_node_hourly_key = f"hourly_per_node_{hash(tuple(sorted(selected_nodes)))}_{selected_year}"
-                        if per_node_hourly_key not in st.session_state:
-                            with st.spinner("Loading per-node hourly prices..."):
-                                st.session_state[per_node_hourly_key] = bx_calc.get_hourly_averages_per_node(
-                                    nodes=selected_nodes,
-                                    year=selected_year
-                                )
-                        per_node_data = st.session_state[per_node_hourly_key]
+                        with st.spinner("Loading per-node hourly prices..."):
+                            per_node_data = bx_calc.get_hourly_averages_per_node(
+                                nodes=selected_nodes,
+                                year=selected_year
+                            )
                         
                         if per_node_data:
                             fig = create_node_hourly_lines_chart(per_node_data, title=f'Hourly Price by Node ({selected_year})')
@@ -527,16 +515,13 @@ def render_dashboard_tab():
                     
                     # BX trend chart per node (or average if many nodes)
                     if len(selected_nodes) <= 25:
-                        node_trend_key = f"bx_trend_nodes_{hash(tuple(sorted(selected_nodes)))}_{selected_bx}_{selected_year}"
-                        if node_trend_key not in st.session_state:
-                            with st.spinner("Loading BX trend per node..."):
-                                st.session_state[node_trend_key] = bx_calc.get_bx_trend_per_node(
-                                    bx=selected_bx,
-                                    nodes=selected_nodes,
-                                    year=selected_year,
-                                    aggregation='monthly'
-                                )
-                        node_trend_data = st.session_state[node_trend_key]
+                        with st.spinner("Loading BX trend per node..."):
+                            node_trend_data = bx_calc.get_bx_trend_per_node(
+                                bx=selected_bx,
+                                nodes=selected_nodes,
+                                year=selected_year,
+                                aggregation='monthly'
+                            )
                         
                         if node_trend_data:
                             fig = create_node_bx_trend_chart(node_trend_data, bx_type=selected_bx)
@@ -559,15 +544,12 @@ def render_dashboard_tab():
                     
                     # Box plot for node comparison (outlier detection)
                     if len(selected_nodes) > 1:
-                        box_key = f"box_nodes_{hash(tuple(sorted(selected_nodes)))}_{selected_bx}_{selected_year}"
-                        if box_key not in st.session_state:
-                            with st.spinner("Loading price distribution..."):
-                                st.session_state[box_key] = bx_calc.get_node_summary_statistics(
-                                    bx=selected_bx,
-                                    nodes=selected_nodes,
-                                    year=selected_year
-                                )
-                        box_data = st.session_state[box_key]
+                        with st.spinner("Loading price distribution..."):
+                            box_data = bx_calc.get_node_summary_statistics(
+                                bx=selected_bx,
+                                nodes=selected_nodes,
+                                year=selected_year
+                            )
                         
                         if box_data:
                             fig = create_node_box_plot(box_data, title=f'B{selected_bx} Price Distribution by Node ({selected_year})')
