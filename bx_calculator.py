@@ -1284,8 +1284,7 @@ class BXCalculator:
             all_dates = self.parquet.list_available_dates()
             if not all_dates:
                 return [2024]
-            current_year = 2026
-            years = sorted(set(d.year for d in all_dates if 2015 <= d.year <= current_year), reverse=True)
+            years = sorted(set(d.year for d in all_dates if 2015 <= d.year <= 2100), reverse=True)
             return years if years else [2024]
         except Exception:
             return [2024]
