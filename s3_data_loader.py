@@ -27,25 +27,32 @@ class S3DataLoader:
         self.parquet_storage = ParquetStorage()
     
     def _extract_date_from_filename(self, filename: str) -> Optional[date]:
-        """Extract date from CAISO filename like 20240101_20240101_DAM_LMP..."""
-        match = re.match(r'(\d{4})(\d{2})(\d{2})_', filename)
+        """Extract date from CAISO filename like 20240101_20240101_DAM_LMP...
+        
+        Handles both root files and prefixed paths like '2025/20250101_...'
+        """
+        match = re.search(r'(\d{4})(\d{2})(\d{2})_\d{8}_DAM_LMP', filename)
         if match:
             year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
             return date(year, month, day)
         return None
         
-    def list_caiso_files(self) -> List[str]:
-        """List all CAISO LMP zip files in the S3 bucket"""
+    def list_caiso_files(self, prefix: str = '') -> List[str]:
+        """List all CAISO LMP zip files in the S3 bucket.
+        
+        Args:
+            prefix: Optional S3 prefix to filter files (e.g., '2025/' or 'lmp_raw/')
+        """
         try:
-            response = self.s3_client.list_objects_v2(Bucket=self.bucket_name)
             files = []
+            paginator = self.s3_client.get_paginator('list_objects_v2')
             
-            if 'Contents' in response:
-                for obj in response['Contents']:
-                    key = obj['Key']
-                    # Filter for CAISO LMP files
-                    if key.endswith('.zip') and 'DAM_LMP' in key:
-                        files.append(key)
+            for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
+                if 'Contents' in page:
+                    for obj in page['Contents']:
+                        key = obj['Key']
+                        if key.endswith('.zip') and 'DAM_LMP' in key:
+                            files.append(key)
             
             return sorted(files)
         except Exception as e:
@@ -180,7 +187,8 @@ class S3DataLoader:
         self, 
         progress_callback=None, 
         batch_size=None, 
-        calculate_bx: bool = True
+        calculate_bx: bool = True,
+        prefix: str = ''
     ) -> Dict[str, Any]:
         """Load all CAISO data from S3 into the database.
         
@@ -188,12 +196,13 @@ class S3DataLoader:
             progress_callback: Callback function for progress updates
             batch_size: If set, only process this many unprocessed files per run (for resumability)
             calculate_bx: If True (default), calculate BX for each day after loading
+            prefix: S3 prefix to filter files (e.g., '2025/' for 2025 data)
         """
         # Phase 1: Download and process raw data
         if progress_callback:
-            progress_callback(0, 100, "Starting S3 data download and processing...")
+            progress_callback(0, 100, f"Starting S3 data download from '{prefix or 'root'}'...")
         
-        files = self.list_caiso_files()
+        files = self.list_caiso_files(prefix=prefix)
         
         if not files:
             return {'success': False, 'error': 'No CAISO files found in S3 bucket'}

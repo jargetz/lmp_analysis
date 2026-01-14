@@ -27,6 +27,7 @@ def main():
     batch_size = 20  # Default: process 20 files per run
     fresh_start = False
     calculate_bx = True  # Default: calculate BX for each day
+    prefix = ''  # Default: no prefix (all files)
     
     for arg in sys.argv[1:]:
         if arg == '--fresh':
@@ -35,6 +36,8 @@ def main():
             calculate_bx = False
         elif arg.startswith('--batch='):
             batch_size = int(arg.split('=')[1])
+        elif arg.startswith('--prefix='):
+            prefix = arg.split('=')[1]
     
     loader = S3DataLoader()
     
@@ -53,17 +56,19 @@ def main():
         print("✅ Existing data cleared")
     
     bx_msg = "with BX calculation" if calculate_bx else "(no BX)"
-    print(f"\n📦 BATCH MODE: Processing up to {batch_size} files {bx_msg}")
+    prefix_msg = f" from '{prefix}'" if prefix else ""
+    print(f"\n📦 BATCH MODE: Processing up to {batch_size} files {bx_msg}{prefix_msg}")
     print("💡 TIP: Run this script multiple times to process all files incrementally")
     
     # Start the batch load
-    print("\nStarting batch data load from S3...")
+    print(f"\nStarting batch data load from S3{prefix_msg}...")
     print("-" * 60)
     
     result = loader.load_all_data(
         progress_callback=progress_callback,
         batch_size=batch_size,
-        calculate_bx=calculate_bx
+        calculate_bx=calculate_bx,
+        prefix=prefix
     )
     
     # Print results
@@ -82,11 +87,11 @@ def main():
             print(f"  - {error}")
     
     # Check remaining work
-    all_files = loader.list_caiso_files()
+    all_files = loader.list_caiso_files(prefix=prefix)
     processed_count = sum(1 for f in all_files if loader.check_file_already_processed(f))
     remaining = len(all_files) - processed_count
     
-    print(f"\n📊 PROGRESS:")
+    print(f"\n📊 PROGRESS{prefix_msg}:")
     print(f"  - Total files in S3: {len(all_files)}")
     print(f"  - Files processed: {processed_count}")
     print(f"  - Remaining: {remaining}")
