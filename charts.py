@@ -536,10 +536,15 @@ def create_node_month_hour_heatmap(
     x_labels = [str(h) for h in range(1, 25)]
     y_labels = month_names[:len(pivot)]
     
+    text_values = [[f'{int(round(val))}' if pd.notna(val) else '' for val in row] for row in z_values]
+    
     fig = go.Figure(data=go.Heatmap(
         z=z_values,
         x=x_labels,
         y=y_labels,
+        text=text_values,
+        texttemplate='%{text}',
+        textfont=dict(size=8, color='black'),
         colorscale=[
             [0.0, '#3366cc'],
             [0.25, '#66aaff'],
@@ -710,10 +715,15 @@ def create_month_hour_heatmap(
     x_labels = [str(h) for h in range(1, 25)]
     y_labels = month_names[:len(pivot)]
     
+    text_values = [[f'{int(round(val))}' if pd.notna(val) else '' for val in row] for row in z_values]
+    
     fig = go.Figure(data=go.Heatmap(
         z=z_values,
         x=x_labels,
         y=y_labels,
+        text=text_values,
+        texttemplate='%{text}',
+        textfont=dict(size=8, color='black'),
         colorscale=[
             [0.0, '#3366cc'],
             [0.25, '#66aaff'],
