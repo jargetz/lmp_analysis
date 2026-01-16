@@ -973,20 +973,20 @@ class BXCalculator:
             
             by_zone = {}
             for row in results:
-                zone_name = row[0]
+                zone_name = row['zone']
                 by_zone[zone_name] = {
-                    'node': row[1],
-                    'avg_price': float(row[2]) if row[2] else None,
-                    'min_price': float(row[3]) if row[3] else None,
-                    'max_price': float(row[4]) if row[4] else None,
-                    'day_count': row[5],
+                    'node': row['node'],
+                    'avg_price': float(row['avg_price']) if row['avg_price'] else None,
+                    'min_price': float(row['min_price']) if row['min_price'] else None,
+                    'max_price': float(row['max_price']) if row['max_price'] else None,
+                    'day_count': row['day_count'],
                     'success': True
                 }
             
             return {'success': True, 'zones': by_zone}
             
         except Exception as e:
-            self.logger.error(f"Error getting generator BX: {str(e)}")
+            self.logger.error(f"Error getting generator BX: {e}")
             return {'success': False, 'error': str(e)}
     
     def get_annual_bx_average(
