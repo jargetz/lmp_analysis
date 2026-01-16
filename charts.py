@@ -805,8 +805,6 @@ def create_8760_heatmap(
     )
     pivot = pivot.reindex(date_order)
     pivot.columns = [int(h) for h in pivot.columns]
-    if 0 in pivot.columns:
-        pivot = pivot.rename(columns={0: 24})
     pivot = pivot.reindex(columns=range(1, 25))
     
     z_values = pivot.values
