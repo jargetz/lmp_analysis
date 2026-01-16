@@ -402,12 +402,37 @@ def render_dashboard_tab():
                     stats = zone_stats.get(zone_name, {})
                     if stats.get('success') and stats.get('avg_price'):
                         st.metric(
-                            zone_name,
+                            f"{zone_name} (Load Avg)",
                             f"${stats['avg_price']:.2f}/MWh",
-                            help=f"Nodes: {stats.get('node_count', 0):,}"
+                            help=f"EIA load-weighted avg. Nodes: {stats.get('node_count', 0):,}"
                         )
                     else:
                         st.metric(zone_name, "N/A")
+            
+            # Generator averages (pre-computed from TH_*_GEN-APND nodes)
+            gen_cache_key = f"gen_stats_{selected_bx}_{selected_year}"
+            if gen_cache_key not in st.session_state:
+                st.session_state[gen_cache_key] = bx_calc.get_generator_bx_average(
+                    bx=selected_bx,
+                    year=selected_year
+                )
+            gen_stats = st.session_state[gen_cache_key]
+            
+            if gen_stats.get('success') and gen_stats.get('zones'):
+                gen_cols = st.columns(3)
+                gen_zone_order = ['NP15', 'SP15', 'ZP26']
+                
+                for col, zone_name in zip(gen_cols, gen_zone_order):
+                    with col:
+                        zone_data = gen_stats['zones'].get(zone_name, {})
+                        if zone_data.get('avg_price') is not None:
+                            st.metric(
+                                f"{zone_name} (Gen Avg)",
+                                f"${zone_data['avg_price']:.2f}/MWh",
+                                help=f"Generator aggregate (TH_{zone_name}_GEN-APND). Days: {zone_data.get('day_count', 0)}"
+                            )
+                        else:
+                            st.metric(f"{zone_name} (Gen)", "N/A")
             
             # Month x Hour heatmap (from pre-computed summary table)
             st.subheader("Averages - Day Ahead LMP")

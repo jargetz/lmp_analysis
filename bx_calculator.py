@@ -788,6 +788,7 @@ class BXCalculator:
         """
         Run full aggregation after data import.
         Creates monthly and annual summaries from daily data.
+        Also updates generator node summaries.
         
         Returns:
             Dict with aggregation results
@@ -796,12 +797,197 @@ class BXCalculator:
         
         monthly_result = self.aggregate_monthly_summaries()
         annual_result = self.aggregate_annual_summaries()
+        generator_result = self.compute_generator_bx_summaries()
         
         return {
-            'success': monthly_result['success'] and annual_result['success'],
+            'success': monthly_result['success'] and annual_result['success'] and generator_result['success'],
             'monthly': monthly_result,
-            'annual': annual_result
+            'annual': annual_result,
+            'generator': generator_result
         }
+    
+    def compute_generator_bx_summaries(self, year: int = None) -> Dict[str, Any]:
+        """
+        Compute BX summaries for generator aggregate nodes (TH_*_GEN-APND).
+        These are pre-computed from parquet data for fast dashboard display.
+        
+        Args:
+            year: Optional year to process. If None, processes all available years.
+            
+        Returns:
+            Dict with success status and row counts
+        """
+        import io
+        import csv
+        
+        generator_nodes = {
+            'TH_NP15_GEN-APND': 'NP15',
+            'TH_SP15_GEN-APND': 'SP15',
+            'TH_ZP26_GEN-APND': 'ZP26'
+        }
+        
+        years_to_process = [year] if year else self.get_available_parquet_years()
+        total_inserted = 0
+        
+        self.logger.info(f"Computing generator BX summaries for years: {years_to_process}")
+        
+        # Collect all records first, then batch insert
+        records = []
+        
+        for yr in years_to_process:
+            available_dates = self.parquet.list_available_dates(year=yr)
+            if not available_dates:
+                continue
+            
+            for d in available_dates:
+                try:
+                    table = self.parquet.read_day_from_parquet(d)
+                    if table is None:
+                        continue
+                    
+                    df = table.to_pandas()
+                    
+                    for node, zone in generator_nodes.items():
+                        node_data = df[df['node'] == node]
+                        if node_data.empty or len(node_data) < 4:
+                            continue
+                        
+                        for bx in SUPPORTED_BX_VALUES:
+                            if len(node_data) >= bx:
+                                cheapest = node_data.nsmallest(bx, 'mw')
+                                avg_price = cheapest['mw'].mean()
+                                records.append((node, zone, d.isoformat(), bx, round(avg_price, 4)))
+                                
+                except Exception as e:
+                    self.logger.debug(f"Error processing {d} for generators: {e}")
+                    continue
+        
+        # Batch insert using COPY
+        if records:
+            try:
+                output = io.StringIO()
+                writer = csv.writer(output)
+                for r in records:
+                    writer.writerow(r)
+                output.seek(0)
+                
+                with self.db.get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            CREATE TEMP TABLE tmp_gen_import (
+                                node VARCHAR(100),
+                                zone VARCHAR(10),
+                                opr_dt DATE,
+                                bx_type INTEGER,
+                                avg_price NUMERIC(12,4)
+                            ) ON COMMIT DROP
+                        """)
+                        
+                        cur.copy_expert(
+                            "COPY tmp_gen_import (node, zone, opr_dt, bx_type, avg_price) FROM STDIN WITH CSV",
+                            output
+                        )
+                        
+                        cur.execute("""
+                            INSERT INTO caiso.generator_bx_summary (node, zone, opr_dt, bx_type, avg_price)
+                            SELECT node, zone, opr_dt, bx_type, avg_price FROM tmp_gen_import
+                            ON CONFLICT (node, opr_dt, bx_type) DO UPDATE SET
+                                avg_price = EXCLUDED.avg_price,
+                                zone = EXCLUDED.zone
+                        """)
+                        
+                        total_inserted = cur.rowcount
+                        conn.commit()
+                        
+            except Exception as e:
+                self.logger.error(f"Error batch inserting generator BX: {e}")
+                return {'success': False, 'error': str(e)}
+        
+        self.logger.info(f"Inserted {total_inserted} generator BX records")
+        return {'success': True, 'rows_inserted': total_inserted}
+    
+    def _insert_generator_bx(self, node: str, zone: str, opr_dt, bx_type: int, avg_price: float) -> bool:
+        """Insert a single generator BX record."""
+        try:
+            query = """
+                INSERT INTO caiso.generator_bx_summary (node, zone, opr_dt, bx_type, avg_price)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (node, opr_dt, bx_type) DO UPDATE SET
+                    avg_price = EXCLUDED.avg_price,
+                    zone = EXCLUDED.zone
+            """
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (node, zone, opr_dt, bx_type, round(avg_price, 4)))
+                    conn.commit()
+            return True
+        except Exception as e:
+            self.logger.debug(f"Error inserting generator BX: {e}")
+            return False
+    
+    def get_generator_bx_average(
+        self,
+        bx: int,
+        year: int,
+        zone: str = None
+    ) -> Dict[str, Any]:
+        """
+        Get pre-computed BX averages for generator nodes.
+        
+        Args:
+            bx: BX type (4-10)
+            year: Year to query
+            zone: Optional zone filter (NP15, SP15, ZP26)
+            
+        Returns:
+            Dict with zone averages
+        """
+        conditions = ["bx_type = %s", "EXTRACT(YEAR FROM opr_dt) = %s"]
+        params = [bx, year]
+        
+        if zone:
+            conditions.append("zone = %s")
+            params.append(zone)
+        
+        where_clause = " AND ".join(conditions)
+        
+        query = f"""
+            SELECT 
+                zone,
+                node,
+                AVG(avg_price) as avg_price,
+                MIN(avg_price) as min_price,
+                MAX(avg_price) as max_price,
+                COUNT(*) as day_count
+            FROM caiso.generator_bx_summary
+            WHERE {where_clause}
+            GROUP BY zone, node
+            ORDER BY zone
+        """
+        
+        try:
+            results = self.db.execute_query(query, params)
+            
+            if not results:
+                return {'success': False, 'error': 'No generator data found'}
+            
+            by_zone = {}
+            for row in results:
+                zone_name = row[0]
+                by_zone[zone_name] = {
+                    'node': row[1],
+                    'avg_price': float(row[2]) if row[2] else None,
+                    'min_price': float(row[3]) if row[3] else None,
+                    'max_price': float(row[4]) if row[4] else None,
+                    'day_count': row[5],
+                    'success': True
+                }
+            
+            return {'success': True, 'zones': by_zone}
+            
+        except Exception as e:
+            self.logger.error(f"Error getting generator BX: {str(e)}")
+            return {'success': False, 'error': str(e)}
     
     def get_annual_bx_average(
         self,
