@@ -1137,6 +1137,60 @@ class BXCalculator:
             'per_node_hours': per_node_bx_hours
         }
 
+    def get_full_year_hourly_data(
+        self,
+        nodes: List[str],
+        year: int = 2024
+    ) -> List[Dict]:
+        """
+        Get full year hourly data for selected nodes from parquet.
+        
+        Returns all 8760 hours (or available hours) for the year with 
+        node-averaged prices for each (date, hour) combination.
+        
+        Args:
+            nodes: List of node names to include
+            year: Year to query
+            
+        Returns:
+            List of dicts with 'opr_dt', 'opr_hr', 'avg_price'
+        """
+        if not nodes:
+            return []
+        
+        available_dates = self.parquet.list_available_dates(year=year)
+        if not available_dates:
+            return []
+        
+        nodes_set = set(nodes)
+        hourly_data = []
+        
+        for d in available_dates:
+            try:
+                table = self.parquet.read_day_from_parquet(d)
+                if table is None:
+                    continue
+                
+                df = table.to_pandas()
+                node_data = df[df['node'].isin(nodes_set)]
+                if node_data.empty:
+                    continue
+                
+                hourly_avg = node_data.groupby('opr_hr')['mw'].mean().reset_index()
+                
+                for _, row in hourly_avg.iterrows():
+                    hourly_data.append({
+                        'opr_dt': d,
+                        'opr_hr': int(row['opr_hr']),
+                        'avg_price': float(row['mw'])
+                    })
+                    
+            except Exception as e:
+                self.logger.debug(f"Error processing {d}: {e}")
+                continue
+        
+        return hourly_data
+
     def get_zone_level_bx(
         self,
         bx: int,

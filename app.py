@@ -34,7 +34,8 @@ from charts import (
     create_node_box_plot,
     create_month_hour_heatmap,
     create_node_hourly_lines_chart,
-    create_node_month_hour_heatmap
+    create_node_month_hour_heatmap,
+    create_8760_heatmap
 )
 
 def main():
@@ -510,16 +511,27 @@ def render_dashboard_tab():
                         ])
                         st.dataframe(node_stats_df, use_container_width=True, hide_index=True)
                     
-                    # Node price heatmap (month x hour) - fetch fresh to avoid stale data
-                    with st.spinner("Loading price heatmap..."):
-                        node_heatmap_data = bx_calc.get_node_month_hour_averages(
-                            nodes=selected_nodes,
-                            year=selected_year
-                        )
-                    
-                    if node_heatmap_data:
-                        fig = create_node_month_hour_heatmap(node_heatmap_data, title=f'Price Heatmap ({len(selected_nodes)} nodes, {selected_year})')
-                        st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_heatmap_{selected_year}'}})
+                    # Node price heatmap - use 8760 for Annual, month×hour for Monthly
+                    if time_period == "Annual":
+                        with st.spinner("Loading full year (8760 hour) heatmap..."):
+                            full_year_data = bx_calc.get_full_year_hourly_data(
+                                nodes=selected_nodes,
+                                year=selected_year
+                            )
+                        
+                        if full_year_data:
+                            fig = create_8760_heatmap(full_year_data, title=f'Full Year Hourly Prices ({len(selected_nodes)} nodes)', year=selected_year)
+                            st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_8760_heatmap_{selected_year}'}})
+                    else:
+                        with st.spinner("Loading price heatmap..."):
+                            node_heatmap_data = bx_calc.get_node_month_hour_averages(
+                                nodes=selected_nodes,
+                                year=selected_year
+                            )
+                        
+                        if node_heatmap_data:
+                            fig = create_node_month_hour_heatmap(node_heatmap_data, title=f'Price Heatmap ({len(selected_nodes)} nodes, {selected_year})')
+                            st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_heatmap_{selected_year}'}})
                     
                     # Hourly price chart - AVERAGE across all nodes
                     with st.spinner("Loading average hourly prices..."):

@@ -760,6 +760,112 @@ def create_month_hour_heatmap(
     return fig
 
 
+def create_8760_heatmap(
+    data: list,
+    title: str = 'Full Year Hourly Prices',
+    year: int = None
+) -> go.Figure:
+    """
+    Create a heatmap showing all 8760 hours of the year.
+    
+    Layout matches existing month×hour heatmaps:
+    - X-axis: Hours (1-24)
+    - Y-axis: Months (with daily granularity within each month)
+    
+    Each month block contains ~30 thin horizontal rows (one per day).
+    
+    Args:
+        data: List of dicts with 'opr_dt', 'opr_hr', 'avg_price'
+        title: Chart title
+        year: Year for display
+        
+    Returns:
+        Plotly Figure object
+    """
+    if not data:
+        return create_empty_chart("No data for 8760 heatmap")
+    
+    df = pd.DataFrame(data)
+    df['opr_dt'] = pd.to_datetime(df['opr_dt'])
+    df['month'] = df['opr_dt'].dt.month
+    df['day'] = df['opr_dt'].dt.day
+    
+    df = df.sort_values(['month', 'day', 'opr_hr'])
+    
+    df['row_label'] = df['opr_dt'].dt.strftime('%b %d')
+    
+    unique_dates = df[['opr_dt', 'row_label', 'month', 'day']].drop_duplicates().sort_values('opr_dt')
+    date_order = unique_dates['row_label'].tolist()
+    
+    pivot = df.pivot_table(
+        index='row_label', 
+        columns='opr_hr', 
+        values='avg_price', 
+        aggfunc='mean'
+    )
+    pivot = pivot.reindex(date_order)
+    pivot.columns = [int(h) for h in pivot.columns]
+    if 0 in pivot.columns:
+        pivot = pivot.rename(columns={0: 24})
+    pivot = pivot.reindex(columns=range(1, 25))
+    
+    z_values = pivot.values
+    x_labels = [str(h) for h in range(1, 25)]
+    y_labels = pivot.index.tolist()
+    
+    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    month_positions = []
+    month_labels = []
+    current_month = None
+    for i, label in enumerate(y_labels):
+        month_abbr = label[:3]
+        if month_abbr != current_month:
+            month_positions.append(i)
+            month_labels.append(month_abbr)
+            current_month = month_abbr
+    
+    fig = go.Figure(data=go.Heatmap(
+        z=z_values,
+        x=x_labels,
+        y=list(range(len(y_labels))),
+        colorscale=[
+            [0.0, '#3366cc'],
+            [0.25, '#66aaff'],
+            [0.5, '#ffff99'],
+            [0.75, '#ff9966'],
+            [1.0, '#cc3300']
+        ],
+        hovertemplate='%{customdata}: Hour %{x}<br>$%{z:.2f}/MWh<extra></extra>',
+        customdata=[[y_labels[i]] * 24 for i in range(len(y_labels))],
+        showscale=True,
+        colorbar=dict(title='$/MWh', tickformat='.0f')
+    ))
+    
+    display_title = f"{title} - {year}" if year else title
+    
+    fig.update_layout(
+        title=display_title,
+        xaxis_title='Hour Ending',
+        yaxis_title='',
+        xaxis=dict(
+            tickmode='linear',
+            dtick=1,
+            side='bottom'
+        ),
+        yaxis=dict(
+            autorange='reversed',
+            tickmode='array',
+            tickvals=month_positions,
+            ticktext=month_labels
+        ),
+        margin=dict(l=60, r=40, t=50, b=60),
+        height=800
+    )
+    
+    return fig
+
+
 def create_node_box_plot(
     stats_data: list,
     title: str = 'Price Distribution by Node'
