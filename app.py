@@ -293,11 +293,13 @@ def render_dashboard_tab():
         
         with filter_col4:
             available_years = st.session_state.available_years
+            # Filter out 2025 for zone mode (incomplete data)
+            zone_years = [y for y in available_years if y != 2025]
             
             if time_period == "Annual":
                 selected_year = st.selectbox(
                     "Year",
-                    options=available_years,
+                    options=zone_years,
                     key="zone_annual_year",
                     help="Select year"
                 )
@@ -305,7 +307,7 @@ def render_dashboard_tab():
             else:
                 selected_year = st.selectbox(
                     "Year",
-                    options=available_years,
+                    options=zone_years,
                     key="monthly_year",
                     help="Select year"
                 )
