@@ -1835,12 +1835,21 @@ class BXCalculator:
         year: int
     ) -> List[Dict]:
         """
-        Get summary statistics (for box plot) for each node from parquet files.
+        Get summary statistics (for box plot) for each node using MotherDuck.
         
         Returns list of dicts with node, avg, min, max, q1, median, q3.
         """
         if not nodes:
             return []
+        
+        try:
+            from motherduck_client import get_motherduck_client
+            client = get_motherduck_client()
+            result = client.get_node_summary_statistics(bx, nodes, year)
+            if result:
+                return result
+        except Exception as e:
+            self.logger.warning(f"MotherDuck stats failed: {e}, falling back to parquet")
         
         import numpy as np
         available_dates = self.parquet.list_available_dates(year=year)

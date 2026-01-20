@@ -318,6 +318,84 @@ class MotherDuckClient:
             self.logger.error(f"Error getting hourly averages: {e}")
             return []
     
+    def get_node_summary_statistics(
+        self,
+        bx: int,
+        nodes: List[str],
+        year: int = 2024
+    ) -> List[Dict]:
+        """
+        Get summary statistics (for box plot) for each node using MotherDuck.
+        
+        Returns list of dicts with node, mean, min, max, q1, median, q3, day_count.
+        """
+        if not nodes:
+            return []
+        
+        nodes = self._sanitize_node_list(nodes)
+        if not nodes:
+            return []
+        
+        bx = int(bx)
+        if bx < 4 or bx > 10:
+            return []
+        
+        parquet_path = self._get_parquet_path(year=year)
+        temp_table = self._create_temp_node_table(nodes)
+        
+        query = f"""
+            WITH ranked AS (
+                SELECT 
+                    DATE(regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1)) as opr_dt,
+                    node,
+                    opr_hr,
+                    mw,
+                    ROW_NUMBER() OVER (PARTITION BY filename, node ORDER BY mw ASC) as rn
+                FROM read_parquet('{parquet_path}', filename=true)
+                WHERE node IN (SELECT node FROM {temp_table})
+            ),
+            daily_bx AS (
+                SELECT 
+                    opr_dt,
+                    node,
+                    AVG(mw) as daily_avg
+                FROM ranked
+                WHERE rn <= {bx}
+                GROUP BY opr_dt, node
+            )
+            SELECT 
+                node,
+                AVG(daily_avg) as mean,
+                MIN(daily_avg) as min,
+                MAX(daily_avg) as max,
+                PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY daily_avg) as q1,
+                PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY daily_avg) as median,
+                PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY daily_avg) as q3,
+                COUNT(*) as day_count
+            FROM daily_bx
+            GROUP BY node
+            ORDER BY mean ASC
+        """
+        
+        try:
+            results = self.execute_query(query)
+            return [
+                {
+                    'node': r['node'],
+                    'mean': float(r['mean']),
+                    'min': float(r['min']),
+                    'max': float(r['max']),
+                    'q1': float(r['q1']),
+                    'median': float(r['median']),
+                    'q3': float(r['q3']),
+                    'day_count': int(r['day_count'])
+                }
+                for r in results
+            ]
+        except Exception as e:
+            self.logger.error(f"Error getting node summary statistics: {e}")
+            return []
+    
     def get_bx_hour_distribution(
         self,
         bx: int,
