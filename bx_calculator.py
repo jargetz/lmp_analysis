@@ -1640,7 +1640,7 @@ class BXCalculator:
     
     def get_hourly_averages_per_node(self, nodes: List[str], year: int = None) -> Dict[str, List[Dict]]:
         """
-        Get hourly price averages for each node individually from parquet files.
+        Get hourly price averages for each node individually using MotherDuck.
         
         Returns dict with node names as keys, each containing list of {'hour': int, 'avg_price': float} dicts.
         """
@@ -1648,6 +1648,16 @@ class BXCalculator:
             return {}
         
         year = year or 2024
+        
+        try:
+            from motherduck_client import get_motherduck_client
+            client = get_motherduck_client()
+            result = client.get_hourly_averages_per_node(nodes, year)
+            if result:
+                return result
+        except Exception as e:
+            self.logger.warning(f"MotherDuck per-node hourly failed: {e}, falling back")
+        
         available_dates = self.parquet.list_available_dates(year=year)
         if not available_dates:
             return {}
@@ -1685,7 +1695,7 @@ class BXCalculator:
     
     def get_node_month_hour_averages(self, nodes: List[str], year: int = None) -> List[Dict]:
         """
-        Get month x hour heatmap data for selected nodes from parquet files.
+        Get month x hour heatmap data for selected nodes using MotherDuck.
         
         Returns list of {'month': int, 'hour': int, 'avg_price': float} dicts.
         """
@@ -1693,6 +1703,16 @@ class BXCalculator:
             return []
         
         year = year or 2024
+        
+        try:
+            from motherduck_client import get_motherduck_client
+            client = get_motherduck_client()
+            result = client.get_node_month_hour_averages(nodes, year)
+            if result:
+                return result
+        except Exception as e:
+            self.logger.warning(f"MotherDuck month-hour failed: {e}, falling back")
+        
         available_dates = self.parquet.list_available_dates(year=year)
         if not available_dates:
             return []

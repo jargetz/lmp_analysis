@@ -396,6 +396,99 @@ class MotherDuckClient:
             self.logger.error(f"Error getting node summary statistics: {e}")
             return []
     
+    def get_hourly_averages_per_node(
+        self,
+        nodes: List[str],
+        year: int = 2024
+    ) -> Dict[str, List[Dict]]:
+        """
+        Get hourly price averages for each node individually using MotherDuck.
+        
+        Returns dict with node names as keys, each containing list of
+        {'hour': int, 'avg_price': float} dicts.
+        """
+        if not nodes:
+            return {}
+        
+        nodes = self._sanitize_node_list(nodes)
+        if not nodes:
+            return {}
+        
+        parquet_path = self._get_parquet_path(year=year)
+        temp_table = self._create_temp_node_table(nodes)
+        
+        query = f"""
+            SELECT 
+                node,
+                opr_hr as hour,
+                AVG(mw) as avg_price
+            FROM read_parquet('{parquet_path}')
+            WHERE node IN (SELECT node FROM {temp_table})
+            GROUP BY node, opr_hr
+            ORDER BY node, opr_hr
+        """
+        
+        try:
+            results = self.execute_query(query)
+            output = {}
+            for r in results:
+                node = r['node']
+                if node not in output:
+                    output[node] = []
+                output[node].append({
+                    'hour': int(r['hour']),
+                    'avg_price': float(r['avg_price'])
+                })
+            return output
+        except Exception as e:
+            self.logger.error(f"Error getting per-node hourly averages: {e}")
+            return {}
+    
+    def get_node_month_hour_averages(
+        self,
+        nodes: List[str],
+        year: int = 2024
+    ) -> List[Dict]:
+        """
+        Get month x hour heatmap data for selected nodes using MotherDuck.
+        
+        Returns list of {'month': int, 'hour': int, 'avg_price': float} dicts.
+        """
+        if not nodes:
+            return []
+        
+        nodes = self._sanitize_node_list(nodes)
+        if not nodes:
+            return []
+        
+        parquet_path = self._get_parquet_path(year=year)
+        temp_table = self._create_temp_node_table(nodes)
+        
+        query = f"""
+            SELECT 
+                EXTRACT(MONTH FROM DATE(regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1)))::INT as month,
+                opr_hr as hour,
+                AVG(mw) as avg_price
+            FROM read_parquet('{parquet_path}', filename=true)
+            WHERE node IN (SELECT node FROM {temp_table})
+            GROUP BY 1, opr_hr
+            ORDER BY month, hour
+        """
+        
+        try:
+            results = self.execute_query(query)
+            return [
+                {
+                    'month': int(r['month']),
+                    'hour': int(r['hour']),
+                    'avg_price': float(r['avg_price'])
+                }
+                for r in results
+            ]
+        except Exception as e:
+            self.logger.error(f"Error getting month-hour averages: {e}")
+            return []
+    
     def get_bx_hour_distribution(
         self,
         bx: int,
