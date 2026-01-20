@@ -4,7 +4,7 @@ integrations = ["python_openai:1.0.0", "streamlit_database:1.0.0"]
 
 [nix]
 channel = "stable-25_05"
-packages = ["arrow-cpp", "glibcLocales", "pkg-config"]
+packages = ["arrow-cpp", "glibcLocales", "openssl", "pkg-config"]
 
 [deployment]
 deploymentTarget = "autoscale"

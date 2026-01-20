@@ -36,10 +36,12 @@ MAX_BX = 10
 class BXCalculator:
     """Calculates cheapest X hours (BX) for CAISO LMP data"""
     
-    def __init__(self):
+    def __init__(self, use_motherduck: bool = True):
         self.db = DatabaseManager()
         self.logger = logging.getLogger(__name__)
         self._parquet = None
+        self._motherduck = None
+        self._use_motherduck = use_motherduck
     
     @property
     def parquet(self):
@@ -47,6 +49,18 @@ class BXCalculator:
         if self._parquet is None:
             self._parquet = ParquetStorage()
         return self._parquet
+    
+    @property
+    def motherduck(self):
+        """Lazy-load MotherDuck client"""
+        if self._motherduck is None and self._use_motherduck:
+            try:
+                from motherduck_client import get_motherduck_client
+                self._motherduck = get_motherduck_client()
+            except Exception as e:
+                self.logger.warning(f"MotherDuck not available, falling back to parquet: {e}")
+                self._use_motherduck = False
+        return self._motherduck
     
     def create_bx_table(self) -> bool:
         """
@@ -1073,9 +1087,19 @@ class BXCalculator:
         
         Used when individual node data is requested (not available in summary tables).
         Returns both overall average and per-node averages.
+        
+        Uses MotherDuck for fast SQL queries if available.
         """
         if not nodes:
             return {'success': False, 'error': 'No nodes specified'}
+        
+        if self.motherduck:
+            try:
+                result = self.motherduck.get_node_bx_from_parquet(bx, nodes, year)
+                if result.get('success'):
+                    return result
+            except Exception as e:
+                self.logger.warning(f"MotherDuck BX query failed, falling back to parquet: {e}")
         
         available_dates = self.parquet.list_available_dates(year=year)
         if not available_dates:
@@ -1148,6 +1172,8 @@ class BXCalculator:
         Returns all 8760 hours (or available hours) for the year with 
         node-averaged prices for each (date, hour) combination.
         
+        Uses MotherDuck for fast SQL queries if available (~20s vs ~60s).
+        
         Args:
             nodes: List of node names to include
             year: Year to query
@@ -1157,6 +1183,14 @@ class BXCalculator:
         """
         if not nodes:
             return []
+        
+        if self.motherduck:
+            try:
+                result = self.motherduck.get_full_year_hourly_data(nodes, year)
+                if result:
+                    return result
+            except Exception as e:
+                self.logger.warning(f"MotherDuck query failed, falling back to parquet: {e}")
         
         available_dates = self.parquet.list_available_dates(year=year)
         if not available_dates:
@@ -1559,11 +1593,22 @@ class BXCalculator:
         Get hourly price averages for a list of nodes from parquet files.
         
         Returns list of {'hour': int, 'avg_price': float} dicts.
+        
+        Uses MotherDuck for fast SQL queries if available.
         """
         if not nodes:
             return []
         
         year = year or 2024
+        
+        if self.motherduck:
+            try:
+                result = self.motherduck.get_hourly_averages_for_nodes(nodes, year)
+                if result:
+                    return result
+            except Exception as e:
+                self.logger.warning(f"MotherDuck hourly query failed, falling back to parquet: {e}")
+        
         available_dates = self.parquet.list_available_dates(year=year)
         if not available_dates:
             return []

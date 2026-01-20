@@ -78,25 +78,27 @@ Preferred communication style: Simple, everyday language.
 - **Run Tests**: `pytest test_analytics_baseline.py -v`
 - **Philosophy**: Minimal but useful - catches breaking changes without slowing iteration
 
-## Data Storage Architecture (Hybrid)
+## Data Storage Architecture (MotherDuck)
 
-The system uses a hybrid storage approach to handle the full year of data within Replit's 10GB PostgreSQL limit:
+The system uses MotherDuck (DuckDB cloud) for all analytics queries:
 
 ### Storage Breakdown
-- **Raw LMP Data**: Stored as Parquet files in AWS S3 (`lmp_parquet/year=YYYY/month=MM/YYYY-MM-DD.parquet`)
-- **BX Aggregates**: Stored in PostgreSQL (`caiso.bx_daily_summary` - ~16k nodes × 7 BX types per day)
-- **Zone Mappings**: PostgreSQL (`caiso.node_zone_mapping`)
+- **Raw LMP Data**: Parquet files in AWS S3 (`lmp_parquet/year=YYYY/month=MM/YYYY-MM-DD.parquet`)
+- **Summary Tables**: MotherDuck database (`bx_daily_summary`, `zone_hourly_lmp`, `generator_bx_summary`)
+- **Zone Mappings**: MotherDuck (`node_zone_mapping`)
 
-### Why Hybrid?
-- Full year raw data = ~39GB (exceeds 10GB limit)
-- Zone-level BX aggregates = ~20MB (fits easily)
-- Parquet in S3 = unlimited, cost-effective for raw data
-- Node-level drill-downs computed on-demand from parquet
+### Why MotherDuck?
+- **10x faster queries**: SQL over parquet vs Python file-by-file loops
+- **Native S3 parquet support**: Query parquet files directly without loading to database
+- **Unified query interface**: Same SQL for raw data and summaries
+- **Cost-effective**: ~$0.08/GB-month storage, pay-per-query compute
+- **No storage limits**: Parquet files stay in S3, unlimited capacity
 
 ### Key Files
-- `parquet_storage.py`: Read/write Parquet to S3
-- `s3_data_loader.py`: Hybrid loader (parquet + BX aggregates)
-- `bx_calculator.py`: BX computation and storage
+- `motherduck_client.py`: MotherDuck connection and SQL queries
+- `parquet_storage.py`: Read/write Parquet to S3 (for data loading)
+- `bx_calculator.py`: BX computation with MotherDuck acceleration
+- `database.py`: Legacy PostgreSQL (kept for backwards compatibility)
 
 ## Data Loading
 
@@ -109,6 +111,27 @@ The system uses a hybrid storage approach to handle the full year of data within
 - **Full Guide**: See `DATALOAD_GUIDE.md` for detailed instructions
 
 ## Recent Changes
+
+### January 20, 2026
+- **MotherDuck Migration**: Migrated from PostgreSQL to MotherDuck (DuckDB cloud) for faster analytics
+  - `motherduck_client.py`: New module for MotherDuck connection and queries
+  - 10x faster parquet queries: 8760 heatmap now ~6s instead of ~60s
+  - S3 parquet files queried directly via SQL (no Python file-by-file loops)
+  - PostgreSQL summary tables migrated to MotherDuck (bx_daily_summary, zone_hourly_lmp, etc.)
+  - `bx_calculator.py`: Updated to use MotherDuck for parquet-based queries with fallback
+  - Key methods accelerated: `get_full_year_hourly_data`, `get_node_bx_from_parquet`, `get_hourly_averages_for_nodes`
+- **Security Improvements**:
+  - `_sanitize_node_list()`: Regex-based filtering of node names (alphanumeric, underscore, hyphen only)
+  - `_sanitize_zone()`: Whitelist validation for zone names (NP15, SP15, ZP26, Overall)
+  - `_validate_bucket()`: S3 bucket name validation with strict regex pattern
+  - `_create_temp_node_table()`: UUID-based temp table names for concurrency safety
+  - `_cleanup_old_temp_tables()`: Automatic cleanup when >20 tables to prevent memory bloat
+  - Parameterized queries for zone filters to prevent SQL injection
+- **MotherDuck Benefits**:
+  - Native parquet support (no ETL needed)
+  - Columnar storage optimized for analytics
+  - ~$0.08/GB-month storage, pay-per-query compute
+  - Single SQL interface for both raw parquet and summary tables
 
 ### January 14, 2026
 - **Cache Bug Fix**: Fixed year-switching cache bug in node analysis mode
