@@ -530,7 +530,8 @@ def create_node_month_hour_heatmap(
     
     pivot = df.pivot_table(values='avg_price', index='month', columns='hour', aggfunc='mean')
     pivot = pivot.reindex(index=range(1, 13))
-    pivot.columns = [int(h) + 1 for h in pivot.columns]
+    # opr_hr is already 1-24, don't add 1
+    pivot.columns = [int(h) for h in pivot.columns]
     
     z_values = pivot.values
     x_labels = [str(h) for h in range(1, 25)]

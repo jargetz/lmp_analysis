@@ -543,13 +543,13 @@ conn.close()
                     # Per-node BX stats table
                     per_node = bx_stats.get('per_node', {})
                     per_node_hours = bx_stats.get('per_node_hours', {})
-                    if per_node:
+                    if per_node and isinstance(per_node, dict):
                         st.subheader(f"B{selected_bx} by Node")
                         node_stats_df = pd.DataFrame([
                             {
                                 'Node': node, 
                                 f'B{selected_bx} Avg ($/MWh)': round(price, 2),
-                                f'Most Common B{selected_bx} Hours': ', '.join(map(str, per_node_hours.get(node, [])))
+                                f'Most Common B{selected_bx} Hours': ', '.join(map(str, per_node_hours.get(node, []))) if isinstance(per_node_hours, dict) else ''
                             }
                             for node, price in sorted(per_node.items(), key=lambda x: x[1])
                         ])
