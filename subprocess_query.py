@@ -162,10 +162,11 @@ def get_hourly_averages(conn, nodes, year):
     path = f"s3://{bucket}/lmp_parquet/year={year}/**/*.parquet"
     node_list = ', '.join(f"'{n}'" for n in nodes)
     
+    # Filter out hour 25 (DST transition days have 25 hours)
     query = f"""
         SELECT opr_hr as hour, AVG(mw) as avg_price
         FROM read_parquet('{path}', hive_partitioning=true)
-        WHERE node IN ({node_list})
+        WHERE node IN ({node_list}) AND opr_hr <= 24
         GROUP BY opr_hr ORDER BY opr_hr
     """
     
@@ -183,10 +184,11 @@ def get_heatmap_data(conn, nodes, year):
     path = f"s3://{bucket}/lmp_parquet/year={year}/**/*.parquet"
     node_list = ', '.join(f"'{n}'" for n in nodes)
     
+    # Filter out hour 25 (DST transition days have 25 hours)
     query = f"""
         SELECT month, opr_hr as hour, AVG(mw) as avg_price
         FROM read_parquet('{path}', hive_partitioning=true)
-        WHERE node IN ({node_list})
+        WHERE node IN ({node_list}) AND opr_hr <= 24
         GROUP BY month, opr_hr ORDER BY month, opr_hr
     """
     
@@ -292,13 +294,14 @@ def get_full_year_8760(conn, nodes, year):
     path = f"s3://{bucket}/lmp_parquet/year={year}/**/*.parquet"
     node_list = ', '.join(f"'{n}'" for n in nodes)
     
+    # Filter out hour 25 (DST transition days have 25 hours)
     query = f"""
         SELECT 
             regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1) as opr_dt,
             opr_hr, 
             AVG(mw) as avg_price
         FROM read_parquet('{path}', filename=true, hive_partitioning=true)
-        WHERE node IN ({node_list})
+        WHERE node IN ({node_list}) AND opr_hr <= 24
         GROUP BY 1, opr_hr
         ORDER BY 1, opr_hr
     """

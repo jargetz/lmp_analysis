@@ -555,6 +555,9 @@ conn.close()
                         ])
                         st.dataframe(node_stats_df, use_container_width=True, hide_index=True)
                     
+                    # Note about DST hour 25
+                    st.caption("Note: Hour 25 (DST transition) is excluded from charts")
+                    
                     # Node price heatmap (month x hour) - using subprocess
                     with st.spinner("Loading price heatmap..."):
                         heatmap_result = run_subprocess_query('heatmap', selected_nodes, selected_year, timeout=90)
