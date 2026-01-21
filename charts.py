@@ -638,7 +638,7 @@ def create_zone_bx_trend_chart(
 
 
 def create_node_bx_trend_chart(
-    node_data: dict,
+    node_data,
     bx_type: int,
     title: str = None
 ) -> go.Figure:
@@ -646,8 +646,8 @@ def create_node_bx_trend_chart(
     Create a multi-line chart showing BX price trend for each node.
     
     Args:
-        node_data: Dict with node names as keys, each containing list of
-                   {'date': date, 'avg_price': float} dicts
+        node_data: Either dict with node names as keys, or list of
+                   {'date': date, 'node': str, 'avg_price': float} dicts
         bx_type: BX value (4-10) for title
         title: Custom title
         
@@ -656,6 +656,16 @@ def create_node_bx_trend_chart(
     """
     fig = go.Figure()
     title = title or f'B{bx_type} Price Trend by Node'
+    
+    # Convert list format to dict format if needed
+    if isinstance(node_data, list):
+        node_dict = {}
+        for item in node_data:
+            node = item.get('node', 'Unknown')
+            if node not in node_dict:
+                node_dict[node] = []
+            node_dict[node].append({'date': item['date'], 'avg_price': item['avg_price']})
+        node_data = node_dict
     
     for i, (node, data) in enumerate(node_data.items()):
         if data:
