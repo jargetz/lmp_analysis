@@ -506,25 +506,29 @@ conn.close()
             if not selected_nodes:
                 st.info("Select one or more nodes above to see BX statistics.")
             else:
-                # Debug logging
-                import logging
-                logging.info(f"DEBUG: Starting node analysis for {len(selected_nodes)} nodes, year={selected_year}")
+                import subprocess
+                import json
                 
-                # Fetch fresh data each time to avoid stale cache issues when year changes
-                with st.spinner(f"Computing B{selected_bx} for {len(selected_nodes)} node(s)..."):
+                def run_subprocess_query(query_type, *args, timeout=60):
+                    """Run MotherDuck query in subprocess to avoid Streamlit blocking"""
+                    cmd = ['python3', 'subprocess_query.py', query_type] + [str(a) if not isinstance(a, list) else json.dumps(a) for a in args]
                     try:
-                        bx_stats = bx_calc.get_node_bx_from_parquet(
-                            bx=selected_bx,
-                            nodes=selected_nodes,
-                            year=selected_year
-                        )
-                        logging.info(f"DEBUG: BX stats result: {bx_stats.get('success')}")
+                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+                        if result.returncode == 0:
+                            return json.loads(result.stdout)
+                        return {'success': False, 'error': result.stderr}
+                    except subprocess.TimeoutExpired:
+                        return {'success': False, 'error': f'Query timed out after {timeout}s'}
                     except Exception as e:
-                        logging.error(f"DEBUG: BX stats error: {e}")
-                        st.error(f"Error computing BX: {e}")
-                        bx_stats = {'success': False}
+                        return {'success': False, 'error': str(e)}
                 
-                if bx_stats.get('success') and bx_stats.get('avg_price'):
+                # Fetch BX stats using subprocess
+                with st.spinner(f"Computing B{selected_bx} for {len(selected_nodes)} node(s)... (this may take 10-30 seconds)"):
+                    bx_stats = run_subprocess_query('node_bx', selected_bx, selected_nodes, selected_year, timeout=90)
+                
+                if bx_stats.get('error'):
+                    st.error(f"Query error: {bx_stats.get('error')}")
+                elif bx_stats.get('success') and bx_stats.get('avg_price'):
                     stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
                     
                     with stat_col1:
@@ -551,39 +555,21 @@ conn.close()
                         ])
                         st.dataframe(node_stats_df, use_container_width=True, hide_index=True)
                     
-                    # Node price heatmap (month x hour) - always show this first
+                    # Node price heatmap (month x hour) - using subprocess
                     with st.spinner("Loading price heatmap..."):
-                        node_heatmap_data = bx_calc.get_node_month_hour_averages(
-                            nodes=selected_nodes,
-                            year=selected_year
-                        )
+                        heatmap_result = run_subprocess_query('heatmap', selected_nodes, selected_year, timeout=90)
                     
-                    if node_heatmap_data:
-                        fig = create_node_month_hour_heatmap(node_heatmap_data, title=f'Price Heatmap ({len(selected_nodes)} nodes, {selected_year})')
+                    if heatmap_result and not heatmap_result.get('error'):
+                        fig = create_node_month_hour_heatmap(heatmap_result, title=f'Price Heatmap ({len(selected_nodes)} nodes, {selected_year})')
                         st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_heatmap_{selected_year}'}})
                     
-                    # Hourly price chart - AVERAGE across all nodes
+                    # Hourly price chart - AVERAGE across all nodes - using subprocess
                     with st.spinner("Loading average hourly prices..."):
-                        node_hourly_data = bx_calc.get_hourly_averages_for_nodes(
-                            nodes=selected_nodes,
-                            year=selected_year
-                        )
+                        hourly_result = run_subprocess_query('hourly_avg', selected_nodes, selected_year, timeout=90)
                     
-                    if node_hourly_data:
-                        fig = create_node_hourly_chart(node_hourly_data, title=f'Hourly Price Average ({len(selected_nodes)} nodes, {selected_year})')
+                    if hourly_result and not hourly_result.get('error'):
+                        fig = create_node_hourly_chart(hourly_result, title=f'Hourly Price Average ({len(selected_nodes)} nodes, {selected_year})')
                         st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_hourly_avg_{selected_year}'}})
-                    
-                    # Hourly price chart - PER-NODE lines (limit to 25 nodes for readability)
-                    if len(selected_nodes) <= 25:
-                        with st.spinner("Loading per-node hourly prices..."):
-                            per_node_data = bx_calc.get_hourly_averages_per_node(
-                                nodes=selected_nodes,
-                                year=selected_year
-                            )
-                        
-                        if per_node_data:
-                            fig = create_node_hourly_lines_chart(per_node_data, title=f'Hourly Price by Node ({selected_year})')
-                            st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_hourly_per_node_{selected_year}'}})
                     else:
                         st.info(f"Per-node hourly chart available for 25 or fewer nodes (currently {len(selected_nodes)} selected)")
                     
