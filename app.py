@@ -577,34 +577,18 @@ conn.close()
                     else:
                         st.info(f"Per-node hourly chart available for 25 or fewer nodes (currently {len(selected_nodes)} selected)")
                     
-                    # BX trend chart per node (or average if many nodes)
-                    if len(selected_nodes) <= 25:
-                        with st.spinner("Loading BX trend per node..."):
-                            node_trend_data = bx_calc.get_bx_trend_per_node(
-                                bx=selected_bx,
-                                nodes=selected_nodes,
-                                year=selected_year,
-                                aggregation='monthly'
-                            )
+                    # BX trend chart - using subprocess (limit to 10 nodes for performance)
+                    if len(selected_nodes) <= 10:
+                        with st.spinner("Loading BX trend per node... (this may take 30-60 seconds)"):
+                            trend_result = run_subprocess_query('bx_trend', selected_bx, selected_nodes, selected_year, timeout=120)
                         
-                        if node_trend_data:
-                            fig = create_node_bx_trend_chart(node_trend_data, bx_type=selected_bx)
+                        if isinstance(trend_result, list) and trend_result:
+                            fig = create_node_bx_trend_chart(trend_result, bx_type=selected_bx)
                             st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_B{selected_bx}_trend_{selected_year}'}})
+                        elif isinstance(trend_result, dict) and trend_result.get('error'):
+                            st.warning(f"BX trend unavailable: {trend_result.get('error')}")
                     else:
-                        # For many nodes, show average trend only
-                        with st.spinner("Loading BX average trend..."):
-                            avg_trend = bx_calc.get_bx_trend(
-                                bx=selected_bx,
-                                start_date=date(selected_year, 1, 1),
-                                end_date=date(selected_year, 12, 31),
-                                nodes=selected_nodes,
-                                aggregation='monthly'
-                            )
-                        if avg_trend:
-                            df = pd.DataFrame(avg_trend)
-                            df.rename(columns={'date': 'opr_dt'}, inplace=True)
-                            fig = create_bx_trend_chart(df, bx_type=selected_bx, title=f'B{selected_bx} Average Trend ({len(selected_nodes)} nodes)')
-                            st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_B{selected_bx}_avg_trend_{selected_year}'}})
+                        st.info(f"BX trend chart available for 10 or fewer nodes (currently {len(selected_nodes)} selected)")
                     
                     # Box plot for node comparison (outlier detection)
                     if len(selected_nodes) > 1:
