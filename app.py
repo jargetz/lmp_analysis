@@ -343,12 +343,19 @@ def render_dashboard_tab():
             )
             
             if time_period == "Annual":
+                # Preserve year selection when nodes change
+                default_year_idx = 0
+                if 'last_node_year' in st.session_state and st.session_state.last_node_year in parquet_years:
+                    default_year_idx = parquet_years.index(st.session_state.last_node_year)
+                
                 selected_year = st.selectbox(
                     "Year",
                     options=parquet_years,
+                    index=default_year_idx,
                     key="node_annual_year",
                     help="Select year (only years with node data)"
                 )
+                st.session_state.last_node_year = selected_year
                 selected_month = None
             else:
                 selected_year = st.selectbox(

@@ -140,13 +140,22 @@ def get_node_bx(conn, bx, nodes, year):
         node_hours = hours_result[hours_result['node'] == node].head(bx)
         per_node_hours[node] = [int(h) for h in node_hours['opr_hr'].tolist()]
     
+    # Safely compute aggregate stats
+    try:
+        avg_price = float(result['avg_price'].mean()) if len(result) > 0 else 0.0
+        min_price = float(result['min_price'].min()) if len(result) > 0 else 0.0
+        max_price = float(result['max_price'].max()) if len(result) > 0 else 0.0
+        day_count = int(result['day_count'].iloc[0]) if len(result) > 0 else 0
+    except Exception as e:
+        return {'success': False, 'error': f'Stats calculation error: {str(e)}'}
+    
     return {
         'success': True,
-        'avg_price': float(result['avg_price'].mean()),
-        'min_price': float(result['min_price'].min()),
-        'max_price': float(result['max_price'].max()),
+        'avg_price': avg_price,
+        'min_price': min_price,
+        'max_price': max_price,
         'node_count': len(nodes),
-        'day_count': int(result['day_count'].iloc[0]),
+        'day_count': day_count,
         'per_node': per_node,
         'per_node_hours': per_node_hours
     }
