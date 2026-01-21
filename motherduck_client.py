@@ -10,11 +10,12 @@ MotherDuck can query parquet files directly from S3 and also store summary table
 import os
 import logging
 import duckdb
+import threading
 from datetime import date
 from typing import List, Dict, Any, Optional
 
 class MotherDuckClient:
-    """Client for querying CAISO LMP data via MotherDuck"""
+    """Client for querying CAISO LMP data via MotherDuck (thread-safe)"""
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
@@ -22,6 +23,8 @@ class MotherDuckClient:
         self._bucket = self._validate_bucket(os.getenv('AWS_S3_BUCKET'))
         self._s3_configured = False
         self._temp_tables = []
+        self._lock = threading.Lock()
+        self._thread_id = None
     
     def _validate_bucket(self, bucket: str) -> str:
         """Validate S3 bucket name to prevent injection"""
@@ -33,9 +36,20 @@ class MotherDuckClient:
     
     @property
     def conn(self):
-        """Lazy-load MotherDuck connection"""
+        """Lazy-load MotherDuck connection (thread-safe)"""
+        current_thread = threading.get_ident()
+        
+        # If connection exists but was created in different thread, reconnect
+        if self._conn is not None and self._thread_id != current_thread:
+            self.logger.info(f"Reconnecting - thread changed from {self._thread_id} to {current_thread}")
+            self._conn = None
+            self._s3_configured = False
+        
         if self._conn is None:
-            self._connect()
+            with self._lock:
+                if self._conn is None:
+                    self._connect()
+                    self._thread_id = current_thread
         return self._conn
     
     def _connect(self):
@@ -798,10 +812,13 @@ class MotherDuckClient:
 
 
 _client = None
+_client_lock = threading.Lock()
 
 def get_motherduck_client() -> MotherDuckClient:
-    """Get singleton MotherDuck client instance"""
+    """Get singleton MotherDuck client instance (thread-safe)"""
     global _client
     if _client is None:
-        _client = MotherDuckClient()
+        with _client_lock:
+            if _client is None:
+                _client = MotherDuckClient()
     return _client
