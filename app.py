@@ -474,26 +474,32 @@ def render_dashboard_tab():
         elif analysis_mode == "By Node Selection":
             # Node selection mode - show stats for selected nodes from parquet
             
-            # Simple diagnostic test
+            # Simple diagnostic test using subprocess to avoid Streamlit threading issues
             with st.expander("Database Diagnostic", expanded=False):
                 if st.button("Test Simple Query"):
+                    import subprocess
                     import time
-                    st.write("Testing MotherDuck connection...")
+                    st.write("Testing MotherDuck via subprocess...")
                     try:
                         start = time.time()
-                        from motherduck_client import MotherDuckClient
-                        md = MotherDuckClient()
-                        result = md.execute_query("SELECT 1 as test")
-                        st.success(f"Basic query works: {result} ({time.time()-start:.2f}s)")
-                        
-                        start = time.time()
-                        result2 = md.execute_query("SELECT COUNT(*) as cnt FROM bx_daily_summary LIMIT 1")
-                        st.success(f"Summary table query: {result2} ({time.time()-start:.2f}s)")
-                        
-                        start = time.time()
-                        path = "s3://oasis-data-for-replit-2025/lmp_parquet/year=2025/month=01/2025-01-01.parquet"
-                        result3 = md.execute_query(f"SELECT COUNT(*) as cnt FROM read_parquet('{path}')")
-                        st.success(f"Single parquet file: {result3} ({time.time()-start:.2f}s)")
+                        result = subprocess.run(
+                            ['python3', '-c', '''
+import os, duckdb
+token = os.getenv('MOTHERDUCK_TOKEN')
+conn = duckdb.connect(f'md:?motherduck_token={token}')
+conn.execute("SET enable_progress_bar = false")
+result = conn.execute("SELECT 1 as test").fetchall()
+print(f"Basic: {result}")
+conn.close()
+'''],
+                            capture_output=True, text=True, timeout=10
+                        )
+                        if result.returncode == 0:
+                            st.success(f"Basic query: {result.stdout.strip()} ({time.time()-start:.2f}s)")
+                        else:
+                            st.error(f"Failed: {result.stderr}")
+                    except subprocess.TimeoutExpired:
+                        st.error("Query timed out after 10s")
                     except Exception as e:
                         st.error(f"Error: {e}")
             
