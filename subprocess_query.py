@@ -55,6 +55,15 @@ def run_query():
             nodes = json.loads(sys.argv[3])
             year = int(sys.argv[4])
             result = get_bx_trend(conn, bx, nodes, year)
+        elif query_type == 'full_year_8760':
+            nodes = json.loads(sys.argv[2])
+            year = int(sys.argv[3])
+            result = get_full_year_8760(conn, nodes, year)
+        elif query_type == 'box_stats':
+            bx = int(sys.argv[2])
+            nodes = json.loads(sys.argv[3])
+            year = int(sys.argv[4])
+            result = get_box_stats(conn, bx, nodes, year)
         else:
             result = {'error': f'Unknown query type: {query_type}'}
         
@@ -190,6 +199,82 @@ def get_bx_trend(conn, bx, nodes, year):
     
     result = conn.execute(query).fetchdf()
     return [{'date': str(r['date']), 'node': r['node'], 'avg_price': float(r['avg_price'])} 
+            for _, r in result.iterrows()]
+
+def get_box_stats(conn, bx, nodes, year):
+    """Get summary statistics for box plot"""
+    import re
+    nodes = [n for n in nodes if re.match(r'^[A-Za-z0-9_\-\.]+$', n)]
+    if not nodes:
+        return []
+    
+    bucket = os.getenv('AWS_S3_BUCKET', 'oasis-data-for-replit-2025')
+    path = f"s3://{bucket}/lmp_parquet/year={year}/**/*.parquet"
+    node_list = ', '.join(f"'{n}'" for n in nodes)
+    
+    query = f"""
+        WITH file_data AS (
+            SELECT 
+                regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1) as opr_dt,
+                node, opr_hr, mw
+            FROM read_parquet('{path}', filename=true, hive_partitioning=true)
+            WHERE node IN ({node_list})
+        ),
+        ranked AS (
+            SELECT opr_dt, node, opr_hr, mw,
+                ROW_NUMBER() OVER (PARTITION BY opr_dt, node ORDER BY mw ASC) as rn
+            FROM file_data
+        ),
+        daily_bx AS (
+            SELECT opr_dt, node, AVG(mw) as bx_price
+            FROM ranked WHERE rn <= {bx}
+            GROUP BY opr_dt, node
+        )
+        SELECT node,
+            MIN(bx_price) as min_price,
+            PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY bx_price) as q1,
+            PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY bx_price) as median,
+            PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY bx_price) as q3,
+            MAX(bx_price) as max_price,
+            AVG(bx_price) as avg_price
+        FROM daily_bx GROUP BY node
+    """
+    
+    result = conn.execute(query).fetchdf()
+    return [{
+        'node': r['node'],
+        'min': float(r['min_price']),
+        'q1': float(r['q1']),
+        'median': float(r['median']),
+        'q3': float(r['q3']),
+        'max': float(r['max_price']),
+        'avg': float(r['avg_price'])
+    } for _, r in result.iterrows()]
+
+def get_full_year_8760(conn, nodes, year):
+    """Get full year hourly data for 8760 heatmap"""
+    import re
+    nodes = [n for n in nodes if re.match(r'^[A-Za-z0-9_\-\.]+$', n)]
+    if not nodes:
+        return []
+    
+    bucket = os.getenv('AWS_S3_BUCKET', 'oasis-data-for-replit-2025')
+    path = f"s3://{bucket}/lmp_parquet/year={year}/**/*.parquet"
+    node_list = ', '.join(f"'{n}'" for n in nodes)
+    
+    query = f"""
+        SELECT 
+            regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1) as date,
+            opr_hr as hour, 
+            AVG(mw) as avg_price
+        FROM read_parquet('{path}', filename=true, hive_partitioning=true)
+        WHERE node IN ({node_list})
+        GROUP BY 1, opr_hr
+        ORDER BY 1, opr_hr
+    """
+    
+    result = conn.execute(query).fetchdf()
+    return [{'date': str(r['date']), 'hour': int(r['hour']), 'avg_price': float(r['avg_price'])} 
             for _, r in result.iterrows()]
 
 if __name__ == '__main__':

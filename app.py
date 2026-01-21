@@ -593,28 +593,25 @@ conn.close()
                     # Box plot for node comparison (outlier detection)
                     if len(selected_nodes) > 1:
                         with st.spinner("Loading price distribution..."):
-                            box_data = bx_calc.get_node_summary_statistics(
-                                bx=selected_bx,
-                                nodes=selected_nodes,
-                                year=selected_year
-                            )
+                            box_result = run_subprocess_query('box_stats', selected_bx, selected_nodes, selected_year, timeout=90)
                         
-                        if box_data:
-                            fig = create_node_box_plot(box_data, title=f'B{selected_bx} Price Distribution by Node ({selected_year})')
+                        if isinstance(box_result, list) and box_result:
+                            fig = create_node_box_plot(box_result, title=f'B{selected_bx} Price Distribution by Node ({selected_year})')
                             st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_B{selected_bx}_distribution_{selected_year}'}})
+                        elif isinstance(box_result, dict) and box_result.get('error'):
+                            st.warning(f"Distribution chart unavailable: {box_result.get('error')}")
                     
                     # Full year 8760-hour heatmap (daily granularity) - only for Annual time period
                     if time_period == "Annual":
                         st.subheader("Full Year Hourly Heatmap (8760 hours)")
-                        with st.spinner("Loading full year hourly data (this may take a minute)..."):
-                            full_year_data = bx_calc.get_full_year_hourly_data(
-                                nodes=selected_nodes,
-                                year=selected_year
-                            )
+                        with st.spinner("Loading 8760 heatmap... (this may take 30-60 seconds)"):
+                            full_year_result = run_subprocess_query('full_year_8760', selected_nodes, selected_year, timeout=120)
                         
-                        if full_year_data:
-                            fig = create_8760_heatmap(full_year_data, title=f'Full Year Hourly Prices ({len(selected_nodes)} nodes)', year=selected_year)
+                        if isinstance(full_year_result, list) and full_year_result:
+                            fig = create_8760_heatmap(full_year_result, title=f'Full Year Hourly Prices ({len(selected_nodes)} nodes)', year=selected_year)
                             st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_8760_heatmap_{selected_year}'}})
+                        elif isinstance(full_year_result, dict) and full_year_result.get('error'):
+                            st.warning(f"8760 heatmap unavailable: {full_year_result.get('error')}")
                 else:
                     error_msg = bx_stats.get('error', 'No data found')
                     st.warning(f"Could not compute statistics: {error_msg}")
