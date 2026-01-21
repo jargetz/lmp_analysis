@@ -143,15 +143,15 @@ class MotherDuckClient:
             return []
         
         parquet_path = self._get_parquet_path(year=year)
-        temp_table = self._create_temp_node_table(nodes)
+        node_list_sql = ', '.join(f"'{n}'" for n in nodes)
         
         query = f"""
             SELECT 
                 DATE(regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1)) as opr_dt,
                 opr_hr,
                 AVG(mw) as avg_price
-            FROM read_parquet('{parquet_path}', filename=true) p
-            WHERE p.node IN (SELECT node FROM {temp_table})
+            FROM read_parquet('{parquet_path}', filename=true, hive_partitioning=true)
+            WHERE node IN ({node_list_sql})
             GROUP BY 1, 2
             ORDER BY opr_dt, opr_hr
         """
@@ -218,6 +218,7 @@ class MotherDuckClient:
         Compute BX average for specific nodes from parquet files (FAST).
         
         This replaces the slow Python loop version in bx_calculator.py.
+        Uses direct WHERE clause filtering instead of temp table joins for speed.
         
         Args:
             bx: BX value (4-10) - number of cheapest hours
@@ -239,18 +240,28 @@ class MotherDuckClient:
             return {'success': False, 'error': 'BX must be between 4 and 10'}
         
         parquet_path = self._get_parquet_path(year=year)
-        temp_table = self._create_temp_node_table(nodes)
+        
+        # Build node list for IN clause (already sanitized)
+        node_list_sql = ', '.join(f"'{n}'" for n in nodes)
         
         query = f"""
-            WITH ranked AS (
+            WITH file_data AS (
                 SELECT 
-                    DATE(regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1)) as opr_dt,
+                    regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1) as opr_dt,
+                    node,
+                    opr_hr,
+                    mw
+                FROM read_parquet('{parquet_path}', filename=true, hive_partitioning=true)
+                WHERE node IN ({node_list_sql})
+            ),
+            ranked AS (
+                SELECT 
+                    opr_dt,
                     node,
                     opr_hr,
                     mw,
-                    ROW_NUMBER() OVER (PARTITION BY filename, node ORDER BY mw ASC) as rn
-                FROM read_parquet('{parquet_path}', filename=true)
-                WHERE node IN (SELECT node FROM {temp_table})
+                    ROW_NUMBER() OVER (PARTITION BY opr_dt, node ORDER BY mw ASC) as rn
+                FROM file_data
             ),
             daily_bx AS (
                 SELECT 
@@ -317,14 +328,14 @@ class MotherDuckClient:
             return []
         
         parquet_path = self._get_parquet_path(year=year)
-        temp_table = self._create_temp_node_table(nodes)
+        node_list_sql = ', '.join(f"'{n}'" for n in nodes)
         
         query = f"""
             SELECT 
                 opr_hr as hour,
                 AVG(mw) as avg_price
-            FROM read_parquet('{parquet_path}')
-            WHERE node IN (SELECT node FROM {temp_table})
+            FROM read_parquet('{parquet_path}', hive_partitioning=true)
+            WHERE node IN ({node_list_sql})
             GROUP BY opr_hr
             ORDER BY opr_hr
         """
@@ -358,18 +369,26 @@ class MotherDuckClient:
             return []
         
         parquet_path = self._get_parquet_path(year=year)
-        temp_table = self._create_temp_node_table(nodes)
+        node_list_sql = ', '.join(f"'{n}'" for n in nodes)
         
         query = f"""
-            WITH ranked AS (
+            WITH file_data AS (
                 SELECT 
-                    DATE(regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1)) as opr_dt,
+                    regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1) as opr_dt,
+                    node,
+                    opr_hr,
+                    mw
+                FROM read_parquet('{parquet_path}', filename=true, hive_partitioning=true)
+                WHERE node IN ({node_list_sql})
+            ),
+            ranked AS (
+                SELECT 
+                    opr_dt,
                     node,
                     opr_hr,
                     mw,
-                    ROW_NUMBER() OVER (PARTITION BY filename, node ORDER BY mw ASC) as rn
-                FROM read_parquet('{parquet_path}', filename=true)
-                WHERE node IN (SELECT node FROM {temp_table})
+                    ROW_NUMBER() OVER (PARTITION BY opr_dt, node ORDER BY mw ASC) as rn
+                FROM file_data
             ),
             daily_bx AS (
                 SELECT 
@@ -432,15 +451,15 @@ class MotherDuckClient:
             return {}
         
         parquet_path = self._get_parquet_path(year=year)
-        temp_table = self._create_temp_node_table(nodes)
+        node_list_sql = ', '.join(f"'{n}'" for n in nodes)
         
         query = f"""
             SELECT 
                 node,
                 opr_hr as hour,
                 AVG(mw) as avg_price
-            FROM read_parquet('{parquet_path}')
-            WHERE node IN (SELECT node FROM {temp_table})
+            FROM read_parquet('{parquet_path}', hive_partitioning=true)
+            WHERE node IN ({node_list_sql})
             GROUP BY node, opr_hr
             ORDER BY node, opr_hr
         """
@@ -814,11 +833,23 @@ class MotherDuckClient:
 _client = None
 _client_lock = threading.Lock()
 
-def get_motherduck_client() -> MotherDuckClient:
-    """Get singleton MotherDuck client instance (thread-safe)"""
+def get_motherduck_client(force_new: bool = False) -> MotherDuckClient:
+    """Get MotherDuck client instance (thread-safe)
+    
+    Args:
+        force_new: If True, create a fresh connection instead of using singleton
+    """
     global _client
+    if force_new:
+        return MotherDuckClient()
     if _client is None:
         with _client_lock:
             if _client is None:
                 _client = MotherDuckClient()
     return _client
+
+def reset_motherduck_client():
+    """Reset the singleton client (for connection issues)"""
+    global _client
+    with _client_lock:
+        _client = None

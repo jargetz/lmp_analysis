@@ -52,15 +52,16 @@ class BXCalculator:
     
     @property
     def motherduck(self):
-        """Lazy-load MotherDuck client"""
-        if self._motherduck is None and self._use_motherduck:
-            try:
-                from motherduck_client import get_motherduck_client
-                self._motherduck = get_motherduck_client()
-            except Exception as e:
-                self.logger.warning(f"MotherDuck not available, falling back to parquet: {e}")
-                self._use_motherduck = False
-        return self._motherduck
+        """Get fresh MotherDuck client for each call to avoid stale connections"""
+        if not self._use_motherduck:
+            return None
+        try:
+            from motherduck_client import get_motherduck_client
+            return get_motherduck_client(force_new=True)
+        except Exception as e:
+            self.logger.warning(f"MotherDuck not available, falling back to parquet: {e}")
+            self._use_motherduck = False
+            return None
     
     def create_bx_table(self) -> bool:
         """
