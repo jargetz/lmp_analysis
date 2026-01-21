@@ -606,8 +606,8 @@ conn.close()
                     
                     # Full year 8760-hour heatmap (daily granularity) - only for Annual time period
                     if time_period == "Annual":
-                        st.subheader("Full Year Hourly Heatmap (All 24 Hours x 365 Days)")
-                        st.caption("Shows average price for each hour of each day (not B8 - this is raw hourly data)")
+                        st.subheader("Full Year Price Heatmap: Every Hour of Every Day")
+                        st.caption("Average LMP price for each of the 24 hours across all 365 days")
                         with st.spinner("Loading 8760 heatmap... (this may take 30-60 seconds)"):
                             full_year_result = run_subprocess_query('full_year_8760', selected_nodes, selected_year, timeout=120)
                         
