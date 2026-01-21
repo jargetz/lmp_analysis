@@ -606,12 +606,13 @@ conn.close()
                     
                     # Full year 8760-hour heatmap (daily granularity) - only for Annual time period
                     if time_period == "Annual":
-                        st.subheader("Full Year Hourly Heatmap (8760 hours)")
+                        st.subheader("Full Year Hourly Heatmap (All 24 Hours x 365 Days)")
+                        st.caption("Shows average price for each hour of each day (not B8 - this is raw hourly data)")
                         with st.spinner("Loading 8760 heatmap... (this may take 30-60 seconds)"):
                             full_year_result = run_subprocess_query('full_year_8760', selected_nodes, selected_year, timeout=120)
                         
                         if isinstance(full_year_result, list) and full_year_result:
-                            fig = create_8760_heatmap(full_year_result, title=f'Full Year Hourly Prices ({len(selected_nodes)} nodes)', year=selected_year)
+                            fig = create_8760_heatmap(full_year_result, title=f'All Hourly Prices ({len(selected_nodes)} nodes, {selected_year})', year=selected_year)
                             st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_8760_heatmap_{selected_year}'}})
                         elif isinstance(full_year_result, dict) and full_year_result.get('error'):
                             st.warning(f"8760 heatmap unavailable: {full_year_result.get('error')}")
