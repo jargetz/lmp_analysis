@@ -559,17 +559,21 @@ conn.close()
                     with st.spinner("Loading price heatmap..."):
                         heatmap_result = run_subprocess_query('heatmap', selected_nodes, selected_year, timeout=90)
                     
-                    if heatmap_result and not heatmap_result.get('error'):
+                    if isinstance(heatmap_result, list) and heatmap_result:
                         fig = create_node_month_hour_heatmap(heatmap_result, title=f'Price Heatmap ({len(selected_nodes)} nodes, {selected_year})')
                         st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_heatmap_{selected_year}'}})
+                    elif isinstance(heatmap_result, dict) and heatmap_result.get('error'):
+                        st.warning(f"Heatmap unavailable: {heatmap_result.get('error')}")
                     
                     # Hourly price chart - AVERAGE across all nodes - using subprocess
                     with st.spinner("Loading average hourly prices..."):
                         hourly_result = run_subprocess_query('hourly_avg', selected_nodes, selected_year, timeout=90)
                     
-                    if hourly_result and not hourly_result.get('error'):
+                    if isinstance(hourly_result, list) and hourly_result:
                         fig = create_node_hourly_chart(hourly_result, title=f'Hourly Price Average ({len(selected_nodes)} nodes, {selected_year})')
                         st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_hourly_avg_{selected_year}'}})
+                    elif isinstance(hourly_result, dict) and hourly_result.get('error'):
+                        st.warning(f"Hourly chart unavailable: {hourly_result.get('error')}")
                     else:
                         st.info(f"Per-node hourly chart available for 25 or fewer nodes (currently {len(selected_nodes)} selected)")
                     
