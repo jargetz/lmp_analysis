@@ -46,6 +46,9 @@ class MotherDuckClient:
         
         self._conn = duckdb.connect(f'md:?motherduck_token={token}')
         
+        # Disable progress bar to prevent Streamlit interference
+        self._conn.execute("SET enable_progress_bar = false")
+        
         self._conn.execute("CREATE DATABASE IF NOT EXISTS caiso_lmp")
         self._conn.execute("USE caiso_lmp")
         

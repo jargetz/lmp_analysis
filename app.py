@@ -476,13 +476,23 @@ def render_dashboard_tab():
             if not selected_nodes:
                 st.info("Select one or more nodes above to see BX statistics.")
             else:
+                # Debug logging
+                import logging
+                logging.info(f"DEBUG: Starting node analysis for {len(selected_nodes)} nodes, year={selected_year}")
+                
                 # Fetch fresh data each time to avoid stale cache issues when year changes
                 with st.spinner(f"Computing B{selected_bx} for {len(selected_nodes)} node(s)..."):
-                    bx_stats = bx_calc.get_node_bx_from_parquet(
-                        bx=selected_bx,
-                        nodes=selected_nodes,
-                        year=selected_year
-                    )
+                    try:
+                        bx_stats = bx_calc.get_node_bx_from_parquet(
+                            bx=selected_bx,
+                            nodes=selected_nodes,
+                            year=selected_year
+                        )
+                        logging.info(f"DEBUG: BX stats result: {bx_stats.get('success')}")
+                    except Exception as e:
+                        logging.error(f"DEBUG: BX stats error: {e}")
+                        st.error(f"Error computing BX: {e}")
+                        bx_stats = {'success': False}
                 
                 if bx_stats.get('success') and bx_stats.get('avg_price'):
                     stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
