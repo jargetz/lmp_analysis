@@ -73,8 +73,9 @@ def run_query():
         print(json.dumps({'error': str(e)}))
 
 def get_node_bx(conn, bx, nodes, year):
-    """Compute BX average for nodes"""
+    """Compute BX average for nodes with most common BX hours"""
     import re
+    from collections import Counter
     nodes = [n for n in nodes if re.match(r'^[A-Za-z0-9_\-\.]+$', n)]
     if not nodes:
         return {'success': False, 'error': 'No valid nodes'}
@@ -83,7 +84,8 @@ def get_node_bx(conn, bx, nodes, year):
     path = f"s3://{bucket}/lmp_parquet/year={year}/**/*.parquet"
     node_list = ', '.join(f"'{n}'" for n in nodes)
     
-    query = f"""
+    # Query for BX averages
+    avg_query = f"""
         WITH file_data AS (
             SELECT 
                 regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1) as opr_dt,
@@ -106,11 +108,38 @@ def get_node_bx(conn, bx, nodes, year):
         FROM daily_bx GROUP BY node
     """
     
-    result = conn.execute(query).fetchdf()
+    result = conn.execute(avg_query).fetchdf()
     if result.empty:
         return {'success': False, 'error': 'No data found'}
     
     per_node = {row['node']: float(row['avg_price']) for _, row in result.iterrows()}
+    
+    # Query for most common BX hours per node
+    hours_query = f"""
+        WITH file_data AS (
+            SELECT 
+                regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1) as opr_dt,
+                node, opr_hr, mw
+            FROM read_parquet('{path}', filename=true, hive_partitioning=true)
+            WHERE node IN ({node_list})
+        ),
+        ranked AS (
+            SELECT opr_dt, node, opr_hr, mw,
+                ROW_NUMBER() OVER (PARTITION BY opr_dt, node ORDER BY mw ASC) as rn
+            FROM file_data
+        )
+        SELECT node, opr_hr, COUNT(*) as cnt
+        FROM ranked WHERE rn <= {bx}
+        GROUP BY node, opr_hr
+        ORDER BY node, cnt DESC
+    """
+    
+    hours_result = conn.execute(hours_query).fetchdf()
+    per_node_hours = {}
+    for node in nodes:
+        node_hours = hours_result[hours_result['node'] == node].head(bx)
+        per_node_hours[node] = [int(h) for h in node_hours['opr_hr'].tolist()]
+    
     return {
         'success': True,
         'avg_price': float(result['avg_price'].mean()),
@@ -118,7 +147,8 @@ def get_node_bx(conn, bx, nodes, year):
         'max_price': float(result['max_price'].max()),
         'node_count': len(nodes),
         'day_count': int(result['day_count'].iloc[0]),
-        'per_node': per_node
+        'per_node': per_node,
+        'per_node_hours': per_node_hours
     }
 
 def get_hourly_averages(conn, nodes, year):
@@ -264,8 +294,8 @@ def get_full_year_8760(conn, nodes, year):
     
     query = f"""
         SELECT 
-            regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1) as date,
-            opr_hr as hour, 
+            regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1) as opr_dt,
+            opr_hr, 
             AVG(mw) as avg_price
         FROM read_parquet('{path}', filename=true, hive_partitioning=true)
         WHERE node IN ({node_list})
@@ -274,7 +304,7 @@ def get_full_year_8760(conn, nodes, year):
     """
     
     result = conn.execute(query).fetchdf()
-    return [{'date': str(r['date']), 'hour': int(r['hour']), 'avg_price': float(r['avg_price'])} 
+    return [{'opr_dt': str(r['opr_dt']), 'opr_hr': int(r['opr_hr']), 'avg_price': float(r['avg_price'])} 
             for _, r in result.iterrows()]
 
 if __name__ == '__main__':
