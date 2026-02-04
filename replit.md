@@ -73,10 +73,17 @@ Preferred communication style: Simple, everyday language.
 
 ### Testing
 - **Framework**: pytest for baseline testing
-- **Test Coverage**: Core analytics methods (peak/off-peak, price statistics, cheapest hours, hourly averages)
-- **Test Strategy**: Lightweight baseline tests against real database data, designed for manual runs during development
-- **Run Tests**: `pytest test_analytics_baseline.py -v`
-- **Philosophy**: Minimal but useful - catches breaking changes without slowing iteration
+- **Test Coverage**: B8 calculations, OPR_HR validation, subprocess query contracts, edge cases
+- **Test Strategy**: Verification tests using known fixture data from settlement nodes
+- **Run Tests**: `pytest test_b8_calculations.py -v` (takes ~60s due to S3 queries)
+- **Key Test File**: `test_b8_calculations.py` - 13 tests covering:
+  - Raw data integrity for TH_NP15_GEN-APND, TH_SP15_GEN-APND, TH_ZP26_GEN-APND
+  - B8 single-day calculation (2024-01-15 fixture with manual verification)
+  - Annual B8 averages for 2024 ($22.35, $7.26, $7.81 expected)
+  - OPR_HR range validation (must be 1-24, not 0-23)
+  - Hour 25 DST handling
+  - Subprocess query contract tests
+- **Philosophy**: Trust-but-verify - known values prevent silent calculation drift
 
 ## Data Storage Architecture (MotherDuck)
 
