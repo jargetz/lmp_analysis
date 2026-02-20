@@ -339,10 +339,16 @@ def get_full_year_8760(conn, nodes, year):
             for _, r in result.iterrows()]
 
 def get_all_individual_nodes(conn):
-    """Get all distinct node names from node_zone_mapping for node search"""
+    """Get all distinct node names from node_zone_mapping + generator_bx_summary for node search"""
     try:
-        result = conn.execute("SELECT DISTINCT pnode_id FROM node_zone_mapping ORDER BY pnode_id").fetchdf()
-        return result['pnode_id'].tolist() if not result.empty else []
+        result = conn.execute("""
+            SELECT DISTINCT name FROM (
+                SELECT pnode_id as name FROM node_zone_mapping
+                UNION
+                SELECT node as name FROM generator_bx_summary
+            ) ORDER BY name
+        """).fetchdf()
+        return result['name'].tolist() if not result.empty else []
     except Exception:
         return []
 
