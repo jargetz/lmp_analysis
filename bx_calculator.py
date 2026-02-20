@@ -49,30 +49,37 @@ class BXCalculator:
             self._parquet = ParquetStorage()
         return self._parquet
     
-    @property
-    def motherduck(self):
-        """Get fresh MotherDuck client for each call to avoid stale connections"""
-        if not self._use_motherduck:
-            return None
-        try:
-            from motherduck_client import get_motherduck_client
-            return get_motherduck_client(force_new=True)
-        except Exception as e:
-            self.logger.warning(f"MotherDuck not available: {e}")
-            self._use_motherduck = False
-            return None
-
     def _md_query(self, query: str, params: list = None) -> List[Dict]:
-        """Execute a query via MotherDuck and return list of dicts"""
-        md = self.motherduck
-        if md is None:
-            raise RuntimeError("MotherDuck not available")
-        return md.execute_query(query, tuple(params) if params else None)
+        """Execute a query via MotherDuck subprocess and return list of dicts"""
+        import subprocess
+        import json
+        cmd = ['python3', 'subprocess_query.py', 'raw_sql', query]
+        if params:
+            cmd.append(json.dumps(params))
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if result.returncode == 0 and result.stdout.strip():
+                data = json.loads(result.stdout.strip())
+                if isinstance(data, dict) and 'error' in data:
+                    raise RuntimeError(data['error'])
+                return data
+            return []
+        except subprocess.TimeoutExpired:
+            self.logger.error("MotherDuck query timed out")
+            return []
 
     def _md_query_one(self, query: str, params: list = None) -> Optional[Dict]:
         """Execute a query via MotherDuck and return first row as dict"""
         results = self._md_query(query, params)
         return results[0] if results else None
+
+    def _sanitize_zone(self, zone: str) -> str:
+        """Validate zone name against whitelist"""
+        import re
+        valid = ['NP15', 'SP15', 'ZP26', 'Overall']
+        if zone in valid:
+            return zone
+        raise ValueError(f"Invalid zone: {zone}")
 
     def get_zone_level_bx(
         self,
@@ -84,25 +91,16 @@ class BXCalculator:
     ) -> Dict[str, Any]:
         """
         Get zone-level BX average from bx_daily_summary table in MotherDuck.
-        
-        The bx_daily_summary table stores zone-level data directly
-        with zone names in the 'node' column (NP15, SP15, ZP26, Overall).
         """
-        conditions = ["bx_type = $1"]
-        params = [bx]
+        bx = int(bx)
+        zone_name = self._sanitize_zone(zone if zone else 'Overall')
         
-        zone_name = zone if zone else 'Overall'
-        conditions.append("node = $2")
-        params.append(zone_name)
+        conditions = [f"bx_type = {bx}", f"node = '{zone_name}'"]
         
         if start_date and end_date:
-            conditions.append("opr_dt >= $3 AND opr_dt <= $4")
-            params.extend([start_date, end_date])
+            conditions.append(f"opr_dt >= '{start_date}' AND opr_dt <= '{end_date}'")
         elif year:
-            conditions.append(f"EXTRACT(YEAR FROM opr_dt) = ${len(params)+1}")
-            params.append(year)
-        
-        where_clause = " AND ".join(conditions)
+            conditions.append(f"EXTRACT(YEAR FROM opr_dt) = {int(year)}")
         
         query = f"""
             SELECT 
@@ -111,11 +109,11 @@ class BXCalculator:
                 MAX(avg_price) as max_bx_price,
                 COUNT(*) as day_count
             FROM bx_daily_summary
-            WHERE {where_clause}
+            WHERE {' AND '.join(conditions)}
         """
         
         try:
-            result = self._md_query_one(query, params)
+            result = self._md_query_one(query)
             return {
                 'success': True,
                 'bx_type': bx,
@@ -136,46 +134,54 @@ class BXCalculator:
         month: int = None
     ) -> Dict[str, Any]:
         """
-        Get zone-level BX average for all zones plus overall.
-        
-        Uses zone-level BX calculation (cheapest X hours based on zone-average prices)
-        rather than averaging per-node BX values.
-        
-        Returns dict with keys: 'NP15', 'SP15', 'ZP26', 'Overall'
+        Get zone-level BX average for all zones plus overall in one query.
         """
         from calendar import monthrange
         
-        zones = ['NP15', 'SP15', 'ZP26']
-        results = {}
+        bx = int(bx)
+        conditions = [f"bx_type = {bx}"]
         
-        if time_period == "Annual":
-            start_date = None
-            end_date = None
-        else:
+        if time_period == "Annual" and year:
+            conditions.append(f"EXTRACT(YEAR FROM opr_dt) = {int(year)}")
+        elif time_period == "Monthly" and year and month:
             start_date = date(year, month, 1)
             _, last_day = monthrange(year, month)
             end_date = date(year, month, last_day)
+            conditions.append(f"opr_dt >= '{start_date}' AND opr_dt <= '{end_date}'")
         
-        for zone in zones:
-            stats = self.get_zone_level_bx(
-                bx=bx,
-                zone=zone,
-                year=year if time_period == "Annual" else None,
-                start_date=start_date,
-                end_date=end_date
-            )
-            results[zone] = stats
+        query = f"""
+            SELECT 
+                node,
+                AVG(avg_price) as avg_bx_price,
+                MIN(avg_price) as min_bx_price,
+                MAX(avg_price) as max_bx_price,
+                COUNT(*) as day_count
+            FROM bx_daily_summary
+            WHERE {' AND '.join(conditions)}
+                AND node IN ('NP15', 'SP15', 'ZP26', 'Overall')
+            GROUP BY node
+        """
         
-        overall = self.get_zone_level_bx(
-            bx=bx,
-            zone=None,
-            year=year if time_period == "Annual" else None,
-            start_date=start_date,
-            end_date=end_date
-        )
-        results['Overall'] = overall
-        
-        return results
+        try:
+            rows = self._md_query(query)
+            results = {}
+            for row in rows:
+                zone_name = row['node']
+                results[zone_name] = {
+                    'success': True,
+                    'bx_type': bx,
+                    'avg_price': float(row['avg_bx_price']) if row.get('avg_bx_price') else None,
+                    'min_price': float(row['min_bx_price']) if row.get('min_bx_price') else None,
+                    'max_price': float(row['max_bx_price']) if row.get('max_bx_price') else None,
+                    'day_count': row['day_count'] if row.get('day_count') else 0
+                }
+            for zone in ['NP15', 'SP15', 'ZP26', 'Overall']:
+                if zone not in results:
+                    results[zone] = {'success': False, 'error': 'No data'}
+            return results
+        except Exception as e:
+            self.logger.error(f"Error getting all zones B{bx}: {str(e)}")
+            return {z: {'success': False, 'error': str(e)} for z in ['NP15', 'SP15', 'ZP26', 'Overall']}
 
     def get_generator_bx_average(
         self,
@@ -186,14 +192,13 @@ class BXCalculator:
         """
         Get pre-computed BX averages for generator nodes from MotherDuck.
         """
-        conditions = ["bx_type = $1", "EXTRACT(YEAR FROM opr_dt) = $2"]
-        params = [bx, year]
+        bx = int(bx)
+        year = int(year)
+        conditions = [f"bx_type = {bx}", f"EXTRACT(YEAR FROM opr_dt) = {year}"]
         
         if zone:
-            conditions.append("zone = $3")
-            params.append(zone)
-        
-        where_clause = " AND ".join(conditions)
+            zone = self._sanitize_zone(zone)
+            conditions.append(f"zone = '{zone}'")
         
         query = f"""
             SELECT 
@@ -204,13 +209,13 @@ class BXCalculator:
                 MAX(avg_price) as max_price,
                 COUNT(*) as day_count
             FROM generator_bx_summary
-            WHERE {where_clause}
+            WHERE {' AND '.join(conditions)}
             GROUP BY zone, node
             ORDER BY zone
         """
         
         try:
-            results = self._md_query(query, params)
+            results = self._md_query(query)
             
             if not results:
                 return {'success': False, 'error': 'No generator data found'}
@@ -239,15 +244,11 @@ class BXCalculator:
         
         Derives from zone_hourly_lmp table in MotherDuck.
         """
-        zone_name = zone if zone else 'Overall'
-        params = [zone_name]
-        conditions = ["zone = $1"]
+        zone_name = self._sanitize_zone(zone if zone else 'Overall')
+        conditions = [f"zone = '{zone_name}'"]
         
         if year:
-            conditions.append("EXTRACT(YEAR FROM opr_dt) = $2")
-            params.append(year)
-        
-        where_clause = " AND ".join(conditions)
+            conditions.append(f"EXTRACT(YEAR FROM opr_dt) = {int(year)}")
         
         query = f"""
             SELECT 
@@ -255,13 +256,13 @@ class BXCalculator:
                 hour_num as hour, 
                 AVG(lmp) as avg_price
             FROM zone_hourly_lmp
-            WHERE {where_clause}
+            WHERE {' AND '.join(conditions)}
             GROUP BY 1, hour_num
             ORDER BY month, hour
         """
         
         try:
-            results = self._md_query(query, params)
+            results = self._md_query(query)
             return [
                 {
                     'month': int(r['month']),
@@ -273,6 +274,43 @@ class BXCalculator:
         except Exception as e:
             self.logger.error(f"Error getting month/hour averages: {str(e)}")
             return []
+
+    def get_all_zones_month_hour(self, year: int = None) -> Dict[str, List[Dict]]:
+        """Get month/hour averages for all zones in one query."""
+        conditions = []
+        if year:
+            conditions.append(f"EXTRACT(YEAR FROM opr_dt) = {int(year)}")
+        
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        
+        query = f"""
+            SELECT 
+                zone,
+                EXTRACT(MONTH FROM opr_dt)::INT as month, 
+                hour_num as hour, 
+                AVG(lmp) as avg_price
+            FROM zone_hourly_lmp
+            {where_clause}
+            GROUP BY zone, 1, hour_num
+            ORDER BY zone, month, hour
+        """
+        
+        try:
+            results = self._md_query(query)
+            by_zone = {}
+            for r in results:
+                z = r.get('zone', 'Overall')
+                if z not in by_zone:
+                    by_zone[z] = []
+                by_zone[z].append({
+                    'month': int(r['month']),
+                    'hour': int(r['hour']),
+                    'avg_price': float(r['avg_price'])
+                })
+            return by_zone
+        except Exception as e:
+            self.logger.error(f"Error getting all zones month/hour: {str(e)}")
+            return {}
 
     def get_bx_trend_by_zone(
         self,
@@ -287,6 +325,8 @@ class BXCalculator:
         """
         zones = ['NP15', 'SP15', 'ZP26', 'Overall']
         results = {}
+        bx = int(bx)
+        year = int(year)
         
         if aggregation == 'weekly':
             date_expr = "DATE_TRUNC('week', opr_dt)"
@@ -295,26 +335,27 @@ class BXCalculator:
         else:
             date_expr = "opr_dt"
         
-        for zone in zones:
-            query = f"""
-                SELECT 
-                    {date_expr} as period,
-                    AVG(avg_price) as avg_price,
-                    COUNT(*) as day_count
-                FROM bx_daily_summary
-                WHERE bx_type = $1 
-                  AND node = $2
-                  AND EXTRACT(YEAR FROM opr_dt) = $3
-                GROUP BY {date_expr}
-                ORDER BY period
-            """
-            try:
-                data = self._md_query(query, [bx, zone, year])
+        query = f"""
+            SELECT 
+                node as zone,
+                {date_expr} as period,
+                AVG(avg_price) as avg_price,
+                COUNT(*) as day_count
+            FROM bx_daily_summary
+            WHERE bx_type = {bx}
+              AND node IN ('NP15', 'SP15', 'ZP26', 'Overall')
+              AND EXTRACT(YEAR FROM opr_dt) = {year}
+            GROUP BY node, {date_expr}
+            ORDER BY node, period
+        """
+        try:
+            data = self._md_query(query)
+            for zone in zones:
                 results[zone] = [
                     {'date': r['period'], 'avg_price': float(r['avg_price'])}
-                    for r in data
-                ] if data else []
-            except Exception as e:
+                    for r in data if r.get('zone') == zone
+                ]
+        except Exception as e:
                 self.logger.error(f"Error getting BX trend for {zone}: {e}")
                 results[zone] = []
         

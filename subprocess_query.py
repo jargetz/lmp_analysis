@@ -70,6 +70,19 @@ def run_query():
         elif query_type == 'unique_nodes':
             limit = int(sys.argv[2]) if len(sys.argv) > 2 else 5
             result = get_unique_nodes(conn, limit)
+        elif query_type == 'available_years':
+            result = get_available_years(conn)
+        elif query_type == 'all_nodes_from_summary':
+            result = get_all_nodes_from_summary(conn)
+        elif query_type == 'raw_sql':
+            sql = sys.argv[2]
+            params = json.loads(sys.argv[3]) if len(sys.argv) > 3 else None
+            result = run_raw_sql(conn, sql, params)
+        elif query_type == 'init_dashboard':
+            result = init_dashboard(conn)
+        elif query_type == 'multi_sql':
+            queries = json.loads(sys.argv[2])
+            result = run_multi_sql(conn, queries)
         else:
             result = {'error': f'Unknown query type: {query_type}'}
         
@@ -324,6 +337,80 @@ def get_full_year_8760(conn, nodes, year):
     result = conn.execute(query).fetchdf()
     return [{'opr_dt': str(r['opr_dt']), 'opr_hr': int(r['opr_hr']), 'avg_price': float(r['avg_price'])} 
             for _, r in result.iterrows()]
+
+def init_dashboard(conn):
+    """Get all data needed for initial dashboard load in one call"""
+    result = {}
+    result['data_summary'] = get_data_summary(conn)
+    result['available_years'] = get_available_years(conn)
+    result['all_nodes'] = get_all_nodes_from_summary(conn)
+    return result
+
+def run_multi_sql(conn, queries):
+    """Run multiple SQL queries in a single subprocess call. 
+    queries is a dict of {key: sql_string} or {key: [sql_string, params]}"""
+    results = {}
+    for key, q in queries.items():
+        try:
+            if isinstance(q, list):
+                sql, params = q[0], q[1] if len(q) > 1 else None
+            else:
+                sql, params = q, None
+            rows = run_raw_sql(conn, sql, params)
+            results[key] = rows
+        except Exception as e:
+            results[key] = {'error': str(e)}
+    return results
+
+def run_raw_sql(conn, sql, params=None):
+    """Run arbitrary SQL and return results as list of dicts"""
+    import datetime
+    if params:
+        result = conn.execute(sql, params).fetchdf()
+    else:
+        result = conn.execute(sql).fetchdf()
+    if result.empty:
+        return []
+    rows = []
+    for _, row in result.iterrows():
+        d = {}
+        for col in result.columns:
+            val = row[col]
+            if isinstance(val, (datetime.date, datetime.datetime)):
+                d[col] = str(val)
+            elif isinstance(val, float) and pd.isna(val):
+                d[col] = None
+            elif hasattr(val, 'item'):
+                d[col] = val.item()
+            else:
+                d[col] = val
+        rows.append(d)
+    return rows
+
+def get_available_years(conn):
+    """Get list of years with data available"""
+    try:
+        result = conn.execute(
+            "SELECT DISTINCT EXTRACT(YEAR FROM opr_dt)::INTEGER as year FROM zone_hourly_lmp ORDER BY year DESC"
+        ).fetchdf()
+        if not result.empty:
+            return sorted(result['year'].tolist(), reverse=True)
+    except Exception:
+        pass
+    try:
+        result = conn.execute(
+            "SELECT DISTINCT EXTRACT(YEAR FROM opr_dt)::INTEGER as year FROM bx_daily_summary ORDER BY year DESC"
+        ).fetchdf()
+        if not result.empty:
+            return sorted(result['year'].tolist(), reverse=True)
+    except Exception:
+        pass
+    return [2024]
+
+def get_all_nodes_from_summary(conn):
+    """Get all distinct node names from bx_daily_summary"""
+    result = conn.execute("SELECT DISTINCT node FROM bx_daily_summary ORDER BY node").fetchdf()
+    return result['node'].tolist() if not result.empty else []
 
 def get_data_summary(conn):
     """Get summary stats from bx_daily_summary table"""

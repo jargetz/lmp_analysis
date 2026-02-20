@@ -62,16 +62,29 @@ def main():
     if 's3_loader' not in st.session_state:
         st.session_state.s3_loader = S3DataLoader()
     
-    # Sidebar for data management and info
+    if 'init_data' not in st.session_state:
+        import subprocess
+        import json as json_mod
+        try:
+            r = subprocess.run(['python3', 'subprocess_query.py', 'init_dashboard'],
+                               capture_output=True, text=True, timeout=30)
+            if r.returncode == 0 and r.stdout.strip():
+                init_data = json_mod.loads(r.stdout.strip())
+                st.session_state.db_summary = init_data.get('data_summary', {})
+                st.session_state.init_years = init_data.get('available_years', [2024])
+                st.session_state.init_nodes = init_data.get('all_nodes', [])
+            else:
+                st.session_state.db_summary = {}
+                st.session_state.init_years = [2024]
+                st.session_state.init_nodes = []
+        except Exception:
+            st.session_state.db_summary = {}
+            st.session_state.init_years = [2024]
+            st.session_state.init_nodes = []
+        st.session_state.init_data = True
+    
     with st.sidebar:
         st.header("Data Status")
-        
-        # Cache database status check (runs once per session)
-        if 'db_summary' not in st.session_state:
-            try:
-                st.session_state.db_summary = st.session_state.processor.get_data_summary_from_db()
-            except Exception:
-                st.session_state.db_summary = None
         
         summary = st.session_state.db_summary
         try:
@@ -192,15 +205,13 @@ def render_dashboard_tab():
     
     This is the primary interface for exploring LMP data.
     """
-    # Preload all cached data at startup (runs once)
     if 'dashboard_initialized' not in st.session_state:
-        with st.spinner("Loading dashboard data..."):
-            bx_calc_init = BXCalculator()
-            st.session_state.bx_calc = bx_calc_init
-            st.session_state.all_nodes = bx_calc_init.get_all_nodes()
-            st.session_state.available_years = bx_calc_init.get_available_years() or [2024]
-            st.session_state.parquet_years = bx_calc_init.get_available_parquet_years() or [2024]
-            st.session_state.dashboard_initialized = True
+        bx_calc_init = BXCalculator()
+        st.session_state.bx_calc = bx_calc_init
+        st.session_state.available_years = st.session_state.get('init_years', [2024])
+        st.session_state.parquet_years = st.session_state.get('init_years', [2024])
+        st.session_state.all_nodes = st.session_state.get('init_nodes', [])
+        st.session_state.dashboard_initialized = True
     
     st.header("LMP Dashboard")
     st.markdown("Analyze electricity pricing by zone or specific nodes")
@@ -448,27 +459,23 @@ def render_dashboard_tab():
                         else:
                             st.metric(f"{zone_name} (Gen)", "N/A")
             
-            # Month x Hour heatmap (from pre-computed summary table)
             st.subheader("Averages - Day Ahead LMP")
             heatmap_zones = ['Overall', 'NP15', 'SP15', 'ZP26']
             heatmap_tabs = st.tabs(heatmap_zones)
             
+            all_heatmap_key = f"all_heatmaps_{selected_year}"
+            if all_heatmap_key not in st.session_state:
+                st.session_state[all_heatmap_key] = bx_calc.get_all_zones_month_hour(year=selected_year)
+            all_heatmaps = st.session_state[all_heatmap_key]
+            
             for tab, zone_name in zip(heatmap_tabs, heatmap_zones):
                 with tab:
-                    heatmap_cache_key = f"heatmap_{zone_name}_{selected_year}"
-                    if heatmap_cache_key not in st.session_state:
-                        zone_filter = None if zone_name == 'Overall' else zone_name
-                        st.session_state[heatmap_cache_key] = bx_calc.get_month_hour_averages(
-                            zone=zone_filter,
-                            year=selected_year
-                        )
-                    heatmap_data = st.session_state[heatmap_cache_key]
-                    
+                    heatmap_data = all_heatmaps.get(zone_name, [])
                     if heatmap_data:
                         fig = create_month_hour_heatmap(heatmap_data, zone=zone_name)
                         st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'zone_heatmap_{zone_name}_{selected_year}'}})
                     else:
-                        st.info("No heatmap data available yet. Run backfill_month_hour.py to populate.")
+                        st.info("No heatmap data available yet.")
             
             # BX trend chart by zone (cached)
             bx_trend_cache_key = f"bx_trend_zone_{selected_bx}_{selected_year}"
