@@ -18,7 +18,6 @@ import os
 from data_processor import CAISODataProcessor
 from analytics import LMPAnalytics, get_registered_analytics
 from chatbot import LMPChatbot
-from s3_data_loader import S3DataLoader
 from node_zone_mapping import NodeZoneMapper, VALID_ZONES
 from bx_calculator import BXCalculator, SUPPORTED_BX_VALUES
 from charts import (
@@ -59,8 +58,6 @@ def main():
         st.session_state.chat_history = []
     if 'data_loaded' not in st.session_state:
         st.session_state.data_loaded = False
-    if 's3_loader' not in st.session_state:
-        st.session_state.s3_loader = S3DataLoader()
     
     if 'init_data' not in st.session_state:
         import subprocess
@@ -87,99 +84,43 @@ def main():
         st.header("Data Status")
         
         summary = st.session_state.db_summary
-        try:
-            if summary and summary.get('total_records', 0) > 0:
-                st.success("✅ Data loaded and ready")
-                # Calculate days from records: 4 zones × 7 BX types = 28 records per day
-                days_loaded = summary.get('total_records', 0) // 28
-                st.metric("Days Loaded", f"{days_loaded}")
-                if summary.get('earliest_date') and summary.get('latest_date'):
-                    earliest = summary['earliest_date']
-                    latest = summary['latest_date']
-                    if hasattr(earliest, 'strftime'):
-                        earliest = earliest.strftime('%Y-%m-%d')
-                    if hasattr(latest, 'strftime'):
-                        latest = latest.strftime('%Y-%m-%d')
-                    st.caption(f"{earliest} to {latest}")
-                st.caption("Zone aggregates in DB, raw data in S3")
-                st.session_state.data_loaded = True
-            else:
-                st.warning("⚠️ No data in database")
-                st.info("Use the admin button below to load data from S3")
-                st.session_state.data_loaded = False
+        if summary and summary.get('total_records', 0) > 0:
+            st.success("Data loaded and ready")
+            days_loaded = summary.get('total_records', 0) // 28
+            st.metric("Days Loaded", f"{days_loaded}")
+            if summary.get('earliest_date') and summary.get('latest_date'):
+                earliest = summary['earliest_date']
+                latest = summary['latest_date']
+                if hasattr(earliest, 'strftime'):
+                    earliest = earliest.strftime('%Y-%m-%d')
+                if hasattr(latest, 'strftime'):
+                    latest = latest.strftime('%Y-%m-%d')
+                st.caption(f"{earliest} to {latest}")
+            st.caption("Zone aggregates in MotherDuck, raw data in S3 Parquet")
+            st.session_state.data_loaded = True
             
-            # Admin data refresh option (explicit action)
-            st.subheader("🔧 Admin Functions")
-            
-            # Simple admin protection
-            admin_password = st.text_input("Admin Password:", type="password", help="Required for S3 data operations")
-            
-            if admin_password == os.getenv('ADMIN_PASSWORD', 'admin123'):
-                if st.button("🔄 Load Data from S3", help="Admin: Download and process all CAISO files from S3 bucket"):
-                        def progress_callback(current, total, message):
-                            st.progress(current / total, text=message)
-                        
-                        result = st.session_state.s3_loader.load_all_data(progress_callback)
-                        
-                        if result['success']:
-                            # Show data loading results
-                            success_msg = f"✅ **Data Loading**: Processed {result['processed_files']} files, skipped {result.get('skipped_files', 0)} duplicates"
-                            if result['total_records'] > 0:
-                                success_msg += f", added {result['total_records']:,} new records"
-                            st.success(success_msg)
-                            
-                            # Show preprocessing results
-                            preprocessing = result.get('preprocessing', {})
-                            if preprocessing.get('success'):
-                                preprocess_msg = f"✅ **B6/B8 Preprocessing**: Processed {preprocessing.get('processed_dates', 0)} days"
-                                preprocess_msg += f", created {preprocessing.get('total_b6_records', 0)} B6 and {preprocessing.get('total_b8_records', 0)} B8 records"
-                                st.success(preprocess_msg)
-                            else:
-                                st.warning(f"⚠️ **Preprocessing Issues**: {preprocessing.get('error', 'Unknown preprocessing error')}")
-                            
-                            # Show any errors
-                            if result.get('errors'):
-                                st.warning(f"⚠️ **Encountered {len(result['errors'])} errors**:")
-                                for error in result['errors'][:3]:  # Show first 3 errors
-                                    st.text(f"• {error}")
-                                if len(result['errors']) > 3:
-                                    st.text(f"... and {len(result['errors']) - 3} more errors")
-                            
-                            st.session_state.data_loaded = True
-                            st.rerun()
-                        else:
-                            st.error(f"❌ Failed to load data: {result.get('error', 'Unknown error')}")
-            else:
-                st.button("🔄 Load Data from S3", disabled=True, help="Enter admin password to enable")
-                
-        except Exception as e:
-            st.error(f"Error checking database status: {str(e)}")
-            st.session_state.data_loaded = False
-        
-        # Additional database details (if data exists) - use cached summary
-        if st.session_state.data_loaded and summary:
-            st.subheader("Database Details")
-            st.metric("Unique Nodes", summary.get('unique_nodes', 0))
-            
+            st.subheader("Data Details")
+            st.metric("Unique Zones", summary.get('unique_nodes', 0))
             if summary.get('earliest_date') and summary.get('latest_date'):
                 st.markdown("**Date Range**")
-                st.markdown(f"📅 Start: {summary['earliest_date']}")
-                st.markdown(f"📅 End: {summary['latest_date']}")
+                st.markdown(f"Start: {summary['earliest_date']}")
+                st.markdown(f"End: {summary['latest_date']}")
+        else:
+            st.warning("No data available")
+            st.caption("MotherDuck database may be loading...")
+            st.session_state.data_loaded = False
     
     # Main content area
     if not st.session_state.data_loaded:
-        st.info("👈 Click 'Refresh Data from S3' in the sidebar to load CAISO data")
+        st.info("Connecting to MotherDuck database... If data doesn't appear, please refresh the page.")
         
-        # Show sample questions that can be asked
-        st.header("What You Can Ask")
+        st.header("Sample Questions")
         st.markdown("""
-        Once data is loaded, you can ask questions like:
+        Once data loads, you can ask the AI Assistant questions like:
         - What are the 10 cheapest hours at node SLAP_PGE2?
         - Show me the nodes with the lowest 10% of prices (B10)
-        - Which nodes have the lowest congestion component during peak hours?
         - What are the average prices by hour of day?
         - Show me the B6 and B8 hours (cheapest 6 and 8 hours) for each node
-        - Find the hours with the highest price volatility
         """)
         
     else:
