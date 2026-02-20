@@ -80,6 +80,13 @@ def run_query():
             result = run_raw_sql(conn, sql, params)
         elif query_type == 'init_dashboard':
             result = init_dashboard(conn)
+        elif query_type == 'zone_daily_bx':
+            bx = int(sys.argv[2])
+            year = int(sys.argv[3])
+            result = get_zone_daily_bx(conn, bx, year)
+        elif query_type == 'missing_days':
+            year = int(sys.argv[2])
+            result = get_missing_days(conn, year)
         elif query_type == 'multi_sql':
             queries = json.loads(sys.argv[2])
             result = run_multi_sql(conn, queries)
@@ -337,6 +344,67 @@ def get_full_year_8760(conn, nodes, year):
     result = conn.execute(query).fetchdf()
     return [{'opr_dt': str(r['opr_dt']), 'opr_hr': int(r['opr_hr']), 'avg_price': float(r['avg_price'])} 
             for _, r in result.iterrows()]
+
+def get_zone_daily_bx(conn, bx, year):
+    """Compute daily BX values for NP15, SP15, ZP26 from zone_hourly_lmp"""
+    import datetime
+    query = f"""
+        WITH ranked AS (
+            SELECT zone, opr_dt, hour_num, lmp,
+                ROW_NUMBER() OVER (PARTITION BY zone, opr_dt ORDER BY lmp ASC) as rn
+            FROM zone_hourly_lmp
+            WHERE EXTRACT(YEAR FROM opr_dt) = {int(year)}
+              AND hour_num <= 24
+        )
+        SELECT zone, CAST(opr_dt AS VARCHAR) as opr_dt, 
+               ROUND(AVG(lmp), 5) as bx_price,
+               COUNT(*) as hours_used
+        FROM ranked 
+        WHERE rn <= {int(bx)}
+        GROUP BY zone, opr_dt
+        ORDER BY zone, opr_dt
+    """
+    result = conn.execute(query).fetchdf()
+    if result.empty:
+        return []
+    rows = []
+    for _, row in result.iterrows():
+        rows.append({
+            'zone': str(row['zone']),
+            'opr_dt': str(row['opr_dt']),
+            'bx_price': float(row['bx_price']),
+            'hours_used': int(row['hours_used'])
+        })
+    return rows
+
+def get_missing_days(conn, year):
+    """Find missing days in zone_hourly_lmp for a given year"""
+    from datetime import date, timedelta
+    query = f"""
+        SELECT DISTINCT CAST(opr_dt AS VARCHAR) as dt 
+        FROM zone_hourly_lmp 
+        WHERE EXTRACT(YEAR FROM opr_dt) = {int(year)}
+        ORDER BY dt
+    """
+    result = conn.execute(query).fetchdf()
+    loaded = set(result['dt'].tolist()) if not result.empty else set()
+    
+    start = date(int(year), 1, 1)
+    end = date(int(year), 12, 31)
+    all_days = set()
+    d = start
+    while d <= end:
+        all_days.add(d.isoformat())
+        d += timedelta(days=1)
+    
+    missing = sorted(all_days - loaded)
+    return {
+        'year': int(year),
+        'total_expected': len(all_days),
+        'total_loaded': len(loaded),
+        'missing_count': len(missing),
+        'missing_dates': missing
+    }
 
 def get_all_individual_nodes(conn):
     """Get all distinct node names from node_zone_mapping + generator_bx_summary for node search"""

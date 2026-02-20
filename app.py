@@ -127,14 +127,19 @@ def main():
         """)
         
     else:
-        # Create tabs: Dashboard first (primary), then AI Assistant
-        tab_dashboard, tab_ai = st.tabs(["📊 Dashboard", "💬 AI Assistant"])
+        tab_dashboard, tab_methodology, tab_ai = st.tabs(["📊 Dashboard", "📋 Methodology & Data", "💬 AI Assistant"])
         
         # =====================================================================
         # DASHBOARD TAB - Primary interface for BX analysis with zone filtering
         # =====================================================================
         with tab_dashboard:
             render_dashboard_tab()
+        
+        # =====================================================================
+        # METHODOLOGY & DATA TAB
+        # =====================================================================
+        with tab_methodology:
+            render_methodology_tab()
         
         # =====================================================================
         # AI ASSISTANT TAB - Natural language queries (existing chatbot)
@@ -587,6 +592,160 @@ conn.close()
     except Exception as e:
         st.warning(f"Could not load BX statistics: {str(e)}")
         st.info("Make sure LMP data is loaded and BX calculations have been run.")
+
+
+def render_methodology_tab():
+    """Render the Methodology & Data tab with calculation explanations, missing data report, and daily BX tables."""
+    import subprocess
+    import json as json_mod
+
+    st.header("Methodology")
+
+    with st.expander("BX Calculation Methodology", expanded=True):
+        st.markdown("""
+**BX (Cheapest X Hours) Calculation**
+
+For each operating day, the BX value is computed as follows:
+
+1. **Source Data**: Hourly LMP prices from CAISO Day Ahead market
+2. **Operating Hour**: Uses CAISO's `OPR_HR` column (1-24, Pacific Prevailing Time). 
+   This is **never** derived from `INTERVALSTARTTIME_GMT` (which is UTC/GMT and would cause a 7-8 hour offset)
+3. **Hour 25 (DST)**: On fall-back DST days, CAISO reports a 25th hour. This tool **filters out hour 25** from BX calculations to keep a consistent 24-hour basis
+4. **Ranking**: All 24 hours for a given day and zone/node are sorted by LMP price ascending
+5. **Selection**: The cheapest X hours are selected (e.g., B8 = cheapest 8 hours)
+6. **Daily BX Price**: Simple average of the selected X cheapest hours' LMP values
+7. **Monthly/Annual Average**: Simple average of daily BX values (each day weighted equally, regardless of month length)
+
+**Example**: If B8 for SP15 on Jan 1 selects hours with prices [$5, $8, $10, $12, $15, $18, $20, $22], 
+the B8 price for that day = average($5 + $8 + $10 + $12 + $15 + $18 + $20 + $22) / 8 = $13.75/MWh
+""")
+
+    with st.expander("EIA Zone Averaging", expanded=True):
+        st.markdown("""
+**Zone Price Source**
+
+The zone-level hourly prices (NP15, SP15, ZP26) come from CAISO's published **EIA zone aggregate** files 
+(PRC_LMP dataset, `LMP_TYPE = LMP`). These are CAISO's own load-weighted average prices for each zone, 
+not computed by this tool.
+
+- **NP15**: Northern California (Pacific Gas & Electric territory)
+- **SP15**: Southern California (Southern California Edison territory)  
+- **ZP26**: Central California (Zone P26, between NP15 and SP15)
+
+**Generator Settlement Nodes** (TH_NP15_GEN-APND, TH_SP15_GEN-APND, TH_ZP26_GEN-APND) are separate 
+CAISO-published aggregate prices representing generation-weighted averages for each zone. These may 
+differ from the EIA zone averages because they weight by generation output rather than load.
+
+**Missing Data Handling**: When EIA data is missing for certain days, this tool computes averages using 
+only the days that have data (simple average). It does **not** interpolate, weight by month length, or 
+fill in missing days. If you need month-weighted averages for months with missing data, you would need 
+to apply that adjustment to the daily values provided below.
+""")
+
+    with st.expander("Data Sources & Storage", expanded=False):
+        st.markdown("""
+**Data Pipeline**
+
+- **Source**: CAISO OASIS Day Ahead LMP files (ZIP format, one per day)
+- **Raw Storage**: Parquet files in AWS S3, partitioned by year/month/date
+- **Analytics Storage**: MotherDuck (DuckDB cloud) for zone-level hourly prices and BX summaries
+- **Zone Mapping**: EIA node-to-zone mapping loaded into MotherDuck
+
+**Tables Used**
+- `zone_hourly_lmp`: Hourly LMP by zone (NP15, SP15, ZP26) with congestion/energy/loss components
+- `bx_daily_summary`: Pre-computed daily BX values for individual nodes
+- `generator_bx_summary`: BX values for generator settlement nodes (TH_*_GEN-APND)
+- `node_zone_mapping`: EIA mapping of individual pricing nodes to zones
+""")
+
+    st.divider()
+
+    st.header("Data Coverage Report")
+
+    available_years = st.session_state.get('init_years', [2024])
+    selected_year = st.selectbox("Select Year", available_years, key="methodology_year")
+
+    try:
+        r = subprocess.run(
+            ['python3', 'subprocess_query.py', 'missing_days', str(selected_year)],
+            capture_output=True, text=True, timeout=30
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            missing_data = json_mod.loads(r.stdout.strip())
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Days Expected", missing_data['total_expected'])
+            with col2:
+                st.metric("Days Loaded", missing_data['total_loaded'])
+            with col3:
+                st.metric("Days Missing", missing_data['missing_count'])
+
+            if missing_data['missing_count'] > 0:
+                st.warning(f"{missing_data['missing_count']} days missing from zone hourly data for {selected_year}")
+                missing_df = pd.DataFrame({'Missing Date': missing_data['missing_dates']})
+                missing_df['Month'] = pd.to_datetime(missing_df['Missing Date']).dt.strftime('%B')
+                month_counts = missing_df['Month'].value_counts().sort_index()
+                st.markdown("**Missing days by month:**")
+                for month, count in month_counts.items():
+                    dates_in_month = missing_df[missing_df['Month'] == month]['Missing Date'].tolist()
+                    st.markdown(f"- **{month}**: {count} days ({', '.join(dates_in_month)})")
+            else:
+                st.success(f"All {missing_data['total_expected']} days loaded for {selected_year}")
+        else:
+            st.error("Could not retrieve data coverage information")
+    except Exception as e:
+        st.error(f"Error checking data coverage: {str(e)}")
+
+    st.divider()
+
+    st.header("Daily BX Values by Zone")
+    st.markdown("Daily BX prices for EIA zones, computed from `zone_hourly_lmp`. Download as CSV to compare with your own calculations.")
+
+    bx_select = st.selectbox("BX Type", [4, 5, 6, 7, 8, 9, 10], index=4, key="methodology_bx",
+                             format_func=lambda x: f"B{x} (Cheapest {x} Hours)")
+
+    if st.button("Load Daily BX Data", type="primary"):
+        with st.spinner(f"Computing daily B{bx_select} for all zones in {selected_year}..."):
+            try:
+                r = subprocess.run(
+                    ['python3', 'subprocess_query.py', 'zone_daily_bx', str(bx_select), str(selected_year)],
+                    capture_output=True, text=True, timeout=60
+                )
+                if r.returncode == 0 and r.stdout.strip():
+                    rows = json_mod.loads(r.stdout.strip())
+                    if isinstance(rows, list) and len(rows) > 0:
+                        df = pd.DataFrame(rows)
+                        pivot = df.pivot(index='opr_dt', columns='zone', values='bx_price')
+                        pivot = pivot.sort_index()
+                        pivot.index.name = 'Date'
+
+                        st.subheader(f"B{bx_select} Annual Averages ({selected_year})")
+                        avg_cols = st.columns(len(pivot.columns))
+                        for i, zone in enumerate(sorted(pivot.columns)):
+                            with avg_cols[i]:
+                                avg_val = pivot[zone].mean()
+                                st.metric(zone, f"${avg_val:.2f}/MWh")
+
+                        st.subheader(f"Daily B{bx_select} Values")
+                        display_df = pivot.copy()
+                        for col in display_df.columns:
+                            display_df[col] = display_df[col].apply(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
+                        st.dataframe(display_df, use_container_width=True, height=400)
+
+                        csv = pivot.to_csv()
+                        st.download_button(
+                            label=f"Download B{bx_select} Daily Data as CSV",
+                            data=csv,
+                            file_name=f"B{bx_select}_daily_{selected_year}.csv",
+                            mime="text/csv"
+                        )
+                    else:
+                        st.warning(f"No B{bx_select} data found for {selected_year}")
+                else:
+                    error_msg = r.stderr if r.stderr else "Unknown error"
+                    st.error(f"Error computing BX data: {error_msg}")
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
 
 
 def render_ai_assistant_tab():
