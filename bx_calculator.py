@@ -291,7 +291,7 @@ class BXCalculator:
                 AVG(lmp) as avg_price
             FROM zone_hourly_lmp
             {where_clause}
-            GROUP BY zone, 1, hour_num
+            GROUP BY zone, month, hour_num
             ORDER BY zone, month, hour
         """
         
