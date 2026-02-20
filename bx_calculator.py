@@ -292,6 +292,15 @@ class BXCalculator:
             FROM zone_hourly_lmp
             {where_clause}
             GROUP BY zone, month, hour_num
+            UNION ALL
+            SELECT 
+                'Overall' as zone,
+                EXTRACT(MONTH FROM opr_dt)::INT as month, 
+                hour_num as hour, 
+                AVG(lmp) as avg_price
+            FROM zone_hourly_lmp
+            {where_clause}
+            GROUP BY month, hour_num
             ORDER BY zone, month, hour
         """
         
