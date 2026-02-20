@@ -149,18 +149,43 @@ class BXCalculator:
             end_date = date(year, month, last_day)
             conditions.append(f"opr_dt >= '{start_date}' AND opr_dt <= '{end_date}'")
         
-        query = f"""
-            SELECT 
-                node,
-                AVG(avg_price) as avg_bx_price,
-                MIN(avg_price) as min_bx_price,
-                MAX(avg_price) as max_bx_price,
-                COUNT(*) as day_count
-            FROM bx_daily_summary
-            WHERE {' AND '.join(conditions)}
-                AND node IN ('NP15', 'SP15', 'ZP26', 'Overall')
-            GROUP BY node
-        """
+        if time_period == "Monthly":
+            query = f"""
+                SELECT 
+                    node,
+                    AVG(avg_price) as avg_bx_price,
+                    MIN(avg_price) as min_bx_price,
+                    MAX(avg_price) as max_bx_price,
+                    COUNT(*) as day_count
+                FROM bx_daily_summary
+                WHERE {' AND '.join(conditions)}
+                    AND node IN ('NP15', 'SP15', 'ZP26', 'Overall')
+                GROUP BY node
+            """
+        else:
+            query = f"""
+                WITH monthly_avgs AS (
+                    SELECT 
+                        node,
+                        EXTRACT(MONTH FROM opr_dt) as month_num,
+                        AVG(avg_price) as monthly_avg,
+                        MIN(avg_price) as monthly_min,
+                        MAX(avg_price) as monthly_max,
+                        COUNT(*) as days_in_month
+                    FROM bx_daily_summary
+                    WHERE {' AND '.join(conditions)}
+                        AND node IN ('NP15', 'SP15', 'ZP26', 'Overall')
+                    GROUP BY node, EXTRACT(MONTH FROM opr_dt)
+                )
+                SELECT 
+                    node,
+                    AVG(monthly_avg) as avg_bx_price,
+                    MIN(monthly_min) as min_bx_price,
+                    MAX(monthly_max) as max_bx_price,
+                    SUM(days_in_month) as day_count
+                FROM monthly_avgs
+                GROUP BY node
+            """
         
         try:
             rows = self._md_query(query)
@@ -201,15 +226,27 @@ class BXCalculator:
             conditions.append(f"zone = '{zone}'")
         
         query = f"""
+            WITH monthly_avgs AS (
+                SELECT 
+                    zone,
+                    node,
+                    EXTRACT(MONTH FROM opr_dt) as month_num,
+                    AVG(avg_price) as monthly_avg,
+                    MIN(avg_price) as monthly_min,
+                    MAX(avg_price) as monthly_max,
+                    COUNT(*) as days_in_month
+                FROM generator_bx_summary
+                WHERE {' AND '.join(conditions)}
+                GROUP BY zone, node, EXTRACT(MONTH FROM opr_dt)
+            )
             SELECT 
                 zone,
                 node,
-                AVG(avg_price) as avg_price,
-                MIN(avg_price) as min_price,
-                MAX(avg_price) as max_price,
-                COUNT(*) as day_count
-            FROM generator_bx_summary
-            WHERE {' AND '.join(conditions)}
+                AVG(monthly_avg) as avg_price,
+                MIN(monthly_min) as min_price,
+                MAX(monthly_max) as max_price,
+                SUM(days_in_month) as day_count
+            FROM monthly_avgs
             GROUP BY zone, node
             ORDER BY zone
         """

@@ -346,23 +346,15 @@ def get_full_year_8760(conn, nodes, year):
             for _, r in result.iterrows()]
 
 def get_zone_daily_bx(conn, bx, year):
-    """Compute daily BX values for NP15, SP15, ZP26 from zone_hourly_lmp"""
-    import datetime
+    """Get daily BX values for NP15, SP15, ZP26 from bx_daily_summary"""
     query = f"""
-        WITH ranked AS (
-            SELECT zone, opr_dt, hour_num, lmp,
-                ROW_NUMBER() OVER (PARTITION BY zone, opr_dt ORDER BY lmp ASC) as rn
-            FROM zone_hourly_lmp
-            WHERE EXTRACT(YEAR FROM opr_dt) = {int(year)}
-              AND hour_num <= 24
-        )
-        SELECT zone, CAST(opr_dt AS VARCHAR) as opr_dt, 
-               ROUND(AVG(lmp), 5) as bx_price,
-               COUNT(*) as hours_used
-        FROM ranked 
-        WHERE rn <= {int(bx)}
-        GROUP BY zone, opr_dt
-        ORDER BY zone, opr_dt
+        SELECT node as zone, CAST(opr_dt AS VARCHAR) as opr_dt, 
+               avg_price as bx_price
+        FROM bx_daily_summary
+        WHERE bx_type = {int(bx)}
+          AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
+          AND node IN ('NP15', 'SP15', 'ZP26')
+        ORDER BY node, opr_dt
     """
     result = conn.execute(query).fetchdf()
     if result.empty:
@@ -372,8 +364,7 @@ def get_zone_daily_bx(conn, bx, year):
         rows.append({
             'zone': str(row['zone']),
             'opr_dt': str(row['opr_dt']),
-            'bx_price': float(row['bx_price']),
-            'hours_used': int(row['hours_used'])
+            'bx_price': float(row['bx_price'])
         })
     return rows
 

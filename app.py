@@ -378,7 +378,7 @@ def render_dashboard_tab():
                         st.metric(
                             f"{zone_name} (Load Avg)",
                             f"${stats['avg_price']:.2f}/MWh",
-                            help=f"EIA load-weighted avg. Nodes: {stats.get('node_count', 0):,}"
+                            help=f"Monthly weighted EIA avg. Days: {stats.get('day_count', 0)}"
                         )
                     else:
                         st.metric(zone_name, "N/A")
@@ -614,10 +614,13 @@ For each operating day, the BX value is computed as follows:
 4. **Ranking**: All 24 hours for a given day and zone/node are sorted by LMP price ascending
 5. **Selection**: The cheapest X hours are selected (e.g., B8 = cheapest 8 hours)
 6. **Daily BX Price**: Simple average of the selected X cheapest hours' LMP values
-7. **Monthly/Annual Average**: Simple average of daily BX values (each day weighted equally, regardless of month length)
+7. **Monthly Average**: Simple average of daily BX values within each month
+8. **Annual Average (Monthly Weighted)**: First compute each month's average (step 7), then average the 12 monthly averages. This gives each month equal weight (1/12th), regardless of how many days it has or how many days have data.
+
+**Why monthly weighting?** With missing data concentrated in certain months (e.g., 17 of 29 February days missing in 2024), a simple annual average under-represents months with missing data. Monthly weighting ensures each month contributes equally.
 
 **Example**: If B8 for SP15 on Jan 1 selects hours with prices [$5, $8, $10, $12, $15, $18, $20, $22], 
-the B8 price for that day = average($5 + $8 + $10 + $12 + $15 + $18 + $20 + $22) / 8 = $13.75/MWh
+the B8 price for that day = ($5 + $8 + $10 + $12 + $15 + $18 + $20 + $22) / 8 = $13.75/MWh
 """)
 
     with st.expander("EIA Zone Averaging", expanded=True):
@@ -636,10 +639,10 @@ not computed by this tool.
 CAISO-published aggregate prices representing generation-weighted averages for each zone. These may 
 differ from the EIA zone averages because they weight by generation output rather than load.
 
-**Missing Data Handling**: When EIA data is missing for certain days, this tool computes averages using 
-only the days that have data (simple average). It does **not** interpolate, weight by month length, or 
-fill in missing days. If you need month-weighted averages for months with missing data, you would need 
-to apply that adjustment to the daily values provided below.
+**Missing Data Handling**: When EIA data is missing for certain days, each month's average is computed 
+using only the days that have data. The annual average then weights each month equally (1/12th). 
+This tool does **not** interpolate or fill in missing days — it averages what's available within 
+each month.
 """)
 
     with st.expander("Data Sources & Storage", expanded=False):
@@ -719,12 +722,18 @@ to apply that adjustment to the daily values provided below.
                         pivot = pivot.sort_index()
                         pivot.index.name = 'Date'
 
-                        st.subheader(f"B{bx_select} Annual Averages ({selected_year})")
+                        st.subheader(f"B{bx_select} Annual Averages — Monthly Weighted ({selected_year})")
+                        df['opr_dt_parsed'] = pd.to_datetime(df['opr_dt'])
+                        df['month'] = df['opr_dt_parsed'].dt.month
                         avg_cols = st.columns(len(pivot.columns))
                         for i, zone in enumerate(sorted(pivot.columns)):
                             with avg_cols[i]:
-                                avg_val = pivot[zone].mean()
-                                st.metric(zone, f"${avg_val:.2f}/MWh")
+                                zone_df = df[df['zone'] == zone]
+                                monthly_avgs = zone_df.groupby('month')['bx_price'].mean()
+                                monthly_weighted = monthly_avgs.mean()
+                                simple_avg = zone_df['bx_price'].mean()
+                                st.metric(zone, f"${monthly_weighted:.2f}/MWh",
+                                          help=f"Monthly weighted avg. Simple avg: ${simple_avg:.2f}/MWh. Days: {len(zone_df)}")
 
                         st.subheader(f"Daily B{bx_select} Values")
                         display_df = pivot.copy()
