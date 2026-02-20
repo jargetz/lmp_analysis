@@ -5,84 +5,19 @@ import io
 import csv
 import logging
 from typing import Dict, Any, List, Tuple
-from database import DatabaseManager
 
 class CAISODataProcessor:
-    """Handles processing and cleaning of CAISO LMP data with PostgreSQL storage"""
+    """Handles processing and cleaning of CAISO LMP data"""
     
     def __init__(self):
-        self.required_columns = ['NODE', 'MW', 'OPR_DT', 'OPR_HR']  # Use CAISO's operating date/hour directly
-        self.optional_columns = ['MCC', 'MLC', 'POS']  # Congestion, Loss, Position components
-        self.db = DatabaseManager()
+        self.required_columns = ['NODE', 'MW', 'OPR_DT', 'OPR_HR']
+        self.optional_columns = ['MCC', 'MLC', 'POS']
         self.logger = logging.getLogger(__name__)
         
     def process_csv_content_to_db_fast(self, csv_content: str, source_file: str = "") -> Dict[str, Any]:
-        """Fast CSV processing - lean schema (node, mw, opr_dt, opr_hr, source_file only)
-        
-        CRITICAL: Uses OPR_DT and OPR_HR columns directly from CAISO data.
-        NEVER derive hour from INTERVALSTARTTIME_GMT (it's UTC, causes 8-hour offset).
-        """
-        try:
-            lines = csv_content.strip().split('\n')
-            if len(lines) < 2:
-                return {'records_inserted': 0, 'error': 'Empty or invalid CSV'}
-            
-            reader = csv.reader(lines)
-            header = [col.upper() for col in next(reader)]
-            
-            opr_dt_idx = next((i for i, c in enumerate(header) if c == 'OPR_DT'), None)
-            opr_hr_idx = next((i for i, c in enumerate(header) if c == 'OPR_HR'), None)
-            node_idx = next((i for i, c in enumerate(header) if c == 'NODE' or 'PNODE' in c), None)
-            mw_idx = next((i for i, c in enumerate(header) if c == 'MW'), None)
-            
-            if opr_dt_idx is None or opr_hr_idx is None or node_idx is None or mw_idx is None:
-                return {'records_inserted': 0, 'error': 'Missing required columns (OPR_DT, OPR_HR, NODE, MW)'}
-            
-            output = io.StringIO()
-            writer = csv.writer(output)
-            row_count = 0
-            
-            for row in reader:
-                try:
-                    if len(row) <= max(opr_dt_idx, opr_hr_idx, node_idx, mw_idx):
-                        continue
-                    
-                    opr_dt_str = row[opr_dt_idx].strip()
-                    opr_hr_str = row[opr_hr_idx].strip()
-                    if not opr_dt_str or not opr_hr_str:
-                        continue
-                    
-                    opr_hr = int(opr_hr_str)
-                    
-                    node = row[node_idx].strip()
-                    mw = row[mw_idx].strip()
-                    if not mw or not node:
-                        continue
-                    try:
-                        float(mw)
-                    except:
-                        continue
-                    
-                    writer.writerow([node, mw, opr_dt_str, opr_hr, source_file])
-                    row_count += 1
-                except Exception:
-                    continue
-            
-            if row_count == 0:
-                return {'records_inserted': 0, 'error': 'No valid rows after processing'}
-            
-            output.seek(0)
-            records_inserted = self.db.bulk_insert_lmp_data_raw(output, row_count)
-            
-            return {
-                'records_inserted': records_inserted,
-                'source_file': source_file,
-                'total_rows_processed': row_count
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error in fast CSV processing from {source_file}: {str(e)}")
-            return {'records_inserted': 0, 'error': str(e)}
+        """Legacy method - no longer stores to database. Use parse_csv_to_records instead."""
+        self.logger.warning("process_csv_content_to_db_fast is deprecated. Use parse_csv_to_records() + parquet storage.")
+        return {'records_inserted': 0, 'error': 'Deprecated: raw data now stored as parquet in S3'}
 
     def parse_csv_to_records(self, csv_content: str) -> Tuple[date, List[Dict]]:
         """Parse CSV content and return (operating_date, list of records).
@@ -145,42 +80,9 @@ class CAISODataProcessor:
         return opr_date, records
 
     def process_csv_content_to_db(self, csv_content: str, source_file: str = "") -> Dict[str, Any]:
-        """Process CSV content and store directly in database"""
-        try:
-            # Read CSV from string
-            df = pd.read_csv(io.StringIO(csv_content))
-            
-            # Basic validation
-            if df.empty:
-                return {'records_inserted': 0, 'error': 'Empty CSV file'}
-                
-            # Check if this looks like CAISO LMP data
-            if not self._validate_caiso_format(df):
-                return {'records_inserted': 0, 'error': 'Invalid CAISO LMP format'}
-                
-            # Process the data
-            df = self._standardize_columns(df)
-            df = self._parse_datetime(df)
-            df = self._clean_numeric_columns(df)
-            
-            if df.empty:
-                return {'records_inserted': 0, 'error': 'No valid data after cleaning'}
-            
-            # Add source file tracking
-            df['source_file'] = source_file
-            
-            # Store in database
-            records_inserted = self.db.bulk_insert_lmp_data(df)
-            
-            return {
-                'records_inserted': records_inserted,
-                'source_file': source_file,
-                'total_rows_processed': len(df)
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error processing CSV content from {source_file}: {str(e)}")
-            return {'records_inserted': 0, 'error': str(e)}
+        """Legacy method - no longer stores to database. Use parse_csv_to_records instead."""
+        self.logger.warning("process_csv_content_to_db is deprecated. Use parse_csv_to_records() + parquet storage.")
+        return {'records_inserted': 0, 'error': 'Deprecated: raw data now stored as parquet in S3'}
     
     def process_csv_content(self, csv_content):
         """Process CSV content from string - legacy method for backward compatibility"""
@@ -314,48 +216,22 @@ class CAISODataProcessor:
         return df
     
     def get_data_summary_from_db(self) -> Dict[str, Any]:
-        """Get data summary from database"""
+        """Get data summary from MotherDuck bx_daily_summary table"""
         try:
-            return self.db.get_data_summary()
+            from motherduck_client import get_motherduck_client
+            md = get_motherduck_client(force_new=True)
+            results = md.execute_query("""
+                SELECT 
+                    COUNT(*) as total_records,
+                    COUNT(DISTINCT node) as unique_nodes,
+                    MIN(opr_dt) as earliest_date,
+                    MAX(opr_dt) as latest_date,
+                    AVG(avg_price) as avg_price,
+                    MIN(avg_price) as min_price,
+                    MAX(avg_price) as max_price
+                FROM bx_daily_summary
+            """)
+            return results[0] if results else {}
         except Exception as e:
-            self.logger.error(f"Error getting data summary from database: {str(e)}")
+            self.logger.error(f"Error getting data summary: {str(e)}")
             return {}
-    
-    def get_data_quality_report_from_db(self) -> Dict[str, Any]:
-        """Generate a data quality report from database"""
-        try:
-            summary = self.db.get_data_summary()
-            
-            if not summary:
-                return {"error": "No data available"}
-            
-            # Handle both dict and list responses
-            if isinstance(summary, list) and len(summary) > 0:
-                summary = summary[0]  # type: ignore
-            
-            if not isinstance(summary, dict):
-                return {"error": "Invalid data format from database"}
-            
-            report = {
-                "total_records": summary.get('total_records', 0),
-                "date_range": {
-                    "start": summary.get('earliest_date'),
-                    "end": summary.get('latest_date')
-                },
-                "unique_nodes": summary.get('unique_nodes', 0),
-                "price_statistics": {
-                    "min": summary.get('min_price'),
-                    "max": summary.get('max_price'),
-                    "mean": summary.get('avg_price')
-                },
-                "missing_data": {
-                    "mcc": summary.get('missing_mcc', 0) if isinstance(summary, dict) else 0,
-                    "mlc": summary.get('missing_mlc', 0) if isinstance(summary, dict) else 0,
-                    "pos": summary.get('missing_pos', 0) if isinstance(summary, dict) else 0
-                }
-            }
-            
-            return report
-        except Exception as e:
-            self.logger.error(f"Error generating data quality report: {str(e)}")
-            return {"error": str(e)}

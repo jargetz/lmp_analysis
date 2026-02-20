@@ -3,7 +3,7 @@ import os
 import pandas as pd
 from openai import OpenAI
 from analytics import LMPAnalytics, get_registered_analytics
-from database import DatabaseManager
+from motherduck_client import get_motherduck_client
 import logging
 
 class LMPChatbot:
@@ -13,7 +13,6 @@ class LMPChatbot:
         # Using GPT-4 for reliable natural language processing
         self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.analytics = LMPAnalytics()
-        self.db = DatabaseManager()
         self.logger = logging.getLogger(__name__)
         
     def process_question(self, question):
@@ -741,8 +740,13 @@ class LMPChatbot:
     def _get_data_context_from_db(self):
         """Get context information about the dataset from database"""
         try:
-            # Get basic summary from database
-            summary = self.db.get_data_summary()
+            # Get basic summary from MotherDuck
+            try:
+                md = get_motherduck_client(force_new=True)
+                results = md.execute_query("SELECT COUNT(*) as total_records, COUNT(DISTINCT node) as unique_nodes, MIN(opr_dt) as earliest_date, MAX(opr_dt) as latest_date, AVG(avg_price) as avg_price, MIN(avg_price) as min_price, MAX(avg_price) as max_price FROM bx_daily_summary")
+                summary = results[0] if results else {}
+            except Exception:
+                summary = {}
             
             if not summary or summary.get('total_records', 0) == 0:
                 context = {
@@ -755,7 +759,9 @@ class LMPChatbot:
             else:
                 # Get sample nodes
                 try:
-                    nodes = self.db.get_unique_nodes()[:5]
+                    md = get_motherduck_client(force_new=True)
+                    node_results = md.execute_query("SELECT DISTINCT node FROM bx_daily_summary ORDER BY node LIMIT 5")
+                    nodes = [row['node'] for row in node_results] if node_results else []
                 except Exception:
                     nodes = []
                 

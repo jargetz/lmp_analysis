@@ -1,6 +1,5 @@
 import pandas as pd
 from datetime import datetime, timedelta
-from database import DatabaseManager
 import logging
 import inspect
 from functools import wraps
@@ -54,7 +53,7 @@ class LMPAnalytics:
     """Core analytics functions for CAISO LMP data analysis with PostgreSQL backend"""
     
     def __init__(self):
-        self.db = DatabaseManager()
+        self.db = None
         self.logger = logging.getLogger(__name__)
         self._node_cache = None
     

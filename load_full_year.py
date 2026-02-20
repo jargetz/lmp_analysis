@@ -1,6 +1,6 @@
 """
-Script to load full year of CAISO LMP data from S3 into PostgreSQL database.
-This will process all available ZIP files from S3.
+Script to load full year of CAISO LMP data from S3.
+Raw data stored as parquet in S3, BX aggregates stored in MotherDuck.
 """
 
 import logging
@@ -44,15 +44,23 @@ def main():
     # Check what's available
     print("\nChecking data freshness...")
     freshness = loader.check_data_freshness()
-    print(f"Database currently has: {freshness.get('db_records', 0):,} records")
+    print(f"MotherDuck currently has: {freshness.get('db_records', 0):,} summary records")
     print(f"S3 files available: {freshness.get('s3_files_available', 0)}")
     
     # Clear existing data if requested
     if fresh_start:
         print("\n⚠️  FRESH START MODE: Clearing existing data...")
-        from database import DatabaseManager
-        db = DatabaseManager()
-        db.execute_query("TRUNCATE TABLE caiso.lmp_data RESTART IDENTITY CASCADE", fetch_all=False)
+        from motherduck_client import get_motherduck_client
+        md = get_motherduck_client(force_new=True)
+        md.execute_query("DELETE FROM bx_daily_summary")
+        try:
+            md.execute_query("DELETE FROM zone_hourly_lmp")
+        except Exception:
+            pass
+        try:
+            md.execute_query("DELETE FROM generator_bx_summary")
+        except Exception:
+            pass
         print("✅ Existing data cleared")
     
     bx_msg = "with BX calculation" if calculate_bx else "(no BX)"

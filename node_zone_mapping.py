@@ -23,12 +23,9 @@ Usage:
 import pandas as pd
 import logging
 from typing import Dict, Optional, List
-from database import DatabaseManager
 
-# Valid CAISO zones for analytics
 VALID_ZONES = ['NP15', 'SP15', 'ZP26']
 
-# Default file paths (can be overridden in function calls)
 DEFAULT_ZONE_FILE = 'attached_assets/Zone_-_Node_Mappings_---_csv_1765396332817.csv'
 DEFAULT_FNM_FILE = 'attached_assets/ATL_FNM_MAPPING_DATA_GRP_CISO_AS_24M3_DB127_v5_1765396332817.csv'
 
@@ -37,9 +34,16 @@ class NodeZoneMapper:
     """Handles loading and querying node-to-zone mappings"""
     
     def __init__(self):
-        self.db = DatabaseManager()
+        self._md = None
         self.logger = logging.getLogger(__name__)
         self._mapping_cache: Dict[str, str] = {}
+    
+    def _get_md(self):
+        """Lazy-load MotherDuck client"""
+        if self._md is None:
+            from motherduck_client import get_motherduck_client
+            self._md = get_motherduck_client(force_new=True)
+        return self._md
     
     def load_mappings_from_csv(
         self, 
@@ -59,33 +63,24 @@ class NodeZoneMapper:
             DataFrame with columns: pnode_id, resource_id, zone, local_area, generator_name
             Rows with no zone match will have zone=None (preserved for visibility)
         """
-        # Use defaults if not provided
         zone_file = zone_file or DEFAULT_ZONE_FILE
         fnm_file = fnm_file or DEFAULT_FNM_FILE
         
         try:
-            # Load zone mappings (Resource ID -> Zone)
             zone_df = pd.read_csv(zone_file, encoding='utf-8-sig')
             zone_df = zone_df[['Resource ID', 'Matched Zone', 'Local Area', 'Generator Name']].copy()
             zone_df.columns = ['resource_id', 'zone', 'local_area', 'generator_name']
             
-            # Normalize zone values: "Not found" and empty strings become None
             zone_df['zone'] = zone_df['zone'].replace({'Not found': None, '': None})
             
-            # Load FNM mappings (PNODE_ID -> RES_ID)
             fnm_df = pd.read_csv(fnm_file)
             fnm_df = fnm_df[['PNODE_ID', 'RES_ID']].copy()
             fnm_df.columns = ['pnode_id', 'resource_id']
             
-            # Remove duplicates (same PNODE can appear multiple times with same RES_ID)
             fnm_df = fnm_df.drop_duplicates(subset=['pnode_id', 'resource_id'])
             
-            # Join: PNODE_ID -> RES_ID -> Resource ID -> Zone
-            # Using left join preserves all PNODEs even if no zone match
             merged = fnm_df.merge(zone_df, on='resource_id', how='left')
             
-            # Remove duplicate pnode entries (take first match with a zone, else first overall)
-            # Sort so rows with valid zones come first
             merged['has_zone'] = merged['zone'].notna()
             merged = merged.sort_values('has_zone', ascending=False)
             merged = merged.drop_duplicates(subset=['pnode_id'], keep='first')
@@ -102,27 +97,21 @@ class NodeZoneMapper:
             raise
     
     def create_mapping_table(self) -> None:
-        """Create the node_zone_mapping table in the database"""
+        """Create the node_zone_mapping table in MotherDuck"""
         create_sql = """
-        CREATE TABLE IF NOT EXISTS caiso.node_zone_mapping (
-            id SERIAL PRIMARY KEY,
-            pnode_id VARCHAR(100) NOT NULL UNIQUE,
-            resource_id VARCHAR(100),
-            zone VARCHAR(20),
-            local_area VARCHAR(100),
-            generator_name VARCHAR(200),
+        CREATE TABLE IF NOT EXISTS node_zone_mapping (
+            pnode_id VARCHAR NOT NULL,
+            resource_id VARCHAR,
+            zone VARCHAR,
+            local_area VARCHAR,
+            generator_name VARCHAR,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        
-        CREATE INDEX IF NOT EXISTS idx_node_zone_pnode ON caiso.node_zone_mapping(pnode_id);
-        CREATE INDEX IF NOT EXISTS idx_node_zone_zone ON caiso.node_zone_mapping(zone);
         """
         
         try:
-            with self.db.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(create_sql)
-                    conn.commit()
+            md = self._get_md()
+            md.conn.execute(create_sql)
             self.logger.info("Created node_zone_mapping table")
         except Exception as e:
             self.logger.error(f"Error creating mapping table: {str(e)}")
@@ -139,27 +128,15 @@ class NodeZoneMapper:
             Number of records inserted
         """
         try:
-            # Ensure table exists
             self.create_mapping_table()
             
-            # Clear existing data
-            with self.db.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("TRUNCATE TABLE caiso.node_zone_mapping RESTART IDENTITY")
-                    conn.commit()
+            md = self._get_md()
             
-            # Prepare data for insertion
             df_clean = df[['pnode_id', 'resource_id', 'zone', 'local_area', 'generator_name']].copy()
             df_clean = df_clean.where(pd.notnull(df_clean), None)
             
-            # Insert using pandas
-            df_clean.to_sql(
-                'node_zone_mapping',
-                self.db.engine,
-                schema='caiso',
-                if_exists='append',
-                index=False
-            )
+            md.conn.execute("DELETE FROM node_zone_mapping")
+            md.conn.execute("INSERT INTO node_zone_mapping SELECT *, CURRENT_TIMESTAMP FROM df_clean")
             
             self.logger.info(f"Inserted {len(df_clean)} node-zone mappings")
             return len(df_clean)
@@ -186,7 +163,6 @@ class NodeZoneMapper:
         df = self.load_mappings_from_csv(zone_file, fnm_file)
         count = self.insert_mappings_to_db(df)
         
-        # Count by zone (excludes None)
         zone_counts = df[df['zone'].notna()]['zone'].value_counts().to_dict()
         mapped_count = df['zone'].notna().sum()
         unmapped_count = df['zone'].isna().sum()
@@ -208,13 +184,13 @@ class NodeZoneMapper:
         Returns:
             Zone string (NP15, SP15, ZP26) or None if not found
         """
-        # Check cache first
         if pnode_id in self._mapping_cache:
             return self._mapping_cache[pnode_id]
         
         try:
-            query = "SELECT zone FROM caiso.node_zone_mapping WHERE pnode_id = %s"
-            result = self.db.execute_query(query, (pnode_id,))
+            md = self._get_md()
+            query = "SELECT zone FROM node_zone_mapping WHERE pnode_id = $1"
+            result = md.execute_query(query, (pnode_id,))
             
             zone = result[0]['zone'] if result else None
             self._mapping_cache[pnode_id] = zone
@@ -235,8 +211,9 @@ class NodeZoneMapper:
             List of pnode_id strings
         """
         try:
-            query = "SELECT pnode_id FROM caiso.node_zone_mapping WHERE zone = %s"
-            result = self.db.execute_query(query, (zone,))
+            md = self._get_md()
+            query = "SELECT pnode_id FROM node_zone_mapping WHERE zone = $1"
+            result = md.execute_query(query, (zone,))
             return [row['pnode_id'] for row in result]
             
         except Exception as e:
@@ -246,13 +223,14 @@ class NodeZoneMapper:
     def get_available_zones(self) -> List[str]:
         """Get list of zones that have mapped nodes"""
         try:
+            md = self._get_md()
             query = """
                 SELECT DISTINCT zone 
-                FROM caiso.node_zone_mapping 
+                FROM node_zone_mapping 
                 WHERE zone IS NOT NULL 
                 ORDER BY zone
             """
-            result = self.db.execute_query(query)
+            result = md.execute_query(query)
             return [row['zone'] for row in result]
             
         except Exception as e:
@@ -262,23 +240,24 @@ class NodeZoneMapper:
     def get_mapping_stats(self) -> Dict[str, any]:
         """Get statistics about the current mappings"""
         try:
+            md = self._get_md()
             query = """
                 SELECT 
                     COUNT(*) as total_mappings,
                     COUNT(DISTINCT zone) as unique_zones,
                     COUNT(CASE WHEN zone IS NULL THEN 1 END) as unmapped_nodes
-                FROM caiso.node_zone_mapping
+                FROM node_zone_mapping
             """
-            result = self.db.execute_query(query)
+            result = md.execute_query(query)
             
             zone_query = """
                 SELECT zone, COUNT(*) as node_count 
-                FROM caiso.node_zone_mapping 
+                FROM node_zone_mapping 
                 WHERE zone IS NOT NULL 
                 GROUP BY zone 
                 ORDER BY zone
             """
-            zone_result = self.db.execute_query(zone_query)
+            zone_result = md.execute_query(zone_query)
             
             return {
                 'total_mappings': result[0]['total_mappings'] if result else 0,
@@ -292,7 +271,6 @@ class NodeZoneMapper:
             return {}
 
 
-# Convenience function for quick loading
 def load_zone_mappings(zone_file: str = None, fnm_file: str = None) -> Dict[str, any]:
     """
     Load zone mappings from CSV files into database.
@@ -309,7 +287,6 @@ def load_zone_mappings(zone_file: str = None, fnm_file: str = None) -> Dict[str,
 
 
 if __name__ == "__main__":
-    # Test the module
     logging.basicConfig(level=logging.INFO)
     
     print("Loading node-zone mappings...")

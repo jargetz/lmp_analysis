@@ -7,8 +7,6 @@ import re
 from datetime import date
 from typing import List, Dict, Any, Optional
 from data_processor import CAISODataProcessor
-from preprocessing import CAISOPreprocessor
-from bx_calculator import BXCalculator
 from parquet_storage import ParquetStorage
 
 class S3DataLoader:
@@ -22,8 +20,6 @@ class S3DataLoader:
             aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
         )
         self.processor = CAISODataProcessor()
-        self.preprocessor = CAISOPreprocessor()
-        self.bx_calculator = BXCalculator()
         self.parquet_storage = ParquetStorage()
     
     def _extract_date_from_filename(self, filename: str) -> Optional[date]:
@@ -133,18 +129,21 @@ class S3DataLoader:
             return {'success': False, 'error': str(e)}
     
     def _compute_bx_from_records(self, records: List[Dict], opr_date: date) -> Dict[str, Any]:
-        """Compute BX averages from in-memory records and store in PostgreSQL.
+        """Compute BX averages from in-memory records.
         
-        Only stores ZONE-LEVEL aggregates to fit within 10GB limit.
+        BX data is stored in MotherDuck summary tables.
         Node-level data is available on-demand from parquet files.
         """
         try:
             import pandas as pd
+            from motherduck_client import get_motherduck_client
             
             df = pd.DataFrame(records)
             
             zone_mapping = self._get_zone_mapping()
             df['zone'] = df['node'].map(zone_mapping).fillna('UNMAPPED')
+            
+            md = get_motherduck_client(force_new=True)
             
             results = {}
             for bx in range(4, 11):
@@ -165,7 +164,12 @@ class S3DataLoader:
                     
                     zone_bx[zone] = bx_df['mw'].mean()
                 
-                self.bx_calculator.store_daily_bx_batch(opr_date, zone_bx, bx)
+                for zone_name, avg_price in zone_bx.items():
+                    md.conn.execute(
+                        "INSERT INTO bx_daily_summary (node, opr_dt, bx_type, avg_price) VALUES ($1, $2, $3, $4) "
+                        "ON CONFLICT DO NOTHING",
+                        [zone_name, opr_date, bx, round(avg_price, 4)]
+                    )
                 results[f'B{bx}'] = len(zone_bx)
             
             return {'success': True, 'date': str(opr_date), 'bx_computed': results}
@@ -175,10 +179,11 @@ class S3DataLoader:
             return {'success': False, 'error': str(e)}
     
     def _get_zone_mapping(self) -> Dict[str, str]:
-        """Get node to zone mapping from database."""
+        """Get node to zone mapping from MotherDuck."""
         try:
-            query = "SELECT pnode_id, zone FROM caiso.node_zone_mapping WHERE zone IS NOT NULL"
-            results = self.processor.db.execute_query(query)
+            from motherduck_client import get_motherduck_client
+            md = get_motherduck_client(force_new=True)
+            results = md.execute_query("SELECT pnode_id, zone FROM node_zone_mapping WHERE zone IS NOT NULL")
             return {r['pnode_id']: r['zone'] for r in results} if results else {}
         except:
             return {}
@@ -259,17 +264,17 @@ class S3DataLoader:
         return final_result
     
     def check_data_freshness(self) -> Dict[str, Any]:
-        """Check if database has recent data or needs refresh from S3"""
+        """Check data availability from S3 parquet files"""
         try:
-            summary = self.processor.get_data_summary_from_db()
             s3_files = self.list_caiso_files()
+            available_dates = self.parquet_storage.list_available_dates()
             
             return {
-                'db_has_data': summary and summary.get('total_records', 0) > 0,
-                'db_records': summary.get('total_records', 0) if summary else 0,
+                'db_has_data': len(available_dates) > 0,
+                'db_records': len(available_dates),
                 's3_files_available': len(s3_files),
-                'latest_db_date': summary.get('latest_date') if summary else None,
-                's3_files': s3_files[:5]  # Show first 5 files as sample
+                'latest_db_date': max(available_dates) if available_dates else None,
+                's3_files': s3_files[:5]
             }
         except Exception as e:
             logging.error(f"Error checking data freshness: {str(e)}")

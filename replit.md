@@ -105,12 +105,11 @@ The system uses MotherDuck (DuckDB cloud) for all analytics queries:
 - `motherduck_client.py`: MotherDuck connection and SQL queries
 - `parquet_storage.py`: Read/write Parquet to S3 (for data loading)
 - `bx_calculator.py`: BX computation with MotherDuck acceleration
-- `database.py`: Legacy PostgreSQL (kept for backwards compatibility)
 
 ## Data Loading
 
 - **Source**: 312 ZIP files stored in AWS S3 bucket (full year of CAISO Day Ahead LMP data)
-- **Loading Strategy**: Hybrid - raw data to S3 parquet, BX aggregates to PostgreSQL
+- **Loading Strategy**: Hybrid - raw data to S3 parquet, BX aggregates to MotherDuck
 - **Batch Size**: Configurable (default 20 files per run)
 - **Speed**: ~7 seconds per file (parquet write + BX computation)
 - **Progress Tracking**: Automatic duplicate detection via parquet file existence in S3
@@ -118,6 +117,19 @@ The system uses MotherDuck (DuckDB cloud) for all analytics queries:
 - **Full Guide**: See `DATALOAD_GUIDE.md` for detailed instructions
 
 ## Recent Changes
+
+### February 20, 2026
+- **PostgreSQL Fully Removed**: Completed migration to make application portable (no PostgreSQL dependency)
+  - Deleted `database.py` (PostgreSQL connection manager)
+  - Removed `DatabaseManager` imports from all files: `data_processor.py`, `analytics.py`, `chatbot.py`, `node_zone_mapping.py`, `load_full_year.py`
+  - `data_processor.py`: Removed DB import, `get_data_summary_from_db()` now queries MotherDuck `bx_daily_summary`
+  - `analytics.py`: Set `self.db = None`; legacy methods return empty results gracefully (raw lmp_data is in S3 parquet, not queryable via old SQL)
+  - `chatbot.py`: Replaced `self.db` calls with MotherDuck queries for data summary and unique nodes
+  - `node_zone_mapping.py`: Fully migrated to MotherDuck (table creation, insert, queries all use DuckDB syntax)
+  - `load_full_year.py`: Fresh start mode uses MotherDuck instead of PostgreSQL TRUNCATE
+  - Deleted legacy scripts: `preprocessing.py`, `backfill_bx.py`, `import_eia_zones.py`, `backfill_month_hour.py`, `test_analytics_baseline.py`
+  - Removed `psycopg2`/`sqlalchemy` dependencies (already cleaned from requirements)
+  - All 13 tests still passing
 
 ### January 20, 2026
 - **MotherDuck Migration**: Migrated from PostgreSQL to MotherDuck (DuckDB cloud) for faster analytics
