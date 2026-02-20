@@ -3,11 +3,10 @@ import os
 import pandas as pd
 from openai import OpenAI
 from analytics import LMPAnalytics, get_registered_analytics
-from motherduck_client import get_motherduck_client
 import logging
 
 class LMPChatbot:
-    """AI-powered chatbot for natural language querying of LMP data with PostgreSQL backend"""
+    """AI-powered chatbot for natural language querying of LMP data"""
     
     def __init__(self):
         # Using GPT-4 for reliable natural language processing
@@ -738,13 +737,16 @@ class LMPChatbot:
             return f"Analysis completed with {len(df)} results."
     
     def _get_data_context_from_db(self):
-        """Get context information about the dataset from database"""
+        """Get context information about the dataset from MotherDuck via subprocess"""
         try:
-            # Get basic summary from MotherDuck
+            import subprocess as sp
+            
             try:
-                md = get_motherduck_client(force_new=True)
-                results = md.execute_query("SELECT COUNT(*) as total_records, COUNT(DISTINCT node) as unique_nodes, MIN(opr_dt) as earliest_date, MAX(opr_dt) as latest_date, AVG(avg_price) as avg_price, MIN(avg_price) as min_price, MAX(avg_price) as max_price FROM bx_daily_summary")
-                summary = results[0] if results else {}
+                result = sp.run(['python3', 'subprocess_query.py', 'data_summary'], 
+                               capture_output=True, text=True, timeout=60)
+                summary = json.loads(result.stdout.strip()) if result.returncode == 0 else {}
+                if 'error' in summary:
+                    summary = {}
             except Exception:
                 summary = {}
             
@@ -757,15 +759,15 @@ class LMPChatbot:
                     'sample_nodes': []
                 }
             else:
-                # Get sample nodes
                 try:
-                    md = get_motherduck_client(force_new=True)
-                    node_results = md.execute_query("SELECT DISTINCT node FROM bx_daily_summary ORDER BY node LIMIT 5")
-                    nodes = [row['node'] for row in node_results] if node_results else []
+                    result = sp.run(['python3', 'subprocess_query.py', 'unique_nodes', '5'],
+                                   capture_output=True, text=True, timeout=30)
+                    nodes = json.loads(result.stdout.strip()) if result.returncode == 0 else []
+                    if isinstance(nodes, dict) and 'error' in nodes:
+                        nodes = []
                 except Exception:
                     nodes = []
                 
-                # Format date range
                 date_range = 'No date data'
                 if summary.get('earliest_date') and summary.get('latest_date'):
                     date_range = f"{summary['earliest_date']} to {summary['latest_date']}"

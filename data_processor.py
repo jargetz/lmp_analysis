@@ -216,22 +216,19 @@ class CAISODataProcessor:
         return df
     
     def get_data_summary_from_db(self) -> Dict[str, Any]:
-        """Get data summary from MotherDuck bx_daily_summary table"""
+        """Get data summary from MotherDuck bx_daily_summary table via subprocess"""
         try:
-            from motherduck_client import get_motherduck_client
-            md = get_motherduck_client(force_new=True)
-            results = md.execute_query("""
-                SELECT 
-                    COUNT(*) as total_records,
-                    COUNT(DISTINCT node) as unique_nodes,
-                    MIN(opr_dt) as earliest_date,
-                    MAX(opr_dt) as latest_date,
-                    AVG(avg_price) as avg_price,
-                    MIN(avg_price) as min_price,
-                    MAX(avg_price) as max_price
-                FROM bx_daily_summary
-            """)
-            return results[0] if results else {}
+            import subprocess
+            import json
+            cmd = ['python3', 'subprocess_query.py', 'data_summary']
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if result.returncode == 0:
+                data = json.loads(result.stdout.strip())
+                if 'error' in data:
+                    self.logger.error(f"Query error: {data['error']}")
+                    return {}
+                return data
+            return {}
         except Exception as e:
             self.logger.error(f"Error getting data summary: {str(e)}")
             return {}

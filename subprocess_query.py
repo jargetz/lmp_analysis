@@ -6,6 +6,7 @@ import os
 import sys
 import json
 import duckdb
+import pandas as pd
 
 def run_query():
     """Run a query passed via command line argument"""
@@ -64,6 +65,11 @@ def run_query():
             nodes = json.loads(sys.argv[3])
             year = int(sys.argv[4])
             result = get_box_stats(conn, bx, nodes, year)
+        elif query_type == 'data_summary':
+            result = get_data_summary(conn)
+        elif query_type == 'unique_nodes':
+            limit = int(sys.argv[2]) if len(sys.argv) > 2 else 5
+            result = get_unique_nodes(conn, limit)
         else:
             result = {'error': f'Unknown query type: {query_type}'}
         
@@ -318,6 +324,37 @@ def get_full_year_8760(conn, nodes, year):
     result = conn.execute(query).fetchdf()
     return [{'opr_dt': str(r['opr_dt']), 'opr_hr': int(r['opr_hr']), 'avg_price': float(r['avg_price'])} 
             for _, r in result.iterrows()]
+
+def get_data_summary(conn):
+    """Get summary stats from bx_daily_summary table"""
+    result = conn.execute("""
+        SELECT 
+            COUNT(*) as total_records,
+            COUNT(DISTINCT node) as unique_nodes,
+            MIN(opr_dt) as earliest_date,
+            MAX(opr_dt) as latest_date,
+            AVG(avg_price) as avg_price,
+            MIN(avg_price) as min_price,
+            MAX(avg_price) as max_price
+        FROM bx_daily_summary
+    """).fetchdf()
+    if result.empty:
+        return {}
+    row = result.iloc[0]
+    return {
+        'total_records': int(row['total_records']),
+        'unique_nodes': int(row['unique_nodes']),
+        'earliest_date': str(row['earliest_date']),
+        'latest_date': str(row['latest_date']),
+        'avg_price': float(row['avg_price']) if pd.notna(row['avg_price']) else None,
+        'min_price': float(row['min_price']) if pd.notna(row['min_price']) else None,
+        'max_price': float(row['max_price']) if pd.notna(row['max_price']) else None
+    }
+
+def get_unique_nodes(conn, limit=5):
+    """Get unique node names from bx_daily_summary"""
+    result = conn.execute(f"SELECT DISTINCT node FROM bx_daily_summary ORDER BY node LIMIT {int(limit)}").fetchdf()
+    return [str(n) for n in result['node'].tolist()]
 
 if __name__ == '__main__':
     run_query()

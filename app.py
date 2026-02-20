@@ -81,7 +81,13 @@ def main():
                 days_loaded = summary.get('total_records', 0) // 28
                 st.metric("Days Loaded", f"{days_loaded}")
                 if summary.get('earliest_date') and summary.get('latest_date'):
-                    st.caption(f"{summary['earliest_date'].strftime('%Y-%m-%d')} to {summary['latest_date'].strftime('%Y-%m-%d')}")
+                    earliest = summary['earliest_date']
+                    latest = summary['latest_date']
+                    if hasattr(earliest, 'strftime'):
+                        earliest = earliest.strftime('%Y-%m-%d')
+                    if hasattr(latest, 'strftime'):
+                        latest = latest.strftime('%Y-%m-%d')
+                    st.caption(f"{earliest} to {latest}")
                 st.caption("Zone aggregates in DB, raw data in S3")
                 st.session_state.data_loaded = True
             else:
