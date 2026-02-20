@@ -119,6 +119,12 @@ The system uses MotherDuck (DuckDB cloud) for all analytics queries:
 ## Recent Changes
 
 ### February 20, 2026
+- **Admin UI Removed**: Removed S3DataLoader import and admin password-protected data loading from sidebar
+  - Sidebar now shows MotherDuck data status only (days loaded, date range)
+  - No more admin password or "Load Data from S3" button in published app
+  - Data loading is done via CLI (`python3 load_full_year.py`), not the web UI
+- **Heatmap Bug Fix**: Fixed SQL GROUP BY error preventing Overall zone heatmap from rendering
+  - Added UNION ALL query to compute Overall as average across NP15, SP15, ZP26
 - **PostgreSQL Fully Removed**: Completed migration to make application portable (no PostgreSQL dependency)
   - Deleted `database.py` (PostgreSQL connection manager)
   - Removed `DatabaseManager` imports from all files: `data_processor.py`, `analytics.py`, `chatbot.py`, `node_zone_mapping.py`, `load_full_year.py`
