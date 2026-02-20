@@ -70,14 +70,17 @@ def main():
                 st.session_state.db_summary = init_data.get('data_summary', {})
                 st.session_state.init_years = init_data.get('available_years', [2024])
                 st.session_state.init_nodes = init_data.get('all_nodes', [])
+                st.session_state.individual_nodes = init_data.get('individual_nodes', [])
             else:
                 st.session_state.db_summary = {}
                 st.session_state.init_years = [2024]
                 st.session_state.init_nodes = []
+                st.session_state.individual_nodes = []
         except Exception:
             st.session_state.db_summary = {}
             st.session_state.init_years = [2024]
             st.session_state.init_nodes = []
+            st.session_state.individual_nodes = []
         st.session_state.init_data = True
     
     with st.sidebar:
@@ -151,7 +154,7 @@ def render_dashboard_tab():
         st.session_state.bx_calc = bx_calc_init
         st.session_state.available_years = st.session_state.get('init_years', [2024])
         st.session_state.parquet_years = st.session_state.get('init_years', [2024])
-        st.session_state.all_nodes = st.session_state.get('init_nodes', [])
+        st.session_state.all_nodes = st.session_state.get('individual_nodes', [])
         st.session_state.dashboard_initialized = True
     
     st.header("LMP Dashboard")

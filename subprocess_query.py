@@ -338,12 +338,21 @@ def get_full_year_8760(conn, nodes, year):
     return [{'opr_dt': str(r['opr_dt']), 'opr_hr': int(r['opr_hr']), 'avg_price': float(r['avg_price'])} 
             for _, r in result.iterrows()]
 
+def get_all_individual_nodes(conn):
+    """Get all distinct node names from node_zone_mapping for node search"""
+    try:
+        result = conn.execute("SELECT DISTINCT pnode_id FROM node_zone_mapping ORDER BY pnode_id").fetchdf()
+        return result['pnode_id'].tolist() if not result.empty else []
+    except Exception:
+        return []
+
 def init_dashboard(conn):
     """Get all data needed for initial dashboard load in one call"""
     result = {}
     result['data_summary'] = get_data_summary(conn)
     result['available_years'] = get_available_years(conn)
     result['all_nodes'] = get_all_nodes_from_summary(conn)
+    result['individual_nodes'] = get_all_individual_nodes(conn)
     return result
 
 def run_multi_sql(conn, queries):
