@@ -83,7 +83,8 @@ def run_query():
         elif query_type == 'zone_daily_bx':
             bx = int(sys.argv[2])
             year = int(sys.argv[3])
-            result = get_zone_daily_bx(conn, bx, year)
+            source = sys.argv[4] if len(sys.argv) > 4 else 'zone_hourly'
+            result = get_zone_daily_bx(conn, bx, year, source)
         elif query_type == 'missing_days':
             year = int(sys.argv[2])
             result = get_missing_days(conn, year)
@@ -345,17 +346,37 @@ def get_full_year_8760(conn, nodes, year):
     return [{'opr_dt': str(r['opr_dt']), 'opr_hr': int(r['opr_hr']), 'avg_price': float(r['avg_price'])} 
             for _, r in result.iterrows()]
 
-def get_zone_daily_bx(conn, bx, year):
-    """Get daily BX values for NP15, SP15, ZP26 from bx_daily_summary"""
-    query = f"""
-        SELECT node as zone, CAST(opr_dt AS VARCHAR) as opr_dt, 
-               avg_price as bx_price
-        FROM bx_daily_summary
-        WHERE bx_type = {int(bx)}
-          AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
-          AND node IN ('NP15', 'SP15', 'ZP26')
-        ORDER BY node, opr_dt
+def get_zone_daily_bx(conn, bx, year, source='zone_hourly'):
+    """Get daily BX values for NP15, SP15, ZP26.
+    source='zone_hourly' computes from zone_hourly_lmp (EIA load-weighted prices).
+    source='node_avg' pulls from bx_daily_summary (unweighted node averages).
     """
+    if source == 'node_avg':
+        query = f"""
+            SELECT node as zone, CAST(opr_dt AS VARCHAR) as opr_dt, 
+                   avg_price as bx_price
+            FROM bx_daily_summary
+            WHERE bx_type = {int(bx)}
+              AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
+              AND node IN ('NP15', 'SP15', 'ZP26')
+            ORDER BY node, opr_dt
+        """
+    else:
+        query = f"""
+            WITH ranked AS (
+                SELECT zone, opr_dt, hour_num, lmp,
+                    ROW_NUMBER() OVER (PARTITION BY zone, opr_dt ORDER BY lmp ASC) as rn
+                FROM zone_hourly_lmp
+                WHERE EXTRACT(YEAR FROM opr_dt) = {int(year)}
+                  AND hour_num <= 24
+            )
+            SELECT zone, CAST(opr_dt AS VARCHAR) as opr_dt, 
+                   ROUND(AVG(lmp), 5) as bx_price
+            FROM ranked 
+            WHERE rn <= {int(bx)}
+            GROUP BY zone, opr_dt
+            ORDER BY zone, opr_dt
+        """
     result = conn.execute(query).fetchdf()
     if result.empty:
         return []

@@ -126,6 +126,150 @@ class BXCalculator:
             self.logger.error(f"Error getting zone-level B{bx}: {str(e)}")
             return {'success': False, 'error': str(e)}
 
+    def _monthly_weighted_avg(self, rows, price_col='monthly_avg', year=2024):
+        """Compute monthly-weighted annual average.
+        Weight each month's average by the number of calendar days in that month.
+        Formula: sum(month_avg * calendar_days_in_month) / total_calendar_days_in_year
+        """
+        from calendar import monthrange, isleap
+        total_calendar_days = 366 if isleap(year) else 365
+        weighted_sum = 0
+        weighted_days = 0
+        for row in rows:
+            month_num = int(row['month_num'])
+            _, cal_days = monthrange(year, month_num)
+            weighted_sum += float(row[price_col]) * cal_days
+            weighted_days += cal_days
+        if weighted_days == 0:
+            return None
+        return weighted_sum / total_calendar_days
+
+    def get_all_zones_load_weighted_bx(
+        self,
+        bx: int,
+        year: int = None,
+        time_period: str = "Annual",
+        month: int = None
+    ) -> Dict[str, Any]:
+        """
+        Get zone-level BX average computed from zone_hourly_lmp (EIA load-weighted zone prices).
+        Uses monthly weighting for annual averages.
+        """
+        from calendar import monthrange
+        
+        bx = int(bx)
+        year = int(year) if year else 2024
+        
+        if time_period == "Monthly" and month:
+            start_date = date(year, month, 1)
+            _, last_day = monthrange(year, month)
+            end_date = date(year, month, last_day)
+            query = f"""
+                WITH ranked AS (
+                    SELECT zone, opr_dt, hour_num, lmp,
+                        ROW_NUMBER() OVER (PARTITION BY zone, opr_dt ORDER BY lmp ASC) as rn
+                    FROM zone_hourly_lmp
+                    WHERE opr_dt >= '{start_date}' AND opr_dt <= '{end_date}'
+                      AND hour_num <= 24
+                ),
+                daily_bx AS (
+                    SELECT zone, opr_dt, AVG(lmp) as bx_price
+                    FROM ranked WHERE rn <= {bx}
+                    GROUP BY zone, opr_dt
+                )
+                SELECT zone as node, AVG(bx_price) as avg_bx_price,
+                       MIN(bx_price) as min_bx_price, MAX(bx_price) as max_bx_price,
+                       COUNT(*) as day_count
+                FROM daily_bx GROUP BY zone
+            """
+            try:
+                rows = self._md_query(query)
+                results = {}
+                for row in rows:
+                    zone_name = row['node']
+                    results[zone_name] = {
+                        'success': True, 'bx_type': bx,
+                        'avg_price': float(row['avg_bx_price']) if row.get('avg_bx_price') else None,
+                        'min_price': float(row['min_bx_price']) if row.get('min_bx_price') else None,
+                        'max_price': float(row['max_bx_price']) if row.get('max_bx_price') else None,
+                        'day_count': row['day_count'] if row.get('day_count') else 0
+                    }
+                if 'NP15' in results and 'SP15' in results and 'ZP26' in results:
+                    valid_prices = [results[z]['avg_price'] for z in ['NP15','SP15','ZP26'] if results[z].get('avg_price') is not None]
+                    results['Overall'] = {
+                        'success': True, 'bx_type': bx,
+                        'avg_price': sum(valid_prices) / len(valid_prices) if valid_prices else None,
+                        'day_count': max(results[z].get('day_count', 0) for z in ['NP15','SP15','ZP26'])
+                    }
+                for zone in ['NP15', 'SP15', 'ZP26', 'Overall']:
+                    if zone not in results:
+                        results[zone] = {'success': False, 'error': 'No data'}
+                return results
+            except Exception as e:
+                self.logger.error(f"Error getting load-weighted B{bx}: {str(e)}")
+                return {z: {'success': False, 'error': str(e)} for z in ['NP15', 'SP15', 'ZP26', 'Overall']}
+        else:
+            query = f"""
+                WITH ranked AS (
+                    SELECT zone, opr_dt, hour_num, lmp,
+                        ROW_NUMBER() OVER (PARTITION BY zone, opr_dt ORDER BY lmp ASC) as rn
+                    FROM zone_hourly_lmp
+                    WHERE EXTRACT(YEAR FROM opr_dt) = {year}
+                      AND hour_num <= 24
+                ),
+                daily_bx AS (
+                    SELECT zone, opr_dt, AVG(lmp) as bx_price
+                    FROM ranked WHERE rn <= {bx}
+                    GROUP BY zone, opr_dt
+                )
+                SELECT zone as node,
+                       EXTRACT(MONTH FROM opr_dt) as month_num,
+                       AVG(bx_price) as monthly_avg,
+                       MIN(bx_price) as monthly_min,
+                       MAX(bx_price) as monthly_max,
+                       COUNT(*) as days_with_data
+                FROM daily_bx
+                GROUP BY zone, EXTRACT(MONTH FROM opr_dt)
+                ORDER BY zone, month_num
+            """
+            try:
+                rows = self._md_query(query)
+                by_zone = {}
+                for row in rows:
+                    zone_name = row['node']
+                    if zone_name not in by_zone:
+                        by_zone[zone_name] = []
+                    by_zone[zone_name].append(row)
+                
+                results = {}
+                for zone_name, zone_rows in by_zone.items():
+                    avg_price = self._monthly_weighted_avg(zone_rows, 'monthly_avg', year)
+                    total_days = sum(int(r['days_with_data']) for r in zone_rows)
+                    all_mins = [float(r['monthly_min']) for r in zone_rows]
+                    all_maxs = [float(r['monthly_max']) for r in zone_rows]
+                    results[zone_name] = {
+                        'success': True, 'bx_type': bx,
+                        'avg_price': avg_price,
+                        'min_price': min(all_mins) if all_mins else None,
+                        'max_price': max(all_maxs) if all_maxs else None,
+                        'day_count': total_days
+                    }
+                
+                if 'NP15' in results and 'SP15' in results and 'ZP26' in results:
+                    valid_prices = [results[z]['avg_price'] for z in ['NP15','SP15','ZP26'] if results[z].get('avg_price') is not None]
+                    results['Overall'] = {
+                        'success': True, 'bx_type': bx,
+                        'avg_price': sum(valid_prices) / len(valid_prices) if valid_prices else None,
+                        'day_count': max(results[z].get('day_count', 0) for z in ['NP15','SP15','ZP26'])
+                    }
+                for zone in ['NP15', 'SP15', 'ZP26', 'Overall']:
+                    if zone not in results:
+                        results[zone] = {'success': False, 'error': 'No data'}
+                return results
+            except Exception as e:
+                self.logger.error(f"Error getting load-weighted B{bx}: {str(e)}")
+                return {z: {'success': False, 'error': str(e)} for z in ['NP15', 'SP15', 'ZP26', 'Overall']}
+
     def get_all_zones_bx_average(
         self,
         bx: int,
@@ -134,7 +278,8 @@ class BXCalculator:
         month: int = None
     ) -> Dict[str, Any]:
         """
-        Get zone-level BX average for all zones plus overall in one query.
+        Get zone-level BX average from bx_daily_summary (unweighted node average).
+        Uses monthly weighting for annual averages.
         """
         from calendar import monthrange
         
@@ -162,51 +307,70 @@ class BXCalculator:
                     AND node IN ('NP15', 'SP15', 'ZP26', 'Overall')
                 GROUP BY node
             """
+            try:
+                rows = self._md_query(query)
+                results = {}
+                for row in rows:
+                    zone_name = row['node']
+                    results[zone_name] = {
+                        'success': True, 'bx_type': bx,
+                        'avg_price': float(row['avg_bx_price']) if row.get('avg_bx_price') else None,
+                        'min_price': float(row['min_bx_price']) if row.get('min_bx_price') else None,
+                        'max_price': float(row['max_bx_price']) if row.get('max_bx_price') else None,
+                        'day_count': row['day_count'] if row.get('day_count') else 0
+                    }
+                for zone in ['NP15', 'SP15', 'ZP26', 'Overall']:
+                    if zone not in results:
+                        results[zone] = {'success': False, 'error': 'No data'}
+                return results
+            except Exception as e:
+                self.logger.error(f"Error getting all zones B{bx}: {str(e)}")
+                return {z: {'success': False, 'error': str(e)} for z in ['NP15', 'SP15', 'ZP26', 'Overall']}
         else:
+            year_int = int(year) if year else 2024
             query = f"""
-                WITH monthly_avgs AS (
-                    SELECT 
-                        node,
-                        EXTRACT(MONTH FROM opr_dt) as month_num,
-                        AVG(avg_price) as monthly_avg,
-                        MIN(avg_price) as monthly_min,
-                        MAX(avg_price) as monthly_max,
-                        COUNT(*) as days_in_month
-                    FROM bx_daily_summary
-                    WHERE {' AND '.join(conditions)}
-                        AND node IN ('NP15', 'SP15', 'ZP26', 'Overall')
-                    GROUP BY node, EXTRACT(MONTH FROM opr_dt)
-                )
                 SELECT 
                     node,
-                    AVG(monthly_avg) as avg_bx_price,
-                    MIN(monthly_min) as min_bx_price,
-                    MAX(monthly_max) as max_bx_price,
-                    SUM(days_in_month) as day_count
-                FROM monthly_avgs
-                GROUP BY node
+                    EXTRACT(MONTH FROM opr_dt) as month_num,
+                    AVG(avg_price) as monthly_avg,
+                    MIN(avg_price) as monthly_min,
+                    MAX(avg_price) as monthly_max,
+                    COUNT(*) as days_with_data
+                FROM bx_daily_summary
+                WHERE {' AND '.join(conditions)}
+                    AND node IN ('NP15', 'SP15', 'ZP26', 'Overall')
+                GROUP BY node, EXTRACT(MONTH FROM opr_dt)
+                ORDER BY node, month_num
             """
-        
-        try:
-            rows = self._md_query(query)
-            results = {}
-            for row in rows:
-                zone_name = row['node']
-                results[zone_name] = {
-                    'success': True,
-                    'bx_type': bx,
-                    'avg_price': float(row['avg_bx_price']) if row.get('avg_bx_price') else None,
-                    'min_price': float(row['min_bx_price']) if row.get('min_bx_price') else None,
-                    'max_price': float(row['max_bx_price']) if row.get('max_bx_price') else None,
-                    'day_count': row['day_count'] if row.get('day_count') else 0
-                }
-            for zone in ['NP15', 'SP15', 'ZP26', 'Overall']:
-                if zone not in results:
-                    results[zone] = {'success': False, 'error': 'No data'}
-            return results
-        except Exception as e:
-            self.logger.error(f"Error getting all zones B{bx}: {str(e)}")
-            return {z: {'success': False, 'error': str(e)} for z in ['NP15', 'SP15', 'ZP26', 'Overall']}
+            try:
+                rows = self._md_query(query)
+                by_zone = {}
+                for row in rows:
+                    zone_name = row['node']
+                    if zone_name not in by_zone:
+                        by_zone[zone_name] = []
+                    by_zone[zone_name].append(row)
+                
+                results = {}
+                for zone_name, zone_rows in by_zone.items():
+                    avg_price = self._monthly_weighted_avg(zone_rows, 'monthly_avg', year_int)
+                    total_days = sum(int(r['days_with_data']) for r in zone_rows)
+                    all_mins = [float(r['monthly_min']) for r in zone_rows]
+                    all_maxs = [float(r['monthly_max']) for r in zone_rows]
+                    results[zone_name] = {
+                        'success': True, 'bx_type': bx,
+                        'avg_price': avg_price,
+                        'min_price': min(all_mins) if all_mins else None,
+                        'max_price': max(all_maxs) if all_maxs else None,
+                        'day_count': total_days
+                    }
+                for zone in ['NP15', 'SP15', 'ZP26', 'Overall']:
+                    if zone not in results:
+                        results[zone] = {'success': False, 'error': 'No data'}
+                return results
+            except Exception as e:
+                self.logger.error(f"Error getting all zones B{bx}: {str(e)}")
+                return {z: {'success': False, 'error': str(e)} for z in ['NP15', 'SP15', 'ZP26', 'Overall']}
 
     def get_generator_bx_average(
         self,
@@ -226,29 +390,18 @@ class BXCalculator:
             conditions.append(f"zone = '{zone}'")
         
         query = f"""
-            WITH monthly_avgs AS (
-                SELECT 
-                    zone,
-                    node,
-                    EXTRACT(MONTH FROM opr_dt) as month_num,
-                    AVG(avg_price) as monthly_avg,
-                    MIN(avg_price) as monthly_min,
-                    MAX(avg_price) as monthly_max,
-                    COUNT(*) as days_in_month
-                FROM generator_bx_summary
-                WHERE {' AND '.join(conditions)}
-                GROUP BY zone, node, EXTRACT(MONTH FROM opr_dt)
-            )
             SELECT 
                 zone,
                 node,
-                AVG(monthly_avg) as avg_price,
-                MIN(monthly_min) as min_price,
-                MAX(monthly_max) as max_price,
-                SUM(days_in_month) as day_count
-            FROM monthly_avgs
-            GROUP BY zone, node
-            ORDER BY zone
+                EXTRACT(MONTH FROM opr_dt) as month_num,
+                AVG(avg_price) as monthly_avg,
+                MIN(avg_price) as monthly_min,
+                MAX(avg_price) as monthly_max,
+                COUNT(*) as days_with_data
+            FROM generator_bx_summary
+            WHERE {' AND '.join(conditions)}
+            GROUP BY zone, node, EXTRACT(MONTH FROM opr_dt)
+            ORDER BY zone, month_num
         """
         
         try:
@@ -257,15 +410,26 @@ class BXCalculator:
             if not results:
                 return {'success': False, 'error': 'No generator data found'}
             
-            by_zone = {}
+            by_zone_months = {}
             for row in results:
                 zone_name = row['zone']
+                if zone_name not in by_zone_months:
+                    by_zone_months[zone_name] = {'node': row['node'], 'months': []}
+                by_zone_months[zone_name]['months'].append(row)
+            
+            by_zone = {}
+            for zone_name, data in by_zone_months.items():
+                zone_rows = data['months']
+                avg_price = self._monthly_weighted_avg(zone_rows, 'monthly_avg', year)
+                total_days = sum(int(r['days_with_data']) for r in zone_rows)
+                all_mins = [float(r['monthly_min']) for r in zone_rows]
+                all_maxs = [float(r['monthly_max']) for r in zone_rows]
                 by_zone[zone_name] = {
-                    'node': row['node'],
-                    'avg_price': float(row['avg_price']) if row['avg_price'] else None,
-                    'min_price': float(row['min_price']) if row['min_price'] else None,
-                    'max_price': float(row['max_price']) if row['max_price'] else None,
-                    'day_count': row['day_count'],
+                    'node': data['node'],
+                    'avg_price': avg_price,
+                    'min_price': min(all_mins) if all_mins else None,
+                    'max_price': max(all_maxs) if all_maxs else None,
+                    'day_count': total_days,
                     'success': True
                 }
             

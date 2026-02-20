@@ -356,34 +356,32 @@ def render_dashboard_tab():
         bx_calc = st.session_state.bx_calc
         
         if analysis_mode == "By Zone":
-            # Cache zone stats with key based on filters
-            cache_key = f"zone_stats_{selected_bx}_{selected_year}_{time_period}_{selected_month}"
-            if cache_key not in st.session_state:
-                st.session_state[cache_key] = bx_calc.get_all_zones_bx_average(
+            load_cache_key = f"load_stats_{selected_bx}_{selected_year}_{time_period}_{selected_month}"
+            if load_cache_key not in st.session_state:
+                st.session_state[load_cache_key] = bx_calc.get_all_zones_load_weighted_bx(
                     bx=selected_bx,
                     year=selected_year,
                     time_period=time_period,
                     month=selected_month
                 )
-            zone_stats = st.session_state[cache_key]
+            load_stats = st.session_state[load_cache_key]
             
-            # Display zones in columns: NP15, SP15, ZP26, Overall
+            st.markdown("**EIA Load-Weighted Zone Average** (monthly weighted)")
             zone_cols = st.columns(4)
             zone_order = ['NP15', 'SP15', 'ZP26', 'Overall']
             
             for col, zone_name in zip(zone_cols, zone_order):
                 with col:
-                    stats = zone_stats.get(zone_name, {})
-                    if stats.get('success') and stats.get('avg_price'):
+                    stats = load_stats.get(zone_name, {})
+                    if stats.get('success') and stats.get('avg_price') is not None:
                         st.metric(
-                            f"{zone_name} (Load Avg)",
+                            f"{zone_name}",
                             f"${stats['avg_price']:.2f}/MWh",
-                            help=f"Monthly weighted EIA avg. Days: {stats.get('day_count', 0)}"
+                            help=f"BX of CAISO EIA zone price, monthly weighted. Days with data: {stats.get('day_count', 0)}"
                         )
                     else:
                         st.metric(zone_name, "N/A")
             
-            # Generator averages (pre-computed from TH_*_GEN-APND nodes)
             gen_cache_key = f"gen_stats_{selected_bx}_{selected_year}"
             if gen_cache_key not in st.session_state:
                 st.session_state[gen_cache_key] = bx_calc.get_generator_bx_average(
@@ -393,6 +391,7 @@ def render_dashboard_tab():
             gen_stats = st.session_state[gen_cache_key]
             
             if gen_stats.get('success') and gen_stats.get('zones'):
+                st.markdown("**Generator Settlement Node Average** (unweighted, monthly weighted)")
                 gen_cols = st.columns(3)
                 gen_zone_order = ['NP15', 'SP15', 'ZP26']
                 
@@ -401,12 +400,37 @@ def render_dashboard_tab():
                         zone_data = gen_stats['zones'].get(zone_name, {})
                         if zone_data.get('avg_price') is not None:
                             st.metric(
-                                f"{zone_name} (Gen Avg)",
+                                f"{zone_name}",
                                 f"${zone_data['avg_price']:.2f}/MWh",
-                                help=f"Generator aggregate (TH_{zone_name}_GEN-APND). Days: {zone_data.get('day_count', 0)}"
+                                help=f"TH_{zone_name}_GEN-APND (unweighted). Days: {zone_data.get('day_count', 0)}"
                             )
                         else:
-                            st.metric(f"{zone_name} (Gen)", "N/A")
+                            st.metric(f"{zone_name}", "N/A")
+            
+            node_cache_key = f"node_avg_stats_{selected_bx}_{selected_year}_{time_period}_{selected_month}"
+            if node_cache_key not in st.session_state:
+                st.session_state[node_cache_key] = bx_calc.get_all_zones_bx_average(
+                    bx=selected_bx,
+                    year=selected_year,
+                    time_period=time_period,
+                    month=selected_month
+                )
+            node_stats = st.session_state[node_cache_key]
+            
+            with st.expander("Node Average (unweighted)", expanded=False):
+                st.caption("Simple average of individual node BX values within each zone — not load-weighted")
+                node_cols = st.columns(4)
+                for col, zone_name in zip(node_cols, zone_order):
+                    with col:
+                        stats = node_stats.get(zone_name, {})
+                        if stats.get('success') and stats.get('avg_price') is not None:
+                            st.metric(
+                                f"{zone_name}",
+                                f"${stats['avg_price']:.2f}/MWh",
+                                help=f"Unweighted avg of node BX values. Days: {stats.get('day_count', 0)}"
+                            )
+                        else:
+                            st.metric(zone_name, "N/A")
             
             st.subheader("Averages - Day Ahead LMP")
             heatmap_zones = ['Overall', 'NP15', 'SP15', 'ZP26']
@@ -614,10 +638,12 @@ For each operating day, the BX value is computed as follows:
 4. **Ranking**: All 24 hours for a given day and zone/node are sorted by LMP price ascending
 5. **Selection**: The cheapest X hours are selected (e.g., B8 = cheapest 8 hours)
 6. **Daily BX Price**: Simple average of the selected X cheapest hours' LMP values
-7. **Monthly Average**: Simple average of daily BX values within each month
-8. **Annual Average (Monthly Weighted)**: First compute each month's average (step 7), then average the 12 monthly averages. This gives each month equal weight (1/12th), regardless of how many days it has or how many days have data.
+7. **Monthly Average**: Simple average of daily BX values within each month (using available days)
+8. **Annual Average (Monthly Weighted)**: Each month's average is weighted by the number of calendar days in that month.
+   Formula: `sum(month_avg x calendar_days_in_month) / total_calendar_days_in_year`
+   Example for 2024 (leap year, 366 days): `(Jan_avg x 31 + Feb_avg x 29 + ... + Dec_avg x 31) / 366`
 
-**Why monthly weighting?** With missing data concentrated in certain months (e.g., 17 of 29 February days missing in 2024), a simple annual average under-represents months with missing data. Monthly weighting ensures each month contributes equally.
+**Why monthly weighting?** With missing data concentrated in certain months (e.g., 17 of 29 February days missing in 2024), a simple annual average under-represents months with fewer data points. Monthly weighting by calendar days ensures each month contributes proportionally to the year.
 
 **Example**: If B8 for SP15 on Jan 1 selects hours with prices [$5, $8, $10, $12, $15, $18, $20, $22], 
 the B8 price for that day = ($5 + $8 + $10 + $12 + $15 + $18 + $20 + $22) / 8 = $13.75/MWh
@@ -723,6 +749,8 @@ each month.
                         pivot.index.name = 'Date'
 
                         st.subheader(f"B{bx_select} Annual Averages — Monthly Weighted ({selected_year})")
+                        from calendar import monthrange, isleap
+                        total_cal_days = 366 if isleap(selected_year) else 365
                         df['opr_dt_parsed'] = pd.to_datetime(df['opr_dt'])
                         df['month'] = df['opr_dt_parsed'].dt.month
                         avg_cols = st.columns(len(pivot.columns))
@@ -730,10 +758,14 @@ each month.
                             with avg_cols[i]:
                                 zone_df = df[df['zone'] == zone]
                                 monthly_avgs = zone_df.groupby('month')['bx_price'].mean()
-                                monthly_weighted = monthly_avgs.mean()
+                                weighted_sum = 0
+                                for m, avg in monthly_avgs.items():
+                                    _, cal_days = monthrange(selected_year, int(m))
+                                    weighted_sum += avg * cal_days
+                                monthly_weighted = weighted_sum / total_cal_days
                                 simple_avg = zone_df['bx_price'].mean()
                                 st.metric(zone, f"${monthly_weighted:.2f}/MWh",
-                                          help=f"Monthly weighted avg. Simple avg: ${simple_avg:.2f}/MWh. Days: {len(zone_df)}")
+                                          help=f"Monthly weighted (by calendar days). Simple avg: ${simple_avg:.2f}/MWh. Days with data: {len(zone_df)}")
 
                         st.subheader(f"Daily B{bx_select} Values")
                         display_df = pivot.copy()
