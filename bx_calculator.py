@@ -283,6 +283,12 @@ class BXCalculator:
         
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         
+        hour_filter = "hour_num <= 24"
+        if where_clause:
+            zone_where = f"{where_clause} AND {hour_filter}"
+        else:
+            zone_where = f"WHERE {hour_filter}"
+        
         query = f"""
             SELECT 
                 zone,
@@ -290,7 +296,7 @@ class BXCalculator:
                 hour_num as hour, 
                 AVG(lmp) as avg_price
             FROM zone_hourly_lmp
-            {where_clause}
+            {zone_where}
             GROUP BY zone, month, hour_num
             UNION ALL
             SELECT 
@@ -299,7 +305,7 @@ class BXCalculator:
                 hour_num as hour, 
                 AVG(lmp) as avg_price
             FROM zone_hourly_lmp
-            {where_clause}
+            {zone_where}
             GROUP BY month, hour_num
             ORDER BY zone, month, hour
         """
