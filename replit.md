@@ -2,215 +2,51 @@
 
 ## Overview
 
-This is a Streamlit-based web application for analyzing CAISO (California Independent System Operator) Day Ahead Locational Marginal Price (LMP) data. The tool provides data processing capabilities, interactive visualizations, and an AI-powered chatbot for natural language querying of electricity pricing data. Users can upload ZIP files containing CAISO CSV data, perform various analytics operations, and get insights through both traditional data analysis and conversational AI interface.
+This Streamlit-based web application analyzes CAISO Day Ahead Locational Marginal Price (LMP) data. It offers interactive visualizations, data processing, and an AI-powered chatbot for natural language queries on electricity pricing. Users can upload CAISO CSV data to gain insights through both traditional analysis and conversational AI. The project aims to provide efficient and accurate electricity pricing analysis, leveraging cloud-native solutions for scalability and performance.
 
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.
 
-## Critical Data Rules
-
-**NEVER derive opr_hr from timestamps.** CAISO provides an `OPR_HR` column (1-24, Pacific time) that must be used directly. The `INTERVALSTARTTIME_GMT` column is in UTC/GMT which is 7-8 hours ahead of California time. Deriving hour from GMT timestamps causes an 8-hour offset that makes peak hours appear as off-peak and vice versa.
-
-**Correct approach:**
-- Use `OPR_HR` column directly from CAISO CSV files
-- Use `OPR_DT` column directly for the operating date
-
-**Wrong approach:**
-- Parsing `INTERVALSTARTTIME_GMT` and extracting `.hour` (causes timezone offset errors)
-
 ## System Architecture
 
-### Frontend Architecture
-- **Framework**: Streamlit for web interface
-- **Visualization**: Plotly (Express and Graph Objects) for interactive charts and graphs
-- **Layout**: Wide layout configuration with sidebar for file uploads and main area for analysis results
-- **State Management**: Streamlit session state for maintaining data, processor instances, analytics, chatbot, and chat history across user interactions
+### Frontend
+- **Framework**: Streamlit for the user interface.
+- **Visualization**: Plotly for interactive charts.
+- **Layout**: Wide layout with a sidebar for uploads and a main area for results.
+- **State Management**: Streamlit session state maintains data and application state across interactions.
 
-### Backend Architecture
-- **Data Processing Layer**: `CAISODataProcessor` class handles CSV parsing, validation, and data cleaning
-- **Analytics Layer**: `LMPAnalytics` class provides core analytical functions like finding cheapest hours, congestion analysis, and price statistics
-- **AI Layer**: `LMPChatbot` class integrates with OpenAI's GPT models for natural language processing and query interpretation
-- **Modular Design**: Separate modules for data processing, analytics, and chatbot functionality to maintain separation of concerns
+### Backend
+- **Data Processing**: `CAISODataProcessor` handles CSV parsing, validation, and cleaning, ensuring correct `OPR_HR` usage to avoid timezone errors.
+- **Analytics**: `LMPAnalytics` provides core functions like cheapest hour identification, congestion analysis, and price statistics.
+- **AI Integration**: `LMPChatbot` uses OpenAI's GPT models for natural language understanding, intent analysis, and generating structured analysis instructions.
+- **Modular Design**: Separation of concerns across data processing, analytics, and chatbot modules.
 
 ### Data Processing Pipeline
-- **Input Validation**: Validates CAISO data format by checking for required columns (INTERVALSTARTTIME_GMT, NODE, MW)
-- **Data Standardization**: Standardizes column names and formats across different CAISO file versions
-- **Datetime Parsing**: Converts timestamp strings to datetime objects for time-based analysis
-- **Numeric Cleaning**: Processes MW price data and optional components (MCC, MLC, POS for congestion, loss, and position)
-- **Error Handling**: Comprehensive error handling with logging for data processing failures
+- **Validation**: Checks for required columns and standardizes data formats.
+- **Cleaning**: Parses datetimes and processes numeric price data.
+- **Error Handling**: Robust logging for processing failures.
 
-### AI Integration
-- **OpenAI API**: Uses GPT-5 model for natural language understanding and response generation
-- **Intent Analysis**: Analyzes user questions to determine appropriate analysis type (cheapest_hours, price_percentile, congestion_analysis, etc.)
-- **Context Awareness**: Incorporates data context and available columns when processing queries
-- **Structured Responses**: Returns JSON-formatted analysis instructions that are executed by the analytics engine
+### Core Architectural Decisions
+- **Cloud-Native Data Storage**: Utilizes MotherDuck (DuckDB cloud) for all analytics queries, with raw LMP data stored as Parquet files in AWS S3. This provides 10x faster queries, native S3 parquet support, and a unified SQL interface.
+- **Hybrid Storage**: Raw LMP data (Parquet in S3) and aggregated summaries (MotherDuck) optimize for storage limits and query performance.
+- **Pre-computed Aggregates**: Daily, monthly, and annual summary tables in MotherDuck accelerate dashboard queries.
+- **Security**: Implemented input sanitization for node names, zone names, S3 bucket names, and parameterized queries to prevent SQL injection.
+- **Dynamic Node Selection**: Supports both zone-based and search-based node analysis with autocomplete.
 
 ## External Dependencies
 
 ### AI Services
-- **OpenAI API**: GPT-5 model for natural language processing and chatbot functionality
-- **API Key Management**: Environment variable-based configuration for OpenAI API key
+- **OpenAI API**: GPT-5 model for chatbot functionality and natural language processing.
 
 ### Data Processing Libraries
-- **Pandas**: Core data manipulation and analysis
-- **NumPy**: Numerical computing and array operations
-- **Plotly**: Interactive visualization components (Express and Graph Objects)
+- **Pandas**: Core for data manipulation and analysis.
+- **NumPy**: For numerical operations.
+- **Plotly**: For interactive visualizations.
 
 ### Web Framework
-- **Streamlit**: Web application framework for the user interface
-- **File Handling**: Built-in support for ZIP file uploads and CSV processing
+- **Streamlit**: For building the web application.
 
-### Development Tools
-- **Logging**: Python logging module for error tracking and debugging
-- **IO Operations**: String and file I/O operations for data processing
-- **DateTime**: Date and time manipulation for temporal analysis
-
-### Data Format Support
-- **CSV Processing**: Handles CAISO-specific CSV formats with various column naming conventions
-- **ZIP File Support**: Processes multiple ZIP files containing CSV data
-- **Time Zone Handling**: GMT timestamp processing for electricity market data
-
-### Testing
-- **Framework**: pytest for baseline testing
-- **Test Coverage**: B8 calculations, OPR_HR validation, subprocess query contracts, edge cases
-- **Test Strategy**: Verification tests using known fixture data from settlement nodes
-- **Run Tests**: `pytest test_b8_calculations.py -v` (takes ~60s due to S3 queries)
-- **Key Test File**: `test_b8_calculations.py` - 13 tests covering:
-  - Raw data integrity for TH_NP15_GEN-APND, TH_SP15_GEN-APND, TH_ZP26_GEN-APND
-  - B8 single-day calculation (2024-01-15 fixture with manual verification)
-  - Annual B8 averages for 2024 ($22.35, $7.26, $7.81 expected)
-  - OPR_HR range validation (must be 1-24, not 0-23)
-  - Hour 25 DST handling
-  - Subprocess query contract tests
-- **Philosophy**: Trust-but-verify - known values prevent silent calculation drift
-
-## Data Storage Architecture (MotherDuck)
-
-The system uses MotherDuck (DuckDB cloud) for all analytics queries:
-
-### Storage Breakdown
-- **Raw LMP Data**: Parquet files in AWS S3 (`lmp_parquet/year=YYYY/month=MM/YYYY-MM-DD.parquet`)
-- **Summary Tables**: MotherDuck database (`bx_daily_summary`, `zone_hourly_lmp`, `generator_bx_summary`)
-- **Zone Mappings**: MotherDuck (`node_zone_mapping`)
-
-### Why MotherDuck?
-- **10x faster queries**: SQL over parquet vs Python file-by-file loops
-- **Native S3 parquet support**: Query parquet files directly without loading to database
-- **Unified query interface**: Same SQL for raw data and summaries
-- **Cost-effective**: ~$0.08/GB-month storage, pay-per-query compute
-- **No storage limits**: Parquet files stay in S3, unlimited capacity
-
-### Key Files
-- `motherduck_client.py`: MotherDuck connection and SQL queries
-- `parquet_storage.py`: Read/write Parquet to S3 (for data loading)
-- `bx_calculator.py`: BX computation with MotherDuck acceleration
-
-## Data Loading
-
-- **Source**: 312 ZIP files stored in AWS S3 bucket (full year of CAISO Day Ahead LMP data)
-- **Loading Strategy**: Hybrid - raw data to S3 parquet, BX aggregates to MotherDuck
-- **Batch Size**: Configurable (default 20 files per run)
-- **Speed**: ~7 seconds per file (parquet write + BX computation)
-- **Progress Tracking**: Automatic duplicate detection via parquet file existence in S3
-- **How to Load**: Run `python3 load_full_year.py` multiple times until complete
-- **Full Guide**: See `DATALOAD_GUIDE.md` for detailed instructions
-
-## Recent Changes
-
-### February 20, 2026
-- **Admin UI Removed**: Removed S3DataLoader import and admin password-protected data loading from sidebar
-  - Sidebar now shows MotherDuck data status only (days loaded, date range)
-  - No more admin password or "Load Data from S3" button in published app
-  - Data loading is done via CLI (`python3 load_full_year.py`), not the web UI
-- **Heatmap Bug Fix**: Fixed SQL GROUP BY error preventing Overall zone heatmap from rendering
-  - Added UNION ALL query to compute Overall as average across NP15, SP15, ZP26
-- **PostgreSQL Fully Removed**: Completed migration to make application portable (no PostgreSQL dependency)
-  - Deleted `database.py` (PostgreSQL connection manager)
-  - Removed `DatabaseManager` imports from all files: `data_processor.py`, `analytics.py`, `chatbot.py`, `node_zone_mapping.py`, `load_full_year.py`
-  - `data_processor.py`: Removed DB import, `get_data_summary_from_db()` now queries MotherDuck `bx_daily_summary`
-  - `analytics.py`: Set `self.db = None`; legacy methods return empty results gracefully (raw lmp_data is in S3 parquet, not queryable via old SQL)
-  - `chatbot.py`: Replaced `self.db` calls with MotherDuck queries for data summary and unique nodes
-  - `node_zone_mapping.py`: Fully migrated to MotherDuck (table creation, insert, queries all use DuckDB syntax)
-  - `load_full_year.py`: Fresh start mode uses MotherDuck instead of PostgreSQL TRUNCATE
-  - Deleted legacy scripts: `preprocessing.py`, `backfill_bx.py`, `import_eia_zones.py`, `backfill_month_hour.py`, `test_analytics_baseline.py`
-  - Removed `psycopg2`/`sqlalchemy` dependencies (already cleaned from requirements)
-  - All 13 tests still passing
-
-### January 20, 2026
-- **MotherDuck Migration**: Migrated from PostgreSQL to MotherDuck (DuckDB cloud) for faster analytics
-  - `motherduck_client.py`: New module for MotherDuck connection and queries
-  - 10x faster parquet queries: 8760 heatmap now ~6s instead of ~60s
-  - S3 parquet files queried directly via SQL (no Python file-by-file loops)
-  - PostgreSQL summary tables migrated to MotherDuck (bx_daily_summary, zone_hourly_lmp, etc.)
-  - `bx_calculator.py`: Updated to use MotherDuck for parquet-based queries with fallback
-  - Key methods accelerated: `get_full_year_hourly_data`, `get_node_bx_from_parquet`, `get_hourly_averages_for_nodes`
-- **Security Improvements**:
-  - `_sanitize_node_list()`: Regex-based filtering of node names (alphanumeric, underscore, hyphen only)
-  - `_sanitize_zone()`: Whitelist validation for zone names (NP15, SP15, ZP26, Overall)
-  - `_validate_bucket()`: S3 bucket name validation with strict regex pattern
-  - `_create_temp_node_table()`: UUID-based temp table names for concurrency safety
-  - `_cleanup_old_temp_tables()`: Automatic cleanup when >20 tables to prevent memory bloat
-  - Parameterized queries for zone filters to prevent SQL injection
-- **MotherDuck Benefits**:
-  - Native parquet support (no ETL needed)
-  - Columnar storage optimized for analytics
-  - ~$0.08/GB-month storage, pay-per-query compute
-  - Single SQL interface for both raw parquet and summary tables
-
-### January 14, 2026
-- **Cache Bug Fix**: Fixed year-switching cache bug in node analysis mode
-  - Removed session_state caching for node queries (BX stats, heatmap, hourly data, trends)
-  - Fresh data now fetched on each interaction to prevent stale data when switching years
-  - Trade-off: slightly slower loads but guaranteed correct data
-- **Node List Fix**: Updated `get_all_nodes()` to sample from all available years (2024, 2025, 2026) instead of just 2024
-- **Missing 2024 Data**: Processed 4 missing dates (Sept 9, Sept 15, Nov 9, Dec 15) - 2024 now has full 366 days
-- **Data Inventory**: 741 total days loaded (2024: 366 days, 2025: 362 days, 2026: 13 days)
-
-### January 9, 2026
-- **Hybrid Storage Architecture**: Implemented new storage strategy to fit full year within 10GB limit
-  - Raw LMP data now stored as Parquet files in S3 (unlimited, ~39GB for full year)
-  - Only BX aggregates stored in PostgreSQL (~10GB for full year)
-  - `parquet_storage.py`: New module for Parquet read/write to S3
-  - `s3_data_loader.py`: Updated to use hybrid approach (parquet + BX computation)
-- **Lean Schema**: Reduced lmp_data columns from 14 to 5 (node, mw, opr_dt, opr_hr, source_file)
-- **Optimized BX Calculation**: Vectorized pandas operations for faster processing (~7s per file)
-- **Database Cleanup**: Truncated raw lmp_data table (now using parquet), freed 8.2GB
-
-### January 7, 2026
-- **Pre-computed Summary Tables**: Added `bx_monthly_summary` and `bx_annual_summary` tables for fast dashboard queries
-  - Annual summaries: ~1.3M rows/year vs 35M daily rows (90% reduction)
-  - Post-import aggregation runs automatically after S3 data load completes
-  - Methods: `aggregate_monthly_summaries()`, `aggregate_annual_summaries()`, `run_post_import_aggregation()`
-- **Dashboard Time Period Selector**: Replaced date range with Annual/Monthly selector
-  - Annual view uses pre-computed `get_annual_bx_average()` for fast queries
-  - Monthly view uses daily aggregation with date range
-  - Dynamic year dropdown via `get_available_years()` method
-- **Node Selection Mode**: Added toggle between "By Zone" and "By Node Selection" analysis modes
-  - Zone mode: Filter by NP15, SP15, ZP26 zones (existing functionality)
-  - Node mode: Search-based node selection with autocomplete (new)
-- **BX Calculator Optimization**: Simplified to only store daily summaries (~112k rows/day vs ~1.1M)
-  - Removed `bx_hours` table usage for better performance
-  - Queries now support filtering by both zones and specific node lists
-- **Node Search**: Added `search_nodes()` method for efficient server-side search
-  - Handles 16k+ nodes without loading them all at once
-  - Returns matching nodes with ILIKE pattern matching
-
-### December 10, 2025
-- **Dashboard-First UI**: Restructured app.py into two tabs: Dashboard (primary) and AI Assistant
-- **Node-to-Zone Mapping**: Created `node_zone_mapping.py` module to map PNODE_ID to zones (NP15, SP15, ZP26)
-  - Loaded 5,593 node mappings (1,694 mapped to zones, 3,899 unmapped preserved for visibility)
-  - Supports custom file paths for refreshing mappings
-- **BX Calculator**: Created `bx_calculator.py` with support for B4-B10 (cheapest X hours analysis)
-  - Unified table approach with `bx_type` column instead of separate B6/B8 tables
-  - Efficient single-query-per-date design
-  - Query methods: `get_bx_average()`, `get_bx_trend()` with zone and node filtering
-- **Dashboard Features**: Zone filter, BX selector, summary statistics cards, hourly price chart
-
-### October 25, 2025  
-- Fixed peak hour definition: Changed from 16-21 (4-9 PM) to 0-6 (midnight-6 AM) based on actual CAISO market data showing higher prices during early morning hours
-- Added baseline testing suite with pytest covering critical analytics methods
-- Tests validate core functionality against actual database data for regression detection
-- Implemented resumable batch loading system for processing 312 ZIP files from S3
-- Fixed timestamp column handling to maintain `interval_start_time_gmt` for database NOT NULL constraint
-- Created comprehensive data loading guide with batch processing instructions
+### Data Storage
+- **MotherDuck**: Cloud-native analytical database (DuckDB cloud).
+- **AWS S3**: For storing raw Parquet data files.
