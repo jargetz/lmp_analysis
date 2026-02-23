@@ -907,7 +907,7 @@ def create_node_box_plot(
     # Add mean markers as separate scatter trace
     fig.add_trace(go.Scatter(
         x=nodes,
-        y=[stat['mean'] for stat in stats_data],
+        y=[stat.get('mean', stat.get('avg', 0)) for stat in stats_data],
         mode='markers',
         name='Mean',
         marker=dict(symbol='diamond', size=10, color='red'),
