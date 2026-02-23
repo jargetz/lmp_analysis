@@ -28,10 +28,13 @@ Preferred communication style: Simple, everyday language.
 - **Error Handling**: Robust logging for processing failures.
 
 ### Core Architectural Decisions
-- **Cloud-Native Data Storage**: Utilizes MotherDuck (DuckDB cloud) for all analytics queries, with raw LMP data stored as Parquet files in AWS S3. This provides 10x faster queries, native S3 parquet support, and a unified SQL interface.
-- **Hybrid Storage**: Raw LMP data (Parquet in S3) and aggregated summaries (MotherDuck) optimize for storage limits and query performance.
+- **MotherDuck-First Storage**: All data lives in MotherDuck (DuckDB cloud). Node-level hourly data (296M rows, `node_hourly_lmp` table), zone-level hourly data (`zone_hourly_lmp`), pre-computed BX summaries (`bx_daily_summary`, `generator_bx_summary`), and node-zone mappings are all in MotherDuck.
+- **S3 Parquet as Archive**: Raw LMP data still exists as Parquet files in S3 (1 GB, 741 files) but is no longer queried at runtime. All queries go through MotherDuck tables.
+- **Migration Script**: `migrate_parquet_to_motherduck.py` handles bulk loading S3 parquet files into `node_hourly_lmp`. Supports incremental loading by year.
 - **Pre-computed Aggregates**: Daily, monthly, and annual summary tables in MotherDuck accelerate dashboard queries.
-- **Security**: Implemented input sanitization for node names, zone names, S3 bucket names, and parameterized queries to prevent SQL injection.
+- **Monthly Weighting**: Annual averages use calendar-day weighting: `sum(month_avg × calendar_days) / total_calendar_days`.
+- **Three Averaging Methods**: (1) EIA load-weighted zone averages from `zone_hourly_lmp`, (2) Generator settlement from `generator_bx_summary` (TH_*_GEN-APND nodes), (3) Unweighted node averages from `bx_daily_summary`.
+- **Security**: Input sanitization for node names, zone names, S3 bucket names, and parameterized queries to prevent SQL injection.
 - **Dynamic Node Selection**: Supports both zone-based and search-based node analysis with autocomplete.
 
 ## External Dependencies
