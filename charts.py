@@ -922,34 +922,41 @@ def create_8760_heatmap(
 
 def create_node_box_plot(
     stats_data: list,
-    title: str = 'Price Distribution by Node'
-) -> go.Figure:
+    title: str = 'Price Distribution by Node',
+    price_floor: float = -150.0
+):
     """
     Create a box plot showing price distribution for each node.
     
-    Args:
-        stats_data: List of dicts with node, min, q1, median, q3, max, mean
-        title: Chart title
-        
+    Values below price_floor (default -$150/MWh) are capped — daily BX averages
+    below this threshold are transient anomalies that distort the chart.
+    
     Returns:
-        Plotly Figure object
+        Tuple of (Plotly Figure, clipping_info dict or None)
     """
     if not stats_data:
-        return create_empty_chart("No data for box plot")
+        return create_empty_chart("No data for box plot"), None
     
     fig = go.Figure()
     
     nodes = [stat['node'] for stat in stats_data]
     
+    clipped_count = 0
+    original_mins = []
     for stat in stats_data:
+        orig_min = stat['min']
+        original_mins.append(orig_min)
+        capped_min = max(orig_min, price_floor)
+        if orig_min < price_floor:
+            clipped_count += 1
+        
         fig.add_trace(go.Box(
             name=stat['node'],
-            y=[stat['min'], stat['q1'], stat['median'], stat['q3'], stat['max']],
+            y=[capped_min, stat['q1'], stat['median'], stat['q3'], stat['max']],
             boxpoints=False,
             hoverinfo='name+y'
         ))
     
-    # Add mean markers as separate scatter trace
     fig.add_trace(go.Scatter(
         x=nodes,
         y=[stat.get('mean', stat.get('avg', 0)) for stat in stats_data],
@@ -959,12 +966,34 @@ def create_node_box_plot(
         hovertemplate='Mean: $%{y:.2f}/MWh<extra></extra>'
     ))
     
+    import numpy as np
+    all_vals = []
+    for stat in stats_data:
+        all_vals.extend([max(stat['min'], price_floor), stat['q1'], stat['median'], stat['q3'], stat['max']])
+    clipping_info = None
+    yaxis_kwargs = {}
+    if all_vals:
+        p2 = float(np.percentile(all_vals, 2))
+        p98 = float(np.percentile(all_vals, 98))
+        margin = (p98 - p2) * 0.1
+        if p2 != p98:
+            yaxis_kwargs['range'] = [p2 - margin, p98 + margin]
+    
+    if clipped_count > 0:
+        worst_min = min(original_mins)
+        clipping_info = {
+            'floor': price_floor,
+            'clipped_count': clipped_count,
+            'worst_original_min': round(worst_min, 2)
+        }
+    
     fig.update_layout(
         title=title,
         yaxis_title='Price ($/MWh)',
         showlegend=True,
         margin=dict(l=40, r=40, t=50, b=100),
-        xaxis=dict(tickangle=45)
+        xaxis=dict(tickangle=45),
+        yaxis=yaxis_kwargs
     )
     
-    return fig
+    return fig, clipping_info

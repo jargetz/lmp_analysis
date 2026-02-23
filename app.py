@@ -613,8 +613,10 @@ conn.close()
                             box_result = run_subprocess_query('box_stats', selected_bx, selected_nodes, selected_year, timeout=90)
                         
                         if isinstance(box_result, list) and box_result:
-                            fig = create_node_box_plot(box_result, title=f'B{selected_bx} Price Distribution by Node ({selected_year})')
+                            fig, box_clipping = create_node_box_plot(box_result, title=f'B{selected_bx} Price Distribution by Node ({selected_year})')
                             st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_B{selected_bx}_distribution_{selected_year}'}})
+                            if box_clipping:
+                                st.caption(f"Minimum values capped at ${box_clipping['floor']:.0f}/MWh for {box_clipping['clipped_count']} node(s) — actual worst min: ${box_clipping['worst_original_min']:.0f}/MWh.")
                         elif isinstance(box_result, dict) and box_result.get('error'):
                             st.warning(f"Distribution chart unavailable: {box_result.get('error')}")
                     
