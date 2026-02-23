@@ -71,16 +71,19 @@ def main():
                 st.session_state.init_years = init_data.get('available_years', [2024])
                 st.session_state.init_nodes = init_data.get('all_nodes', [])
                 st.session_state.individual_nodes = init_data.get('individual_nodes', [])
+                st.session_state.zone_years = init_data.get('zone_years', [2024])
             else:
                 st.session_state.db_summary = {}
                 st.session_state.init_years = [2024]
                 st.session_state.init_nodes = []
                 st.session_state.individual_nodes = []
+                st.session_state.zone_years = [2024]
         except Exception:
             st.session_state.db_summary = {}
             st.session_state.init_years = [2024]
             st.session_state.init_nodes = []
             st.session_state.individual_nodes = []
+            st.session_state.zone_years = [2024]
         st.session_state.init_data = True
     
     with st.sidebar:
@@ -259,9 +262,7 @@ def render_dashboard_tab():
             )
         
         with filter_col4:
-            available_years = st.session_state.available_years
-            # Filter out 2025 for zone mode (incomplete data)
-            zone_years = [y for y in available_years if y != 2025]
+            zone_years = st.session_state.get('zone_years', [2024])
             
             if time_period == "Annual":
                 selected_year = st.selectbox(
