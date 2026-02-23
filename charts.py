@@ -682,10 +682,12 @@ def create_node_bx_trend_chart(
             node_dict[node].append({'date': item['date'], 'avg_price': item['avg_price']})
         node_data = node_dict
     
+    all_prices = []
     for i, (node, data) in enumerate(node_data.items()):
         if data:
             dates = [d['date'] for d in data]
             prices = [d['avg_price'] for d in data]
+            all_prices.extend(prices)
             
             fig.add_trace(go.Scatter(
                 x=dates,
@@ -696,7 +698,24 @@ def create_node_bx_trend_chart(
                 hovertemplate=f'{node}: $%{{y:.2f}}/MWh<extra></extra>'
             ))
     
-    fig.update_layout(
+    import numpy as np
+    clipping_info = None
+    yaxis_range = None
+    if all_prices:
+        actual_min = float(min(all_prices))
+        actual_max = float(max(all_prices))
+        p2 = float(np.percentile(all_prices, 2))
+        p98 = float(np.percentile(all_prices, 98))
+        margin = (p98 - p2) * 0.05
+        if p2 != p98 and (actual_min < p2 or actual_max > p98):
+            yaxis_range = [p2 - margin, p98 + margin]
+            clipping_info = {
+                'ymin': round(p2, 2), 'ymax': round(p98, 2),
+                'actual_min': round(actual_min, 2), 'actual_max': round(actual_max, 2),
+                'clipped_below': actual_min < p2, 'clipped_above': actual_max > p98
+            }
+    
+    layout_kwargs = dict(
         title=title,
         xaxis_title='Date',
         yaxis_title='Avg Price ($/MWh)',
@@ -705,8 +724,11 @@ def create_node_bx_trend_chart(
         showlegend=len(node_data) <= 10,
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
     )
+    if yaxis_range:
+        layout_kwargs['yaxis'] = dict(range=yaxis_range)
+    fig.update_layout(**layout_kwargs)
     
-    return fig
+    return fig, clipping_info
 
 
 def create_month_hour_heatmap(

@@ -593,8 +593,15 @@ conn.close()
                             trend_result = run_subprocess_query('bx_trend', selected_bx, selected_nodes, selected_year, timeout=120)
                         
                         if isinstance(trend_result, list) and trend_result:
-                            fig = create_node_bx_trend_chart(trend_result, bx_type=selected_bx)
+                            fig, trend_clipping = create_node_bx_trend_chart(trend_result, bx_type=selected_bx)
                             st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_B{selected_bx}_trend_{selected_year}'}})
+                            if trend_clipping:
+                                parts = []
+                                if trend_clipping['clipped_below']:
+                                    parts.append(f"values below ${trend_clipping['ymin']:.0f} (actual min: ${trend_clipping['actual_min']:.0f})")
+                                if trend_clipping['clipped_above']:
+                                    parts.append(f"values above ${trend_clipping['ymax']:.0f} (actual max: ${trend_clipping['actual_max']:.0f})")
+                                st.caption(f"Y-axis clipped to 2nd–98th percentile: {'; '.join(parts)}. Hover for exact values.")
                         elif isinstance(trend_result, dict) and trend_result.get('error'):
                             st.warning(f"BX trend unavailable: {trend_result.get('error')}")
                     else:
