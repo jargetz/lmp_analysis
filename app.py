@@ -682,6 +682,7 @@ each month.
 
 **Tables Used**
 - `zone_hourly_lmp`: Hourly LMP by zone (NP15, SP15, ZP26) with congestion/energy/loss components
+- `node_hourly_lmp`: Raw node-level hourly LMP data (296M rows, all nodes, all years)
 - `bx_daily_summary`: Pre-computed daily BX values for individual nodes
 - `generator_bx_summary`: BX values for generator settlement nodes (TH_*_GEN-APND)
 - `node_zone_mapping`: EIA mapping of individual pricing nodes to zones
@@ -787,6 +788,66 @@ each month.
                     st.error(f"Error computing BX data: {error_msg}")
             except Exception as e:
                 st.error(f"Error: {str(e)}")
+
+
+    st.divider()
+
+    st.header("Monthly BX Spot-Check")
+    st.markdown("Monthly breakdown comparing all three averaging methods. Use this to verify annual averages and spot-check individual months.")
+
+    sc_col1, sc_col2, sc_col3 = st.columns(3)
+    with sc_col1:
+        sc_bx = st.selectbox("BX Type", [4, 5, 6, 7, 8, 9, 10], index=4, key="spotcheck_bx",
+                              format_func=lambda x: f"B{x}")
+    with sc_col2:
+        sc_zone = st.selectbox("Zone", ['SP15', 'NP15', 'ZP26'], key="spotcheck_zone")
+    with sc_col3:
+        sc_year = st.selectbox("Year", available_years, key="spotcheck_year")
+
+    if st.button("Load Monthly Spot-Check", type="primary", key="load_spotcheck"):
+        with st.spinner(f"Loading monthly B{sc_bx} for {sc_zone} ({sc_year})..."):
+            try:
+                r = subprocess.run(
+                    ['python3', 'subprocess_query.py', 'monthly_bx_spotcheck',
+                     str(sc_bx), str(sc_year), sc_zone],
+                    capture_output=True, text=True, timeout=60
+                )
+                if r.returncode == 0 and r.stdout.strip():
+                    sc_data = json_mod.loads(r.stdout.strip())
+                    st.session_state['spotcheck_data'] = sc_data
+                else:
+                    st.error("Could not load spot-check data")
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+
+    if 'spotcheck_data' in st.session_state:
+        sc_data = st.session_state['spotcheck_data']
+        rows = []
+        for m in sc_data['months']:
+            rows.append({
+                'Month': m['month'],
+                'Cal Days': m['cal_days'],
+                'Load-Weighted ($/MWh)': f"${m['load_weighted']:.2f}" if m['load_weighted'] is not None else "N/A",
+                'LW Days': m['load_weighted_days'],
+                'Generator ($/MWh)': f"${m['generator']:.2f}" if m['generator'] is not None else "N/A",
+                'Gen Days': m['generator_days'],
+                'Node Avg ($/MWh)': f"${m['node_avg']:.2f}" if m['node_avg'] is not None else "N/A",
+                'Node Days': m['node_avg_days'],
+            })
+        ann = sc_data['annual']
+        rows.append({
+            'Month': 'Annual',
+            'Cal Days': '',
+            'Load-Weighted ($/MWh)': f"${ann['load_weighted']:.2f}" if ann['load_weighted'] else "N/A",
+            'LW Days': '',
+            'Generator ($/MWh)': f"${ann['generator']:.2f}" if ann['generator'] else "N/A",
+            'Gen Days': '',
+            'Node Avg ($/MWh)': f"${ann['node_avg']:.2f}" if ann['node_avg'] else "N/A",
+            'Node Days': '',
+        })
+        sc_df = pd.DataFrame(rows)
+        st.dataframe(sc_df, use_container_width=True, hide_index=True)
+        st.caption("Annual = monthly weighted average (sum of month_avg x calendar_days / total_calendar_days)")
 
 
 def render_ai_assistant_tab():

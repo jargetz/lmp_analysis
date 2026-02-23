@@ -88,6 +88,11 @@ def run_query():
         elif query_type == 'missing_days':
             year = int(sys.argv[2])
             result = get_missing_days(conn, year)
+        elif query_type == 'monthly_bx_spotcheck':
+            bx = int(sys.argv[2])
+            year = int(sys.argv[3])
+            zone = sys.argv[4] if len(sys.argv) > 4 else 'SP15'
+            result = get_monthly_bx_spotcheck(conn, bx, year, zone)
         elif query_type == 'multi_sql':
             queries = json.loads(sys.argv[2])
             result = run_multi_sql(conn, queries)
@@ -497,6 +502,110 @@ def get_data_summary(conn):
         'min_price': float(row['min_price']) if pd.notna(row['min_price']) else None,
         'max_price': float(row['max_price']) if pd.notna(row['max_price']) else None
     }
+
+def get_monthly_bx_spotcheck(conn, bx, year, zone='SP15'):
+    """Get monthly BX averages from all three methods for spot-checking."""
+    from calendar import monthrange, isleap
+    
+    total_cal_days = 366 if isleap(year) else 365
+    months = list(range(1, 13))
+    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    
+    result = {'zone': zone, 'bx': bx, 'year': year, 'months': []}
+    
+    zone_node_map = {'NP15': 'TH_NP15_GEN-APND', 'SP15': 'TH_SP15_GEN-APND', 'ZP26': 'TH_ZP26_GEN-APND'}
+    gen_node = zone_node_map.get(zone, f'TH_{zone}_GEN-APND')
+    
+    lw_monthly = conn.execute(f"""
+        WITH daily_bx AS (
+            SELECT opr_dt, 
+                   AVG(lmp) as bx_price
+            FROM (
+                SELECT opr_dt, lmp,
+                       ROW_NUMBER() OVER (PARTITION BY opr_dt ORDER BY lmp ASC) as rn
+                FROM zone_hourly_lmp
+                WHERE zone = ? AND EXTRACT(YEAR FROM opr_dt) = ? AND hour_num <= 24
+            ) ranked
+            WHERE rn <= ?
+            GROUP BY opr_dt
+        )
+        SELECT EXTRACT(MONTH FROM opr_dt) as month,
+               AVG(bx_price) as avg_price,
+               COUNT(*) as day_count
+        FROM daily_bx
+        GROUP BY month
+        ORDER BY month
+    """, [zone, year, bx]).fetchdf()
+    
+    gen_monthly = conn.execute(f"""
+        SELECT EXTRACT(MONTH FROM opr_dt) as month,
+               AVG(avg_price) as avg_price,
+               COUNT(*) as day_count
+        FROM generator_bx_summary
+        WHERE node = ? AND bx_type = ? AND EXTRACT(YEAR FROM opr_dt) = ?
+        GROUP BY month
+        ORDER BY month
+    """, [gen_node, bx, year]).fetchdf()
+    
+    node_monthly = conn.execute(f"""
+        SELECT EXTRACT(MONTH FROM opr_dt) as month,
+               AVG(avg_price) as avg_price,
+               COUNT(*) as day_count
+        FROM bx_daily_summary
+        WHERE node = ? AND bx_type = ? AND EXTRACT(YEAR FROM opr_dt) = ?
+        GROUP BY month
+        ORDER BY month
+    """, [zone, bx, year]).fetchdf()
+    
+    lw_dict = {int(r['month']): {'avg': float(r['avg_price']), 'days': int(r['day_count'])} 
+               for _, r in lw_monthly.iterrows()} if not lw_monthly.empty else {}
+    gen_dict = {int(r['month']): {'avg': float(r['avg_price']), 'days': int(r['day_count'])} 
+                for _, r in gen_monthly.iterrows()} if not gen_monthly.empty else {}
+    node_dict = {int(r['month']): {'avg': float(r['avg_price']), 'days': int(r['day_count'])} 
+                 for _, r in node_monthly.iterrows()} if not node_monthly.empty else {}
+    
+    lw_weighted_sum = 0
+    gen_weighted_sum = 0
+    node_weighted_sum = 0
+    
+    for m in months:
+        _, cal_days = monthrange(year, m)
+        lw_data = lw_dict.get(m, {})
+        gen_data = gen_dict.get(m, {})
+        node_data = node_dict.get(m, {})
+        
+        lw_avg = lw_data.get('avg')
+        gen_avg = gen_data.get('avg')
+        node_avg = node_data.get('avg')
+        
+        if lw_avg is not None:
+            lw_weighted_sum += lw_avg * cal_days
+        if gen_avg is not None:
+            gen_weighted_sum += gen_avg * cal_days
+        if node_avg is not None:
+            node_weighted_sum += node_avg * cal_days
+        
+        result['months'].append({
+            'month': month_names[m - 1],
+            'month_num': m,
+            'cal_days': cal_days,
+            'load_weighted': round(lw_avg, 2) if lw_avg is not None else None,
+            'load_weighted_days': lw_data.get('days', 0),
+            'generator': round(gen_avg, 2) if gen_avg is not None else None,
+            'generator_days': gen_data.get('days', 0),
+            'node_avg': round(node_avg, 2) if node_avg is not None else None,
+            'node_avg_days': node_data.get('days', 0),
+        })
+    
+    result['annual'] = {
+        'load_weighted': round(lw_weighted_sum / total_cal_days, 2) if lw_weighted_sum else None,
+        'generator': round(gen_weighted_sum / total_cal_days, 2) if gen_weighted_sum else None,
+        'node_avg': round(node_weighted_sum / total_cal_days, 2) if node_weighted_sum else None,
+    }
+    
+    return result
+
 
 def get_unique_nodes(conn, limit=5):
     """Get unique node names from bx_daily_summary"""
