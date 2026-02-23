@@ -92,26 +92,28 @@ def main():
         summary = st.session_state.db_summary
         if summary and summary.get('total_records', 0) > 0:
             st.success("Data loaded and ready")
-            days_loaded = summary.get('total_records', 0) // 28
-            st.metric("Days Loaded", f"{days_loaded}")
-            if summary.get('earliest_date') and summary.get('latest_date'):
-                earliest = summary['earliest_date']
-                latest = summary['latest_date']
-                if hasattr(earliest, 'strftime'):
-                    earliest = earliest.strftime('%Y-%m-%d')
-                if hasattr(latest, 'strftime'):
-                    latest = latest.strftime('%Y-%m-%d')
-                st.caption(f"{earliest} to {latest}")
-            st.caption("Zone aggregates in MotherDuck, raw data in S3 Parquet")
+            st.caption("All data in MotherDuck (DuckDB cloud)")
             st.session_state.data_loaded = True
             
             st.subheader("Data Details")
             st.markdown("**Zones (zonal data)**")
             st.markdown("NP15, SP15, ZP26")
-            if summary.get('earliest_date') and summary.get('latest_date'):
-                st.markdown("**Date Range**")
-                st.markdown(f"Start: {summary['earliest_date']}")
-                st.markdown(f"End: {summary['latest_date']}")
+            
+            zone_earliest = summary.get('earliest_date', '')
+            zone_latest = summary.get('latest_date', '')
+            if hasattr(zone_earliest, 'strftime'):
+                zone_earliest = zone_earliest.strftime('%Y-%m-%d')
+            if hasattr(zone_latest, 'strftime'):
+                zone_latest = zone_latest.strftime('%Y-%m-%d')
+            zone_earliest = str(zone_earliest).split(' ')[0] if zone_earliest else ''
+            zone_latest = str(zone_latest).split(' ')[0] if zone_latest else ''
+            
+            if zone_earliest and zone_latest:
+                st.markdown(f"Zone data: {zone_earliest} to {zone_latest}")
+            
+            available_years = st.session_state.get('init_years', [2024])
+            if available_years:
+                st.markdown(f"Node data years: {min(available_years)}–{max(available_years)}")
         else:
             st.warning("No data available")
             st.caption("MotherDuck database may be loading...")
