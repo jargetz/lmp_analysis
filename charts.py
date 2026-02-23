@@ -508,20 +508,15 @@ def create_node_hourly_lines_chart(
 def create_node_month_hour_heatmap(
     heatmap_data: list,
     title: str = 'Price Heatmap (Selected Nodes)'
-) -> go.Figure:
+):
     """
     Create a month x hour heatmap for selected node data.
-    Hours on x-axis, months on y-axis for consistency with zone heatmaps.
     
-    Args:
-        heatmap_data: List of {'month': int, 'hour': int, 'avg_price': float} dicts
-        title: Chart title
-        
     Returns:
-        Plotly Figure object
+        Tuple of (Plotly Figure, clipping_info dict or None)
     """
     if not heatmap_data:
-        return create_empty_chart("No heatmap data available")
+        return create_empty_chart("No heatmap data available"), None
     
     df = pd.DataFrame(heatmap_data)
     
@@ -538,11 +533,20 @@ def create_node_month_hour_heatmap(
     
     import numpy as np
     flat_vals = [v for row in z_values for v in row if pd.notna(v)]
+    clipping_info = None
     if flat_vals:
+        actual_min = float(min(flat_vals))
+        actual_max = float(max(flat_vals))
         zmin = float(np.percentile(flat_vals, 2))
         zmax = float(np.percentile(flat_vals, 98))
         if zmin == zmax:
-            zmin, zmax = min(flat_vals), max(flat_vals)
+            zmin, zmax = actual_min, actual_max
+        if actual_min < zmin or actual_max > zmax:
+            clipping_info = {
+                'zmin': round(zmin, 2), 'zmax': round(zmax, 2),
+                'actual_min': round(actual_min, 2), 'actual_max': round(actual_max, 2),
+                'clipped_below': actual_min < zmin, 'clipped_above': actual_max > zmax
+            }
     else:
         zmin, zmax = None, None
     
@@ -588,7 +592,7 @@ def create_node_month_hour_heatmap(
         height=400
     )
     
-    return fig
+    return fig, clipping_info
 
 
 def create_zone_bx_trend_chart(

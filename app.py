@@ -559,8 +559,15 @@ conn.close()
                         heatmap_result = run_subprocess_query('heatmap', selected_nodes, selected_year, timeout=90)
                     
                     if isinstance(heatmap_result, list) and heatmap_result:
-                        fig = create_node_month_hour_heatmap(heatmap_result, title=f'Price Heatmap ({len(selected_nodes)} nodes, {selected_year})')
+                        fig, clipping_info = create_node_month_hour_heatmap(heatmap_result, title=f'Price Heatmap ({len(selected_nodes)} nodes, {selected_year})')
                         st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_heatmap_{selected_year}'}})
+                        if clipping_info:
+                            parts = []
+                            if clipping_info['clipped_below']:
+                                parts.append(f"values below ${clipping_info['zmin']:.0f} (actual min: ${clipping_info['actual_min']:.0f})")
+                            if clipping_info['clipped_above']:
+                                parts.append(f"values above ${clipping_info['zmax']:.0f} (actual max: ${clipping_info['actual_max']:.0f})")
+                            st.caption(f"Color scale clipped: {'; '.join(parts)}. Hover for exact values.")
                     elif isinstance(heatmap_result, dict) and heatmap_result.get('error'):
                         st.warning(f"Heatmap unavailable: {heatmap_result.get('error')}")
                     
@@ -669,7 +676,8 @@ CAISO-published aggregate prices representing generation-weighted averages for e
 differ from the EIA zone averages because they weight by generation output rather than load.
 
 **Missing Data Handling**: When EIA data is missing for certain days, each month's average is computed 
-using only the days that have data. The annual average then weights each month equally (1/12th). 
+using only the days that have data. The annual average then weights each month by its calendar days 
+(e.g., January contributes 31/366 in a leap year), matching the BX methodology above.
 This tool does **not** interpolate or fill in missing days — it averages what's available within 
 each month.
 """)
