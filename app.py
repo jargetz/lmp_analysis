@@ -106,7 +106,8 @@ def main():
             st.session_state.data_loaded = True
             
             st.subheader("Data Details")
-            st.metric("Unique Zones", summary.get('unique_nodes', 0))
+            st.markdown("**Zones (zonal data)**")
+            st.markdown("NP15, SP15, ZP26")
             if summary.get('earliest_date') and summary.get('latest_date'):
                 st.markdown("**Date Range**")
                 st.markdown(f"Start: {summary['earliest_date']}")
@@ -436,20 +437,21 @@ def render_dashboard_tab():
                             st.metric(zone_name, "N/A")
             
             st.subheader("Averages - Day Ahead LMP")
-            heatmap_zones = ['Overall', 'NP15', 'SP15', 'ZP26']
-            heatmap_tabs = st.tabs(heatmap_zones)
+            heatmap_tab_labels = ['Overall (not weighted by zone)', 'NP15', 'SP15', 'ZP26']
+            heatmap_data_keys = ['Overall', 'NP15', 'SP15', 'ZP26']
+            heatmap_tabs = st.tabs(heatmap_tab_labels)
             
             all_heatmap_key = f"all_heatmaps_{selected_year}"
             if all_heatmap_key not in st.session_state:
                 st.session_state[all_heatmap_key] = bx_calc.get_all_zones_month_hour(year=selected_year)
             all_heatmaps = st.session_state[all_heatmap_key]
             
-            for tab, zone_name in zip(heatmap_tabs, heatmap_zones):
+            for tab, data_key, tab_label in zip(heatmap_tabs, heatmap_data_keys, heatmap_tab_labels):
                 with tab:
-                    heatmap_data = all_heatmaps.get(zone_name, [])
+                    heatmap_data = all_heatmaps.get(data_key, [])
                     if heatmap_data:
-                        fig = create_month_hour_heatmap(heatmap_data, zone=zone_name)
-                        st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'zone_heatmap_{zone_name}_{selected_year}'}})
+                        fig = create_month_hour_heatmap(heatmap_data, zone=tab_label)
+                        st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'zone_heatmap_{data_key}_{selected_year}'}})
                     else:
                         st.info("No heatmap data available yet.")
             
@@ -614,8 +616,15 @@ conn.close()
                             full_year_result = run_subprocess_query('full_year_8760', selected_nodes, selected_year, timeout=120)
                         
                         if isinstance(full_year_result, list) and full_year_result:
-                            fig = create_8760_heatmap(full_year_result, title=f'All Hourly Prices ({len(selected_nodes)} nodes, {selected_year})', year=selected_year)
+                            fig, clipping_info_8760 = create_8760_heatmap(full_year_result, title=f'All Hourly Prices ({len(selected_nodes)} nodes, {selected_year})', year=selected_year)
                             st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_8760_heatmap_{selected_year}'}})
+                            if clipping_info_8760:
+                                parts = []
+                                if clipping_info_8760['clipped_below']:
+                                    parts.append(f"values below ${clipping_info_8760['zmin']:.0f} (actual min: ${clipping_info_8760['actual_min']:.0f})")
+                                if clipping_info_8760['clipped_above']:
+                                    parts.append(f"values above ${clipping_info_8760['zmax']:.0f} (actual max: ${clipping_info_8760['actual_max']:.0f})")
+                                st.caption(f"Color scale clipped to 2nd–98th percentile: {'; '.join(parts)}. Hover for exact values.")
                         elif isinstance(full_year_result, dict) and full_year_result.get('error'):
                             st.warning(f"8760 heatmap unavailable: {full_year_result.get('error')}")
                 else:
@@ -706,36 +715,70 @@ This tool does **not** interpolate or fill in missing days.
     available_years = st.session_state.get('init_years', [2024])
     selected_year = st.selectbox("Select Year", available_years, key="methodology_year")
 
-    try:
-        r = subprocess.run(
-            ['python3', 'subprocess_query.py', 'missing_days', str(selected_year)],
-            capture_output=True, text=True, timeout=30
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            missing_data = json_mod.loads(r.stdout.strip())
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Days Expected", missing_data['total_expected'])
-            with col2:
-                st.metric("Days Loaded", missing_data['total_loaded'])
-            with col3:
-                st.metric("Days Missing", missing_data['missing_count'])
+    zone_tab, node_tab = st.tabs(["Zone Data (zone_hourly_lmp)", "Node Data (node_hourly_lmp)"])
 
-            if missing_data['missing_count'] > 0:
-                st.warning(f"{missing_data['missing_count']} days missing from zone hourly data for {selected_year}")
-                missing_df = pd.DataFrame({'Missing Date': missing_data['missing_dates']})
-                missing_df['Month'] = pd.to_datetime(missing_df['Missing Date']).dt.strftime('%B')
-                month_counts = missing_df['Month'].value_counts().sort_index()
-                st.markdown("**Missing days by month:**")
-                for month, count in month_counts.items():
-                    dates_in_month = missing_df[missing_df['Month'] == month]['Missing Date'].tolist()
-                    st.markdown(f"- **{month}**: {count} days ({', '.join(dates_in_month)})")
+    with zone_tab:
+        try:
+            r = subprocess.run(
+                ['python3', 'subprocess_query.py', 'missing_days', str(selected_year)],
+                capture_output=True, text=True, timeout=30
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                missing_data = json_mod.loads(r.stdout.strip())
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Days Expected", missing_data['total_expected'])
+                with col2:
+                    st.metric("Days Loaded", missing_data['total_loaded'])
+                with col3:
+                    st.metric("Days Missing", missing_data['missing_count'])
+
+                if missing_data['missing_count'] > 0:
+                    st.warning(f"{missing_data['missing_count']} days missing from zone hourly data for {selected_year}")
+                    missing_df = pd.DataFrame({'Missing Date': missing_data['missing_dates']})
+                    missing_df['Month'] = pd.to_datetime(missing_df['Missing Date']).dt.strftime('%B')
+                    month_counts = missing_df['Month'].value_counts().sort_index()
+                    st.markdown("**Missing days by month:**")
+                    for month, count in month_counts.items():
+                        dates_in_month = missing_df[missing_df['Month'] == month]['Missing Date'].tolist()
+                        st.markdown(f"- **{month}**: {count} days ({', '.join(dates_in_month)})")
+                else:
+                    st.success(f"All {missing_data['total_expected']} days loaded for {selected_year}")
             else:
-                st.success(f"All {missing_data['total_expected']} days loaded for {selected_year}")
-        else:
-            st.error("Could not retrieve data coverage information")
-    except Exception as e:
-        st.error(f"Error checking data coverage: {str(e)}")
+                st.info(f"No zone data available for {selected_year}")
+        except Exception as e:
+            st.error(f"Error checking zone data coverage: {str(e)}")
+
+    with node_tab:
+        try:
+            r = subprocess.run(
+                ['python3', 'subprocess_query.py', 'node_coverage', str(selected_year)],
+                capture_output=True, text=True, timeout=60
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                node_cov = json_mod.loads(r.stdout.strip())
+                if node_cov.get('has_data'):
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Days Loaded", node_cov['days_loaded'])
+                    with col2:
+                        st.metric("Days Expected", node_cov['total_expected'])
+                    with col3:
+                        st.metric("Unique Nodes", f"{node_cov['node_count']:,}")
+                    with col4:
+                        st.metric("Total Rows", f"{node_cov['total_rows']:,}")
+                    st.markdown(f"**Date range**: {node_cov['earliest_date']} to {node_cov['latest_date']}")
+                    missing_node_days = node_cov['total_expected'] - node_cov['days_loaded']
+                    if missing_node_days > 0:
+                        st.warning(f"{missing_node_days} days missing from node data for {selected_year}")
+                    else:
+                        st.success(f"All {node_cov['total_expected']} days loaded for {selected_year}")
+                else:
+                    st.info(f"No node data available for {selected_year}")
+            else:
+                st.info(f"No node data available for {selected_year}")
+        except Exception as e:
+            st.error(f"Error checking node data coverage: {str(e)}")
 
     st.divider()
 

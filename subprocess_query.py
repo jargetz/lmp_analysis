@@ -88,6 +88,9 @@ def run_query():
         elif query_type == 'missing_days':
             year = int(sys.argv[2])
             result = get_missing_days(conn, year)
+        elif query_type == 'node_coverage':
+            year = int(sys.argv[2])
+            result = get_node_coverage(conn, year)
         elif query_type == 'monthly_bx_spotcheck':
             bx = int(sys.argv[2])
             year = int(sys.argv[3])
@@ -390,6 +393,47 @@ def get_missing_days(conn, year):
         'total_loaded': len(loaded),
         'missing_count': len(missing),
         'missing_dates': missing
+    }
+
+def get_node_coverage(conn, year):
+    """Get node_hourly_lmp coverage stats for a given year"""
+    from datetime import date, timedelta
+    query = f"""
+        SELECT 
+            COUNT(*) as total_rows,
+            COUNT(DISTINCT node) as node_count,
+            CAST(MIN(opr_dt) AS VARCHAR) as earliest_date,
+            CAST(MAX(opr_dt) AS VARCHAR) as latest_date,
+            COUNT(DISTINCT opr_dt) as days_loaded
+        FROM node_hourly_lmp
+        WHERE EXTRACT(YEAR FROM opr_dt) = {int(year)}
+          AND opr_hr <= 24
+    """
+    result = conn.execute(query).fetchdf()
+    if result.empty or result.iloc[0]['total_rows'] == 0:
+        return {
+            'year': int(year),
+            'has_data': False,
+            'total_rows': 0,
+            'node_count': 0,
+            'days_loaded': 0,
+            'total_expected': 366 if (int(year) % 4 == 0 and (int(year) % 100 != 0 or int(year) % 400 == 0)) else 365,
+            'earliest_date': None,
+            'latest_date': None
+        }
+    row = result.iloc[0]
+    start = date(int(year), 1, 1)
+    end = date(int(year), 12, 31)
+    total_expected = (end - start).days + 1
+    return {
+        'year': int(year),
+        'has_data': True,
+        'total_rows': int(row['total_rows']),
+        'node_count': int(row['node_count']),
+        'days_loaded': int(row['days_loaded']),
+        'total_expected': total_expected,
+        'earliest_date': str(row['earliest_date']),
+        'latest_date': str(row['latest_date'])
     }
 
 def get_all_individual_nodes(conn):

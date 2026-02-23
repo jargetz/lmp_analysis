@@ -790,26 +790,15 @@ def create_8760_heatmap(
     data: list,
     title: str = 'Full Year Hourly Prices',
     year: int = None
-) -> go.Figure:
+):
     """
     Create a heatmap showing all 8760 hours of the year.
     
-    Layout matches existing month×hour heatmaps:
-    - X-axis: Hours (1-24)
-    - Y-axis: Months (with daily granularity within each month)
-    
-    Each month block contains ~30 thin horizontal rows (one per day).
-    
-    Args:
-        data: List of dicts with 'opr_dt', 'opr_hr', 'avg_price'
-        title: Chart title
-        year: Year for display
-        
     Returns:
-        Plotly Figure object
+        Tuple of (Plotly Figure, clipping_info dict or None)
     """
     if not data:
-        return create_empty_chart("No data for 8760 heatmap")
+        return create_empty_chart("No data for 8760 heatmap"), None
     
     df = pd.DataFrame(data)
     df['opr_dt'] = pd.to_datetime(df['opr_dt'])
@@ -837,8 +826,25 @@ def create_8760_heatmap(
     x_labels = [str(h) for h in range(1, 25)]
     y_labels = pivot.index.tolist()
     
-    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    import numpy as np
+    flat_vals = [v for row in z_values for v in row if pd.notna(v)]
+    clipping_info = None
+    if flat_vals:
+        actual_min = float(min(flat_vals))
+        actual_max = float(max(flat_vals))
+        zmin = float(np.percentile(flat_vals, 2))
+        zmax = float(np.percentile(flat_vals, 98))
+        if zmin == zmax:
+            zmin, zmax = actual_min, actual_max
+        if actual_min < zmin or actual_max > zmax:
+            clipping_info = {
+                'zmin': round(zmin, 2), 'zmax': round(zmax, 2),
+                'actual_min': round(actual_min, 2), 'actual_max': round(actual_max, 2),
+                'clipped_below': actual_min < zmin, 'clipped_above': actual_max > zmax
+            }
+    else:
+        zmin, zmax = None, None
+    
     month_positions = []
     month_labels = []
     current_month = None
@@ -860,6 +866,8 @@ def create_8760_heatmap(
             [0.75, '#ff9966'],
             [1.0, '#cc3300']
         ],
+        zmin=zmin,
+        zmax=zmax,
         hovertemplate='%{customdata}: Hour %{x}<br>$%{z:.2f}/MWh<extra></extra>',
         customdata=[[y_labels[i]] * 24 for i in range(len(y_labels))],
         showscale=True,
@@ -887,7 +895,7 @@ def create_8760_heatmap(
         height=800
     )
     
-    return fig
+    return fig, clipping_info
 
 
 def create_node_box_plot(
