@@ -107,23 +107,16 @@ def get_node_bx(conn, bx, nodes, year):
     if not nodes:
         return {'success': False, 'error': 'No valid nodes'}
     
-    bucket = os.getenv('AWS_S3_BUCKET', 'oasis-data-for-replit-2025')
-    path = f"s3://{bucket}/lmp_parquet/year={year}/**/*.parquet"
     node_list = ', '.join(f"'{n}'" for n in nodes)
     
-    # Query for BX averages
     avg_query = f"""
-        WITH file_data AS (
-            SELECT 
-                regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1) as opr_dt,
-                node, opr_hr, mw
-            FROM read_parquet('{path}', filename=true, hive_partitioning=true)
-            WHERE node IN ({node_list})
-        ),
-        ranked AS (
+        WITH ranked AS (
             SELECT opr_dt, node, opr_hr, mw,
                 ROW_NUMBER() OVER (PARTITION BY opr_dt, node ORDER BY mw ASC) as rn
-            FROM file_data
+            FROM node_hourly_lmp
+            WHERE node IN ({node_list})
+              AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
+              AND opr_hr <= 24
         ),
         daily_bx AS (
             SELECT opr_dt, node, AVG(mw) as bx_price
@@ -141,19 +134,14 @@ def get_node_bx(conn, bx, nodes, year):
     
     per_node = {row['node']: float(row['avg_price']) for _, row in result.iterrows()}
     
-    # Query for most common BX hours per node
     hours_query = f"""
-        WITH file_data AS (
-            SELECT 
-                regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1) as opr_dt,
-                node, opr_hr, mw
-            FROM read_parquet('{path}', filename=true, hive_partitioning=true)
-            WHERE node IN ({node_list})
-        ),
-        ranked AS (
+        WITH ranked AS (
             SELECT opr_dt, node, opr_hr, mw,
                 ROW_NUMBER() OVER (PARTITION BY opr_dt, node ORDER BY mw ASC) as rn
-            FROM file_data
+            FROM node_hourly_lmp
+            WHERE node IN ({node_list})
+              AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
+              AND opr_hr <= 24
         )
         SELECT node, opr_hr, COUNT(*) as cnt
         FROM ranked WHERE rn <= {bx}
@@ -167,7 +155,6 @@ def get_node_bx(conn, bx, nodes, year):
         node_hours = hours_result[hours_result['node'] == node].head(bx)
         per_node_hours[node] = [int(h) for h in node_hours['opr_hr'].tolist()]
     
-    # Safely compute aggregate stats
     try:
         avg_price = float(result['avg_price'].mean()) if len(result) > 0 else 0.0
         min_price = float(result['min_price'].min()) if len(result) > 0 else 0.0
@@ -194,15 +181,13 @@ def get_hourly_averages(conn, nodes, year):
     if not nodes:
         return []
     
-    bucket = os.getenv('AWS_S3_BUCKET', 'oasis-data-for-replit-2025')
-    path = f"s3://{bucket}/lmp_parquet/year={year}/**/*.parquet"
     node_list = ', '.join(f"'{n}'" for n in nodes)
     
-    # Filter out hour 25 (DST transition days have 25 hours)
     query = f"""
         SELECT opr_hr as hour, AVG(mw) as avg_price
-        FROM read_parquet('{path}', hive_partitioning=true)
+        FROM node_hourly_lmp
         WHERE node IN ({node_list}) AND opr_hr <= 24
+          AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
         GROUP BY opr_hr ORDER BY opr_hr
     """
     
@@ -216,16 +201,14 @@ def get_heatmap_data(conn, nodes, year):
     if not nodes:
         return []
     
-    bucket = os.getenv('AWS_S3_BUCKET', 'oasis-data-for-replit-2025')
-    path = f"s3://{bucket}/lmp_parquet/year={year}/**/*.parquet"
     node_list = ', '.join(f"'{n}'" for n in nodes)
     
-    # Filter out hour 25 (DST transition days have 25 hours)
     query = f"""
-        SELECT month, opr_hr as hour, AVG(mw) as avg_price
-        FROM read_parquet('{path}', hive_partitioning=true)
+        SELECT EXTRACT(MONTH FROM opr_dt)::INT as month, opr_hr as hour, AVG(mw) as avg_price
+        FROM node_hourly_lmp
         WHERE node IN ({node_list}) AND opr_hr <= 24
-        GROUP BY month, opr_hr ORDER BY month, opr_hr
+          AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
+        GROUP BY 1, opr_hr ORDER BY 1, opr_hr
     """
     
     result = conn.execute(query).fetchdf()
@@ -239,29 +222,23 @@ def get_bx_trend(conn, bx, nodes, year):
     if not nodes:
         return []
     
-    bucket = os.getenv('AWS_S3_BUCKET', 'oasis-data-for-replit-2025')
-    path = f"s3://{bucket}/lmp_parquet/year={year}/**/*.parquet"
     node_list = ', '.join(f"'{n}'" for n in nodes)
     
     query = f"""
-        WITH file_data AS (
-            SELECT 
-                regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1) as opr_dt,
-                node, opr_hr, mw
-            FROM read_parquet('{path}', filename=true, hive_partitioning=true)
-            WHERE node IN ({node_list})
-        ),
-        ranked AS (
+        WITH ranked AS (
             SELECT opr_dt, node, opr_hr, mw,
                 ROW_NUMBER() OVER (PARTITION BY opr_dt, node ORDER BY mw ASC) as rn
-            FROM file_data
+            FROM node_hourly_lmp
+            WHERE node IN ({node_list})
+              AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
+              AND opr_hr <= 24
         ),
         daily_bx AS (
             SELECT opr_dt, node, AVG(mw) as bx_price
             FROM ranked WHERE rn <= {bx}
             GROUP BY opr_dt, node
         )
-        SELECT opr_dt as date, node, bx_price as avg_price
+        SELECT CAST(opr_dt AS VARCHAR) as date, node, bx_price as avg_price
         FROM daily_bx ORDER BY opr_dt, node
     """
     
@@ -276,22 +253,16 @@ def get_box_stats(conn, bx, nodes, year):
     if not nodes:
         return []
     
-    bucket = os.getenv('AWS_S3_BUCKET', 'oasis-data-for-replit-2025')
-    path = f"s3://{bucket}/lmp_parquet/year={year}/**/*.parquet"
     node_list = ', '.join(f"'{n}'" for n in nodes)
     
     query = f"""
-        WITH file_data AS (
-            SELECT 
-                regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1) as opr_dt,
-                node, opr_hr, mw
-            FROM read_parquet('{path}', filename=true, hive_partitioning=true)
-            WHERE node IN ({node_list})
-        ),
-        ranked AS (
+        WITH ranked AS (
             SELECT opr_dt, node, opr_hr, mw,
                 ROW_NUMBER() OVER (PARTITION BY opr_dt, node ORDER BY mw ASC) as rn
-            FROM file_data
+            FROM node_hourly_lmp
+            WHERE node IN ({node_list})
+              AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
+              AND opr_hr <= 24
         ),
         daily_bx AS (
             SELECT opr_dt, node, AVG(mw) as bx_price
@@ -326,20 +297,18 @@ def get_full_year_8760(conn, nodes, year):
     if not nodes:
         return []
     
-    bucket = os.getenv('AWS_S3_BUCKET', 'oasis-data-for-replit-2025')
-    path = f"s3://{bucket}/lmp_parquet/year={year}/**/*.parquet"
     node_list = ', '.join(f"'{n}'" for n in nodes)
     
-    # Filter out hour 25 (DST transition days have 25 hours)
     query = f"""
         SELECT 
-            regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.parquet', 1) as opr_dt,
+            CAST(opr_dt AS VARCHAR) as opr_dt,
             opr_hr, 
             AVG(mw) as avg_price
-        FROM read_parquet('{path}', filename=true, hive_partitioning=true)
+        FROM node_hourly_lmp
         WHERE node IN ({node_list}) AND opr_hr <= 24
-        GROUP BY 1, opr_hr
-        ORDER BY 1, opr_hr
+          AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
+        GROUP BY opr_dt, opr_hr
+        ORDER BY opr_dt, opr_hr
     """
     
     result = conn.execute(query).fetchdf()
@@ -419,10 +388,12 @@ def get_missing_days(conn, year):
     }
 
 def get_all_individual_nodes(conn):
-    """Get all distinct node names from node_zone_mapping + generator_bx_summary for node search"""
+    """Get all distinct node names from node_hourly_lmp + node_zone_mapping + generator_bx_summary"""
     try:
         result = conn.execute("""
             SELECT DISTINCT name FROM (
+                SELECT DISTINCT node as name FROM node_hourly_lmp
+                UNION
                 SELECT pnode_id as name FROM node_zone_mapping
                 UNION
                 SELECT node as name FROM generator_bx_summary
@@ -484,23 +455,17 @@ def run_raw_sql(conn, sql, params=None):
 
 def get_available_years(conn):
     """Get list of years with data available"""
-    try:
-        result = conn.execute(
-            "SELECT DISTINCT EXTRACT(YEAR FROM opr_dt)::INTEGER as year FROM zone_hourly_lmp ORDER BY year DESC"
-        ).fetchdf()
-        if not result.empty:
-            return sorted(result['year'].tolist(), reverse=True)
-    except Exception:
-        pass
-    try:
-        result = conn.execute(
-            "SELECT DISTINCT EXTRACT(YEAR FROM opr_dt)::INTEGER as year FROM bx_daily_summary ORDER BY year DESC"
-        ).fetchdf()
-        if not result.empty:
-            return sorted(result['year'].tolist(), reverse=True)
-    except Exception:
-        pass
-    return [2024]
+    all_years = set()
+    for table in ['node_hourly_lmp', 'zone_hourly_lmp', 'bx_daily_summary']:
+        try:
+            result = conn.execute(
+                f"SELECT DISTINCT EXTRACT(YEAR FROM opr_dt)::INTEGER as year FROM {table}"
+            ).fetchdf()
+            if not result.empty:
+                all_years.update(result['year'].tolist())
+        except Exception:
+            pass
+    return sorted(all_years, reverse=True) if all_years else [2024]
 
 def get_all_nodes_from_summary(conn):
     """Get all distinct node names from bx_daily_summary"""
