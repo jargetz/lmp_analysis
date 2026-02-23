@@ -617,8 +617,10 @@ conn.close()
                     st.info(f"Available years for node analysis: {st.session_state.get('parquet_years', [])}")
     
     except Exception as e:
+        import traceback
         st.warning(f"Could not load BX statistics: {str(e)}")
         st.info("Make sure LMP data is loaded and BX calculations have been run.")
+        st.caption(f"Debug: {traceback.format_exc()}")
 
 
 def render_methodology_tab():
