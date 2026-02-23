@@ -648,12 +648,14 @@ For each operating day, the BX value is computed as follows:
 4. **Ranking**: All 24 hours for a given day and zone/node are sorted by LMP price ascending
 5. **Selection**: The cheapest X hours are selected (e.g., B8 = cheapest 8 hours)
 6. **Daily BX Price**: Simple average of the selected X cheapest hours' LMP values
-7. **Monthly Average**: Simple average of daily BX values within each month (using available days)
-8. **Annual Average (Monthly Weighted)**: Each month's average is weighted by the number of calendar days in that month.
-   Formula: `sum(month_avg x calendar_days_in_month) / total_calendar_days_in_year`
-   Example for 2024 (leap year, 366 days): `(Jan_avg x 31 + Feb_avg x 29 + ... + Dec_avg x 31) / 366`
+7. **Monthly Average**: Simple average of daily BX values within each month (using only days that have data)
+8. **Annual Average**: Each month's average is weighted by that month's share of the year's calendar days.
+   - Formula: `(Jan_avg × 31 + Feb_avg × days_in_feb + ... + Dec_avg × 31) / total_days_in_year`
+   - **Leap year example (2024, 366 days)**: Feb gets weight 29/366 ≈ 7.9%, Jan gets 31/366 ≈ 8.5%, etc.
+   - **Non-leap year (2023, 365 days)**: Feb gets weight 28/365 ≈ 7.7%
+   - The denominator is always the total calendar days in the year (365 or 366), not the number of days with data
 
-**Why monthly weighting?** With missing data concentrated in certain months (e.g., 17 of 29 February days missing in 2024), a simple annual average under-represents months with fewer data points. Monthly weighting by calendar days ensures each month contributes proportionally to the year.
+**Why this weighting?** If data is missing disproportionately in some months (e.g., only 12 of 29 February days loaded in 2024), a simple average of all daily values would under-count February. By first averaging within each month, then weighting months by their calendar-day share, each month contributes proportionally regardless of how many days of data are available.
 
 **Example**: If B8 for SP15 on Jan 1 selects hours with prices [$5, $8, $10, $12, $15, $18, $20, $22], 
 the B8 price for that day = ($5 + $8 + $10 + $12 + $15 + $18 + $20 + $22) / 8 = $13.75/MWh
@@ -676,10 +678,9 @@ CAISO-published aggregate prices representing generation-weighted averages for e
 differ from the EIA zone averages because they weight by generation output rather than load.
 
 **Missing Data Handling**: When EIA data is missing for certain days, each month's average is computed 
-using only the days that have data. The annual average then weights each month by its calendar days 
-(e.g., January contributes 31/366 in a leap year), matching the BX methodology above.
-This tool does **not** interpolate or fill in missing days — it averages what's available within 
-each month.
+using only the days that have data. The annual average then weights each month by its share of the 
+year's calendar days (e.g., January = 31/366 in a leap year), matching the BX methodology above.
+This tool does **not** interpolate or fill in missing days.
 """)
 
     with st.expander("Data Sources & Storage", expanded=False):
@@ -687,14 +688,13 @@ each month.
 **Data Pipeline**
 
 - **Source**: CAISO OASIS Day Ahead LMP files (ZIP format, one per day)
-- **Raw Storage**: Parquet files in AWS S3, partitioned by year/month/date
-- **Analytics Storage**: MotherDuck (DuckDB cloud) for zone-level hourly prices and BX summaries
-- **Zone Mapping**: EIA node-to-zone mapping loaded into MotherDuck
+- **Archive**: Raw Parquet files in AWS S3 (741 files, ~1 GB) — retained for backup, not queried at runtime
+- **Analytics Database**: MotherDuck (DuckDB cloud) — all queries run here, including node-level and zone-level data
 
-**Tables Used**
+**MotherDuck Tables**
 - `zone_hourly_lmp`: Hourly LMP by zone (NP15, SP15, ZP26) with congestion/energy/loss components
-- `node_hourly_lmp`: Raw node-level hourly LMP data (296M rows, all nodes, all years)
-- `bx_daily_summary`: Pre-computed daily BX values for individual nodes
+- `node_hourly_lmp`: Raw node-level hourly LMP data (~296M rows, ~17,500 nodes, 2020–2025)
+- `bx_daily_summary`: Pre-computed daily BX values by zone (from zone_hourly_lmp)
 - `generator_bx_summary`: BX values for generator settlement nodes (TH_*_GEN-APND)
 - `node_zone_mapping`: EIA mapping of individual pricing nodes to zones
 """)
@@ -858,7 +858,7 @@ each month.
         })
         sc_df = pd.DataFrame(rows)
         st.dataframe(sc_df, use_container_width=True, hide_index=True)
-        st.caption("Annual = monthly weighted average (sum of month_avg x calendar_days / total_calendar_days)")
+        st.caption("Annual = sum(month_avg × calendar_days_in_month) / total_days_in_year (365 or 366 for leap years)")
 
 
 def render_ai_assistant_tab():
