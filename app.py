@@ -262,7 +262,9 @@ def render_dashboard_tab():
             )
         
         with filter_col4:
-            zone_years = st.session_state.get('zone_years', [2024])
+            zone_years = [y for y in st.session_state.get('zone_years', [2024]) if y <= 2024]
+            if not zone_years:
+                zone_years = [2024]
             
             if time_period == "Annual":
                 selected_year = st.selectbox(
