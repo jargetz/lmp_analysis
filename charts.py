@@ -530,12 +530,21 @@ def create_node_month_hour_heatmap(
     
     pivot = df.pivot_table(values='avg_price', index='month', columns='hour', aggfunc='mean')
     pivot = pivot.reindex(index=range(1, 13))
-    # opr_hr is already 1-24, don't add 1
     pivot.columns = [int(h) for h in pivot.columns]
     
     z_values = pivot.values
     x_labels = [str(h) for h in range(1, 25)]
     y_labels = month_names[:len(pivot)]
+    
+    import numpy as np
+    flat_vals = [v for row in z_values for v in row if pd.notna(v)]
+    if flat_vals:
+        zmin = float(np.percentile(flat_vals, 2))
+        zmax = float(np.percentile(flat_vals, 98))
+        if zmin == zmax:
+            zmin, zmax = min(flat_vals), max(flat_vals)
+    else:
+        zmin, zmax = None, None
     
     text_values = [[f'{val:.2f}' if pd.notna(val) else '' for val in row] for row in z_values]
     
@@ -553,6 +562,8 @@ def create_node_month_hour_heatmap(
             [0.75, '#ff9966'],
             [1.0, '#cc3300']
         ],
+        zmin=zmin,
+        zmax=zmax,
         hovertemplate='%{y} Hour %{x}: $%{z:.2f}/MWh<extra></extra>',
         showscale=True,
         colorbar=dict(title='$/MWh', tickformat='.0f')
