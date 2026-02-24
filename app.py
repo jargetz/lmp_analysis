@@ -397,7 +397,7 @@ def render_dashboard_tab():
             gen_stats = st.session_state[gen_cache_key]
             
             if gen_stats.get('success') and gen_stats.get('zones'):
-                st.markdown("**Generator Settlement Node Average** (unweighted, monthly weighted)")
+                st.markdown("**Generator Settlement Prices** (gen-weighted by CAISO, monthly weighted)")
                 gen_cols = st.columns(3)
                 gen_zone_order = ['NP15', 'SP15', 'ZP26']
                 
@@ -408,7 +408,7 @@ def render_dashboard_tab():
                             st.metric(
                                 f"{zone_name}",
                                 f"${zone_data['avg_price']:.2f}/MWh",
-                                help=f"TH_{zone_name}_GEN-APND (unweighted). Days: {zone_data.get('day_count', 0)}"
+                                help=f"TH_{zone_name}_GEN-APND (gen-weighted by CAISO). Days: {zone_data.get('day_count', 0)}"
                             )
                         else:
                             st.metric(f"{zone_name}", "N/A")
