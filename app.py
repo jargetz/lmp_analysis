@@ -388,11 +388,13 @@ def render_dashboard_tab():
                     else:
                         st.metric(zone_name, "N/A")
             
-            gen_cache_key = f"gen_stats_{selected_bx}_{selected_year}"
+            gen_cache_key = f"gen_stats_{selected_bx}_{selected_year}_{time_period}_{selected_month}"
             if gen_cache_key not in st.session_state:
                 st.session_state[gen_cache_key] = bx_calc.get_generator_bx_average(
                     bx=selected_bx,
-                    year=selected_year
+                    year=selected_year,
+                    time_period=time_period,
+                    month=selected_month
                 )
             gen_stats = st.session_state[gen_cache_key]
             

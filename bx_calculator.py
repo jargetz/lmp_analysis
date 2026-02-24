@@ -376,7 +376,9 @@ class BXCalculator:
         self,
         bx: int,
         year: int,
-        zone: str = None
+        zone: str = None,
+        time_period: str = "Annual",
+        month: int = None
     ) -> Dict[str, Any]:
         """
         Get pre-computed BX averages for generator nodes from MotherDuck.
@@ -388,6 +390,11 @@ class BXCalculator:
         if zone:
             zone = self._sanitize_zone(zone)
             conditions.append(f"zone = '{zone}'")
+        
+        if time_period == "Monthly" and month:
+            month = int(month)
+            if 1 <= month <= 12:
+                conditions.append(f"EXTRACT(MONTH FROM opr_dt) = {month}")
         
         query = f"""
             SELECT 
@@ -420,7 +427,10 @@ class BXCalculator:
             by_zone = {}
             for zone_name, data in by_zone_months.items():
                 zone_rows = data['months']
-                avg_price = self._monthly_weighted_avg(zone_rows, 'monthly_avg', year)
+                if time_period == "Monthly" and month:
+                    avg_price = float(zone_rows[0]['monthly_avg']) if zone_rows else None
+                else:
+                    avg_price = self._monthly_weighted_avg(zone_rows, 'monthly_avg', year)
                 total_days = sum(int(r['days_with_data']) for r in zone_rows)
                 all_mins = [float(r['monthly_min']) for r in zone_rows]
                 all_maxs = [float(r['monthly_max']) for r in zone_rows]
