@@ -34,6 +34,8 @@ Preferred communication style: Simple, everyday language.
 - **Pre-computed Aggregates**: Daily, monthly, and annual summary tables in MotherDuck accelerate dashboard queries.
 - **Monthly Weighting**: Annual averages use calendar-day weighting: `sum(month_avg × calendar_days) / total_calendar_days`.
 - **Three Averaging Methods**: (1) EIA load-weighted zone averages from `zone_hourly_lmp`, (2) Generator settlement from `generator_bx_summary` (TH_*_GEN-APND nodes), (3) Unweighted node averages from `bx_daily_summary`.
+- **Node-Zone Mapping**: Uses CAISO AS Region Map files to assign nodes to zones. Logic: AS_NP15 ∩ AS_NP26 → NP15, AS_SP15 ∩ AS_NP26 → ZP26, AS_SP15 only → SP15. Stored in `node_zone_mapping` table (6,394 nodes: 3,206 NP15, 2,627 SP15, 561 ZP26).
+- **APNode Mapping**: `node_apnode_mapping` table maps component nodes to aggregated pricing nodes (TH_NP15_GEN-APND: 698, TH_SP15_GEN-APND: 1,076, TH_ZP26_GEN-APND: 178).
 - **Security**: Input sanitization for node names, zone names, S3 bucket names, and parameterized queries to prevent SQL injection.
 - **Dynamic Node Selection**: Supports both zone-based and search-based node analysis with autocomplete.
 
