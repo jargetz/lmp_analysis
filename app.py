@@ -372,7 +372,7 @@ def render_dashboard_tab():
                 )
             load_stats = st.session_state[load_cache_key]
             
-            st.markdown("**EIA Load-Weighted Zone Average** (monthly weighted)")
+            st.markdown("**EIA Load-Weighted Zone Average**")
             zone_cols = st.columns(4)
             zone_order = ['NP15', 'SP15', 'ZP26', 'Overall']
             
@@ -397,7 +397,7 @@ def render_dashboard_tab():
             gen_stats = st.session_state[gen_cache_key]
             
             if gen_stats.get('success') and gen_stats.get('zones'):
-                st.markdown("**Generator Settlement Prices** (gen-weighted by CAISO, monthly weighted)")
+                st.markdown("**Generator Settlement Prices** (gen-weighted by CAISO)")
                 gen_cols = st.columns(3)
                 gen_zone_order = ['NP15', 'SP15', 'ZP26']
                 
@@ -412,31 +412,6 @@ def render_dashboard_tab():
                             )
                         else:
                             st.metric(f"{zone_name}", "N/A")
-            
-            node_cache_key = f"node_avg_stats_{selected_bx}_{selected_year}_{time_period}_{selected_month}"
-            if node_cache_key not in st.session_state:
-                st.session_state[node_cache_key] = bx_calc.get_all_zones_bx_average(
-                    bx=selected_bx,
-                    year=selected_year,
-                    time_period=time_period,
-                    month=selected_month
-                )
-            node_stats = st.session_state[node_cache_key]
-            
-            with st.expander("Node Average (unweighted)", expanded=False):
-                st.caption("Simple average of individual node BX values within each zone — not load-weighted")
-                node_cols = st.columns(4)
-                for col, zone_name in zip(node_cols, zone_order):
-                    with col:
-                        stats = node_stats.get(zone_name, {})
-                        if stats.get('success') and stats.get('avg_price') is not None:
-                            st.metric(
-                                f"{zone_name}",
-                                f"${stats['avg_price']:.2f}/MWh",
-                                help=f"Unweighted avg of node BX values. Days: {stats.get('day_count', 0)}"
-                            )
-                        else:
-                            st.metric(zone_name, "N/A")
             
             st.subheader("Averages - Day Ahead LMP")
             heatmap_tab_labels = ['Overall (not weighted by zone)', 'NP15', 'SP15', 'ZP26']
