@@ -1059,7 +1059,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
     group_size = df.groupby(['lat', 'lon'])['lat'].transform('count')
     dup_mask = group_size > 1
     if dup_mask.any():
-        RADIUS = 0.03
+        RADIUS = 0.06
         rank = df.groupby(['lat', 'lon']).cumcount()
         angles = 2 * np.pi * rank[dup_mask] / group_size[dup_mask]
         df.loc[dup_mask, 'lat'] = df.loc[dup_mask, 'lat'] + RADIUS * np.sin(angles)
