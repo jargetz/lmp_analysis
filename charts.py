@@ -1000,14 +1000,49 @@ def create_node_box_plot(
     return fig, clipping_info
 
 
-def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone') -> go.Figure:
+def _add_facility_traces(fig: go.Figure, facilities: list) -> None:
+    """Add CARB facility markers to an existing mapbox figure."""
+    if not facilities:
+        return
+    fdf = pd.DataFrame(facilities)
+    for covered, label, color, size in [
+        ('Yes', 'Covered Facilities', 'red', 12),
+        ('No',  'Non-Covered Facilities', '#999999', 9),
+    ]:
+        sub = fdf[fdf['cap_and_trade'] == covered]
+        if sub.empty:
+            continue
+        hover = (
+            '<b>' + sub['facility'].astype(str) + '</b><br>'
+            'Sector: ' + sub['primary_sector'].astype(str) + ' | ' + sub['county'].astype(str) + ' Co.<br>'
+            'Cap-and-Trade: ' + sub['cap_and_trade'].astype(str) + '<br>'
+            'Total GHG: ' + sub['total_ghg'].apply(lambda x: f'{x:,.0f}') + ' MT CO₂e (2023)<br>'
+            'CO₂: ' + sub['co2'].apply(lambda x: f'{x:,.0f}') + '  '
+            'NOx: ' + sub['nox'].apply(lambda x: f'{x:,.1f}') + '  '
+            'SOx: ' + sub['sox'].apply(lambda x: f'{x:,.1f}') + '  '
+            'PM2.5: ' + sub['pm25'].apply(lambda x: f'{x:,.1f}')
+        )
+        fig.add_trace(go.Scattermapbox(
+            lat=sub['lat'].tolist(),
+            lon=sub['lon'].tolist(),
+            mode='markers',
+            name=label,
+            marker=dict(symbol='circle', size=size, color=color, opacity=0.9),
+            customdata=hover.tolist(),
+            hovertemplate='%{customdata}<extra></extra>',
+        ))
+
+
+def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
+                     facilities: list = None) -> go.Figure:
     """
-    Create a geographic scatter map of PNODE BX prices.
+    Create a geographic scatter map of PNODE BX prices with optional facility overlay.
 
     Args:
         data: List of dicts with keys: pnode_id, lat, lon, node_type, area, zone, avg_price
         bx_label: e.g. "B8" for hover/title text
         color_by: 'zone' or 'price'
+        facilities: Optional list of facility dicts from get_facility_emissions()
 
     Returns:
         Plotly Figure
@@ -1101,6 +1136,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone') -> go.Fi
             margin=dict(l=0, r=0, t=50, b=0)
         )
 
+    _add_facility_traces(fig, facilities)
     return fig
 
 

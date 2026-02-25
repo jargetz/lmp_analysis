@@ -1,11 +1,10 @@
 """
-CAISO LMP Analysis Tool - Main Application
+BX CAISO Nodal Analysis Tool - Main Application
 
-This is the main Streamlit application with two primary views:
-1. Dashboard - Summary statistics, BX analysis, and zone filtering
-2. AI Assistant - Natural language queries about the data
-
-The dashboard is the primary interface for exploring LMP data.
+Primary views:
+1. Dashboard - BX analysis and zone/node filtering
+2. Node Map - Geographic PNODE price map with facility overlay
+3. Methodology & Data - Calculation explanations and spot-check tables
 """
 
 import streamlit as st
@@ -41,13 +40,13 @@ from charts import (
 
 def main():
     st.set_page_config(
-        page_title="CAISO LMP Analysis Tool",
+        page_title="BX CAISO Nodal Analysis Tool",
         page_icon="⚡",
         layout="wide"
     )
     
-    st.title("⚡ CAISO LMP Analysis Tool")
-    st.markdown("Analyze electricity pricing with AI-powered insights using comprehensive CAISO Day Ahead LMP data.")
+    st.title("⚡ BX CAISO Nodal Analysis Tool")
+    st.markdown("Analyze historical data for the cheapest 4–10 hours of nodal prices across CAISO.")
     
     # Initialize session state (database-backed)
     if 'processor' not in st.session_state:
@@ -135,7 +134,7 @@ def main():
         """)
         
     else:
-        tab_dashboard, tab_node_map, tab_methodology, tab_ai = st.tabs(["📊 Dashboard", "🗺️ Node Map", "📋 Methodology & Data", "💬 AI Assistant"])
+        tab_dashboard, tab_node_map, tab_methodology = st.tabs(["📊 Dashboard", "🗺️ Node Map", "📋 Methodology & Data"])
         
         # =====================================================================
         # DASHBOARD TAB - Primary interface for BX analysis with zone filtering
@@ -144,7 +143,7 @@ def main():
             render_dashboard_tab()
         
         # =====================================================================
-        # NODE MAP TAB - Geographic PNODE price map
+        # NODE MAP TAB - Geographic PNODE price map with facility overlay
         # =====================================================================
         with tab_node_map:
             render_node_map_tab()
@@ -154,12 +153,6 @@ def main():
         # =====================================================================
         with tab_methodology:
             render_methodology_tab()
-        
-        # =====================================================================
-        # AI ASSISTANT TAB - Natural language queries (existing chatbot)
-        # =====================================================================
-        with tab_ai:
-            render_ai_assistant_tab()
 
 
 def render_dashboard_tab():
@@ -684,9 +677,45 @@ def render_node_map_tab():
     with map_col5:
         color_by = st.radio("Color by", options=["Zone", "Price"], key="map_color_by", horizontal=True)
 
+    # ── Facility controls ─────────────────────────────────────────────────────
+    fac_col1, fac_col2 = st.columns([1, 2])
+    with fac_col1:
+        show_facilities = st.checkbox("Show CARB facilities (2023 data)", value=True, key="map_show_facilities")
+    with fac_col2:
+        if show_facilities:
+            fac_filter = st.radio(
+                "Filter",
+                options=["All facilities", "Covered entities only"],
+                key="map_facility_filter",
+                horizontal=True,
+            )
+        else:
+            fac_filter = "All facilities"
+
     st.divider()
 
-    # ── Data fetch ────────────────────────────────────────────────────────────
+    # ── Load facility data (cached for the session) ───────────────────────────
+    if show_facilities and 'facility_data' not in st.session_state:
+        with st.spinner("Loading CARB facility data…"):
+            try:
+                proc = subprocess.run(
+                    ['python3', 'subprocess_query.py', 'facility_emissions'],
+                    capture_output=True, text=True, timeout=30
+                )
+                if proc.returncode == 0:
+                    st.session_state['facility_data'] = json.loads(proc.stdout)
+                else:
+                    st.session_state['facility_data'] = []
+            except Exception:
+                st.session_state['facility_data'] = []
+
+    facilities_all = st.session_state.get('facility_data', []) if show_facilities else []
+    if fac_filter == "Covered entities only":
+        facilities_to_show = [f for f in facilities_all if f.get('cap_and_trade') == 'Yes']
+    else:
+        facilities_to_show = facilities_all
+
+    # ── PNODE price data fetch ────────────────────────────────────────────────
     period_label = str(map_year) if map_time_period == "Annual" else f"{month_options[map_month - 1]} {map_year}"
     cache_key = f"node_map_{map_bx}_{map_year}_{map_time_period}_{map_month}"
 
@@ -720,12 +749,18 @@ def render_node_map_tab():
 
     # ── Price distribution histogram ──────────────────────────────────────────
     total_nodes = len(map_data)
-    st.caption(f"{total_nodes:,} nodes with coordinates plotted")
+    fac_note = f" · {len(facilities_to_show)} facilities shown" if facilities_to_show else ""
+    st.caption(f"{total_nodes:,} nodes with coordinates plotted{fac_note}")
     hist_fig = create_pnode_price_histogram(map_data, bx_label=f"B{map_bx}")
     st.plotly_chart(hist_fig, use_container_width=True)
 
     # ── Map chart ─────────────────────────────────────────────────────────────
-    fig = create_pnode_map(map_data, bx_label=f"B{map_bx}", color_by=color_by.lower())
+    fig = create_pnode_map(
+        map_data,
+        bx_label=f"B{map_bx}",
+        color_by=color_by.lower(),
+        facilities=facilities_to_show if facilities_to_show else None,
+    )
     st.plotly_chart(fig, use_container_width=True)
 
 

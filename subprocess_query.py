@@ -105,6 +105,8 @@ def run_query():
             time_period = sys.argv[4]
             month = int(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5] else None
             result = get_node_map_data(conn, bx, year, time_period, month)
+        elif query_type == 'facility_emissions':
+            result = get_facility_emissions(conn)
         else:
             result = {'error': f'Unknown query type: {query_type}'}
         
@@ -659,6 +661,37 @@ def get_unique_nodes(conn, limit=5):
     """Get unique node names from bx_daily_summary"""
     result = conn.execute(f"SELECT DISTINCT node FROM bx_daily_summary ORDER BY node LIMIT {int(limit)}").fetchdf()
     return [str(n) for n in result['node'].tolist()]
+
+
+def get_facility_emissions(conn):
+    """Return all CARB facility emissions rows (2023 data)."""
+    result = conn.execute('''
+        SELECT facility, primary_sector, city, county, district,
+               lat, lon, cap_and_trade,
+               total_ghg, co2, nox, sox, pm10, pm25, diesel_pm
+        FROM facility_emissions
+        ORDER BY facility
+    ''').fetchdf()
+    return [
+        {
+            'facility':       str(r['facility']),
+            'primary_sector': str(r['primary_sector']),
+            'city':           str(r['city']),
+            'county':         str(r['county']),
+            'district':       str(r['district']),
+            'lat':            float(r['lat']),
+            'lon':            float(r['lon']),
+            'cap_and_trade':  str(r['cap_and_trade']),
+            'total_ghg':      float(r['total_ghg']) if r['total_ghg'] is not None else 0.0,
+            'co2':            float(r['co2']) if r['co2'] is not None else 0.0,
+            'nox':            float(r['nox']) if r['nox'] is not None else 0.0,
+            'sox':            float(r['sox']) if r['sox'] is not None else 0.0,
+            'pm10':           float(r['pm10']) if r['pm10'] is not None else 0.0,
+            'pm25':           float(r['pm25']) if r['pm25'] is not None else 0.0,
+            'diesel_pm':      float(r['diesel_pm']) if r['diesel_pm'] is not None else 0.0,
+        }
+        for _, r in result.iterrows()
+    ]
 
 
 def get_node_map_data(conn, bx, year, time_period, month=None):
