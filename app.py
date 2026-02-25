@@ -695,7 +695,7 @@ def render_node_map_tab():
     st.divider()
 
     # ── Load facility data (cached for the session) ───────────────────────────
-    if show_facilities and 'facility_data' not in st.session_state:
+    if 'facility_data' not in st.session_state:
         with st.spinner("Loading CARB facility data…"):
             try:
                 proc = subprocess.run(
@@ -709,11 +709,44 @@ def render_node_map_tab():
             except Exception:
                 st.session_state['facility_data'] = []
 
-    facilities_all = st.session_state.get('facility_data', []) if show_facilities else []
+    facilities_all = st.session_state.get('facility_data', [])
+    covered_facilities = sorted(
+        [f for f in facilities_all if f.get('cap_and_trade') == 'Yes'],
+        key=lambda f: f['facility']
+    )
+    covered_names = [f['facility'] for f in covered_facilities]
+
+    # ── Covered-entity search ─────────────────────────────────────────────────
+    search_col1, search_col2 = st.columns([2, 3])
+    with search_col1:
+        selected_name = st.selectbox(
+            "Search covered entity",
+            options=[None] + covered_names,
+            format_func=lambda x: "— type to search —" if x is None else x,
+            key="map_facility_search",
+        )
+
+    selected_facility = None
+    if selected_name:
+        selected_facility = next((f for f in covered_facilities if f['facility'] == selected_name), None)
+
+    if selected_facility:
+        with search_col2:
+            st.info(
+                f"**{selected_facility['facility']}**  \n"
+                f"{selected_facility['primary_sector']} · {selected_facility['county']} Co. · {selected_facility['city']}  \n"
+                f"Total GHG: **{selected_facility['total_ghg']:,.0f}** MT CO₂e · "
+                f"CO₂: {selected_facility['co2']:,.0f} · "
+                f"NOx: {selected_facility['nox']:,.1f} · "
+                f"SOx: {selected_facility['sox']:,.1f} · "
+                f"PM2.5: {selected_facility['pm25']:,.1f}"
+            )
+
+    st.divider()
+
+    facilities_to_show = facilities_all if show_facilities else []
     if fac_filter == "Covered entities only":
-        facilities_to_show = [f for f in facilities_all if f.get('cap_and_trade') == 'Yes']
-    else:
-        facilities_to_show = facilities_all
+        facilities_to_show = [f for f in facilities_to_show if f.get('cap_and_trade') == 'Yes']
 
     # ── PNODE price data fetch ────────────────────────────────────────────────
     period_label = str(map_year) if map_time_period == "Annual" else f"{month_options[map_month - 1]} {map_year}"
@@ -760,6 +793,7 @@ def render_node_map_tab():
         bx_label=f"B{map_bx}",
         color_by=color_by.lower(),
         facilities=facilities_to_show if facilities_to_show else None,
+        selected_facility=selected_facility,
     )
     st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 

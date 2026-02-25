@@ -1034,7 +1034,8 @@ def _add_facility_traces(fig: go.Figure, facilities: list) -> None:
 
 
 def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
-                     facilities: list = None) -> go.Figure:
+                     facilities: list = None,
+                     selected_facility: dict = None) -> go.Figure:
     """
     Create a geographic scatter map of PNODE BX prices with optional facility overlay.
 
@@ -1043,6 +1044,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
         bx_label: e.g. "B8" for hover/title text
         color_by: 'zone' or 'price'
         facilities: Optional list of facility dicts from get_facility_emissions()
+        selected_facility: Optional single facility dict to highlight and centre the map on
 
     Returns:
         Plotly Figure
@@ -1146,6 +1148,37 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
         )
 
     _add_facility_traces(fig, facilities)
+
+    if selected_facility:
+        slat = selected_facility['lat']
+        slon = selected_facility['lon']
+        hover_sel = (
+            f"<b>{selected_facility['facility']}</b><br>"
+            f"Sector: {selected_facility['primary_sector']} | {selected_facility['county']} Co.<br>"
+            f"Cap-and-Trade: {selected_facility['cap_and_trade']}<br>"
+            f"Total GHG: {selected_facility['total_ghg']:,.0f} MT CO₂e (2023)<br>"
+            f"CO₂: {selected_facility['co2']:,.0f}  "
+            f"NOx: {selected_facility['nox']:,.1f}  "
+            f"SOx: {selected_facility['sox']:,.1f}  "
+            f"PM2.5: {selected_facility['pm25']:,.1f}"
+        )
+        fig.add_trace(go.Scattermapbox(
+            lat=[slat],
+            lon=[slon],
+            mode='markers',
+            name='Selected Facility',
+            marker=dict(size=20, color='gold', opacity=1.0),
+            customdata=[hover_sel],
+            hovertemplate='%{customdata}<extra></extra>',
+        ))
+        fig.update_layout(
+            mapbox=dict(
+                center=dict(lat=slat, lon=slon),
+                zoom=11,
+                style='carto-positron',
+            )
+        )
+
     return fig
 
 
