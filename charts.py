@@ -1035,7 +1035,8 @@ def _add_facility_traces(fig: go.Figure, facilities: list) -> None:
 
 def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
                      facilities: list = None,
-                     selected_facility: dict = None) -> go.Figure:
+                     selected_facility: dict = None,
+                     nearest_node: dict = None) -> go.Figure:
     """
     Create a geographic scatter map of PNODE BX prices with optional facility overlay.
 
@@ -1178,6 +1179,23 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
                 style='carto-positron',
             )
         )
+
+    if nearest_node and nearest_node.get('lat') is not None:
+        price_str = f"${nearest_node['avg_price']:.2f}/MWh" if nearest_node.get('avg_price') is not None else "N/A"
+        hover_nn = (
+            f"<b>Nearest node: {nearest_node['pnode_id']}</b><br>"
+            f"Zone: {nearest_node.get('zone', '—')}<br>"
+            f"{bx_label} avg: {price_str}"
+        )
+        fig.add_trace(go.Scattermapbox(
+            lat=[nearest_node['lat']],
+            lon=[nearest_node['lon']],
+            mode='markers',
+            name='Nearest Node',
+            marker=dict(size=16, color='cyan', opacity=1.0),
+            customdata=[hover_nn],
+            hovertemplate='%{customdata}<extra></extra>',
+        ))
 
     return fig
 

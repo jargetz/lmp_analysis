@@ -660,11 +660,13 @@ def render_node_map_tab():
     map_years = [y for y in available_years]
     if not map_years:
         map_years = [2024]
+    default_year_idx = map_years.index(2025) if 2025 in map_years else 0
 
     with map_col3:
         map_year = st.selectbox(
             "Year",
             options=map_years,
+            index=default_year_idx,
             key="map_year",
         )
 
@@ -710,11 +712,8 @@ def render_node_map_tab():
                 st.session_state['facility_data'] = []
 
     facilities_all = st.session_state.get('facility_data', [])
-    covered_facilities = sorted(
-        [f for f in facilities_all if f.get('cap_and_trade') == 'Yes'],
-        key=lambda f: f['facility']
-    )
-    covered_names = [f['facility'] for f in covered_facilities]
+    all_facilities_sorted = sorted(facilities_all, key=lambda f: f['facility'])
+    all_facility_names = [f['facility'] for f in all_facilities_sorted]
 
     facilities_to_show = facilities_all if show_facilities else []
     if fac_filter == "Covered entities only":
@@ -759,31 +758,52 @@ def render_node_map_tab():
     hist_fig = create_pnode_price_histogram(map_data, bx_label=f"B{map_bx}")
     st.plotly_chart(hist_fig, use_container_width=True)
 
-    # ── Covered-entity search (above map) ─────────────────────────────────────
+    # ── Facility search + nearest-node (above map) ────────────────────────────
     search_col1, search_col2 = st.columns([2, 3])
     with search_col1:
         selected_name = st.selectbox(
-            "Search covered entity",
-            options=covered_names,
+            "Search facility",
+            options=all_facility_names,
             index=None,
             placeholder="Type to search...",
             key="map_facility_search",
         )
 
     selected_facility = None
+    nearest_node = None
     if selected_name:
-        selected_facility = next((f for f in covered_facilities if f['facility'] == selected_name), None)
+        selected_facility = next((f for f in all_facilities_sorted if f['facility'] == selected_name), None)
 
-    if selected_facility:
+    if selected_facility and map_data:
+        flat = selected_facility['lat']
+        flon = selected_facility['lon']
+        cos_lat = __import__('math').cos(__import__('math').radians(flat))
+        best, best_dist = None, float('inf')
+        for node in map_data:
+            if node.get('lat') is None or node.get('lon') is None:
+                continue
+            dlat = node['lat'] - flat
+            dlon = (node['lon'] - flon) * cos_lat
+            d = dlat * dlat + dlon * dlon
+            if d < best_dist:
+                best_dist = d
+                best = node
+        nearest_node = best
+        dist_km = (best_dist ** 0.5) * 111.0
+
         with search_col2:
+            ct_badge = "Cap-and-Trade" if selected_facility['cap_and_trade'] == 'Yes' else "Non-covered"
+            node_price = f"${nearest_node['avg_price']:.2f}/MWh" if nearest_node and nearest_node.get('avg_price') is not None else "N/A"
+            node_name = nearest_node['pnode_id'] if nearest_node else "—"
             st.info(
-                f"**{selected_facility['facility']}**  \n"
+                f"**{selected_facility['facility']}** · {ct_badge}  \n"
                 f"{selected_facility['primary_sector']} · {selected_facility['county']} Co. · {selected_facility['city']}  \n"
                 f"Total GHG: **{selected_facility['total_ghg']:,.0f}** MT CO₂e · "
                 f"CO₂: {selected_facility['co2']:,.0f} · "
                 f"NOx: {selected_facility['nox']:,.1f} · "
                 f"SOx: {selected_facility['sox']:,.1f} · "
-                f"PM2.5: {selected_facility['pm25']:,.1f}"
+                f"PM2.5: {selected_facility['pm25']:,.1f}  \n"
+                f"Nearest node: **{node_name}** ({dist_km:.1f} km) · B{map_bx} avg {node_price}"
             )
 
     # ── Map chart ─────────────────────────────────────────────────────────────
@@ -793,6 +813,7 @@ def render_node_map_tab():
         color_by=color_by.lower(),
         facilities=facilities_to_show if facilities_to_show else None,
         selected_facility=selected_facility,
+        nearest_node=nearest_node,
     )
     st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
