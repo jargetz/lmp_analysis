@@ -716,34 +716,6 @@ def render_node_map_tab():
     )
     covered_names = [f['facility'] for f in covered_facilities]
 
-    # ── Covered-entity search ─────────────────────────────────────────────────
-    search_col1, search_col2 = st.columns([2, 3])
-    with search_col1:
-        selected_name = st.selectbox(
-            "Search covered entity",
-            options=[None] + covered_names,
-            format_func=lambda x: "— type to search —" if x is None else x,
-            key="map_facility_search",
-        )
-
-    selected_facility = None
-    if selected_name:
-        selected_facility = next((f for f in covered_facilities if f['facility'] == selected_name), None)
-
-    if selected_facility:
-        with search_col2:
-            st.info(
-                f"**{selected_facility['facility']}**  \n"
-                f"{selected_facility['primary_sector']} · {selected_facility['county']} Co. · {selected_facility['city']}  \n"
-                f"Total GHG: **{selected_facility['total_ghg']:,.0f}** MT CO₂e · "
-                f"CO₂: {selected_facility['co2']:,.0f} · "
-                f"NOx: {selected_facility['nox']:,.1f} · "
-                f"SOx: {selected_facility['sox']:,.1f} · "
-                f"PM2.5: {selected_facility['pm25']:,.1f}"
-            )
-
-    st.divider()
-
     facilities_to_show = facilities_all if show_facilities else []
     if fac_filter == "Covered entities only":
         facilities_to_show = [f for f in facilities_to_show if f.get('cap_and_trade') == 'Yes']
@@ -786,6 +758,33 @@ def render_node_map_tab():
     st.caption(f"{total_nodes:,} nodes with coordinates plotted{fac_note}")
     hist_fig = create_pnode_price_histogram(map_data, bx_label=f"B{map_bx}")
     st.plotly_chart(hist_fig, use_container_width=True)
+
+    # ── Covered-entity search (above map) ─────────────────────────────────────
+    search_col1, search_col2 = st.columns([2, 3])
+    with search_col1:
+        selected_name = st.selectbox(
+            "Search covered entity",
+            options=covered_names,
+            index=None,
+            placeholder="Type to search...",
+            key="map_facility_search",
+        )
+
+    selected_facility = None
+    if selected_name:
+        selected_facility = next((f for f in covered_facilities if f['facility'] == selected_name), None)
+
+    if selected_facility:
+        with search_col2:
+            st.info(
+                f"**{selected_facility['facility']}**  \n"
+                f"{selected_facility['primary_sector']} · {selected_facility['county']} Co. · {selected_facility['city']}  \n"
+                f"Total GHG: **{selected_facility['total_ghg']:,.0f}** MT CO₂e · "
+                f"CO₂: {selected_facility['co2']:,.0f} · "
+                f"NOx: {selected_facility['nox']:,.1f} · "
+                f"SOx: {selected_facility['sox']:,.1f} · "
+                f"PM2.5: {selected_facility['pm25']:,.1f}"
+            )
 
     # ── Map chart ─────────────────────────────────────────────────────────────
     fig = create_pnode_map(
