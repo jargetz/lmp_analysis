@@ -1076,7 +1076,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             'NP15': zone_colors['NP15'],
             'SP15': zone_colors['SP15'],
             'ZP26': zone_colors['ZP26'],
-            'Other': '#d3d3d3',
+            'Other': '#999999',
         }
         df['hover_text'] = (
             '<b>' + df['pnode_id'].astype(str) + '</b><br>' +
