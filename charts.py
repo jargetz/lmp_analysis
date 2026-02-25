@@ -1138,9 +1138,10 @@ def create_pnode_price_histogram(data: list, bx_label: str) -> go.Figure:
         'NP15': '#1f77b4',
         'SP15': '#ff7f0e',
         'ZP26': '#2ca02c',
-        'Other': '#d3d3d3',
     }
-    zone_order = ['NP15', 'SP15', 'ZP26', 'Other']
+    zone_order = ['NP15', 'SP15', 'ZP26']
+
+    df_clip = df_clip[df_clip['zone_label'].isin(zone_order)]
 
     fig = go.Figure()
     for zone in zone_order:
