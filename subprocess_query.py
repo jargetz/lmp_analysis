@@ -99,6 +99,12 @@ def run_query():
         elif query_type == 'multi_sql':
             queries = json.loads(sys.argv[2])
             result = run_multi_sql(conn, queries)
+        elif query_type == 'node_map':
+            bx = int(sys.argv[2])
+            year = int(sys.argv[3])
+            time_period = sys.argv[4]
+            month = int(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5] else None
+            result = get_node_map_data(conn, bx, year, time_period, month)
         else:
             result = {'error': f'Unknown query type: {query_type}'}
         
@@ -108,40 +114,33 @@ def run_query():
         print(json.dumps({'error': str(e)}))
 
 def get_node_bx(conn, bx, nodes, year):
-    """Compute BX average for nodes with most common BX hours"""
+    """Compute BX average for nodes using pre-computed monthly summary table."""
     import re
-    from collections import Counter
     nodes = [n for n in nodes if re.match(r'^[A-Za-z0-9_\-\.]+$', n)]
     if not nodes:
         return {'success': False, 'error': 'No valid nodes'}
-    
+
+    col = f'b{bx}_avg'
     node_list = ', '.join(f"'{n}'" for n in nodes)
-    
-    avg_query = f"""
-        WITH ranked AS (
-            SELECT opr_dt, node, opr_hr, mw,
-                ROW_NUMBER() OVER (PARTITION BY opr_dt, node ORDER BY mw ASC) as rn
-            FROM node_hourly_lmp
-            WHERE node IN ({node_list})
-              AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
-              AND opr_hr <= 24
-        ),
-        daily_bx AS (
-            SELECT opr_dt, node, AVG(mw) as bx_price
-            FROM ranked WHERE rn <= {bx}
-            GROUP BY opr_dt, node
-        )
-        SELECT node, AVG(bx_price) as avg_price, MIN(bx_price) as min_price, 
-               MAX(bx_price) as max_price, COUNT(DISTINCT opr_dt) as day_count
-        FROM daily_bx GROUP BY node
+
+    summary_query = f"""
+        SELECT node,
+               SUM({col} * days_count) / SUM(days_count) AS avg_price,
+               MIN({col}) AS min_price,
+               MAX({col}) AS max_price,
+               SUM(days_count) AS day_count
+        FROM node_bx_monthly_summary
+        WHERE node IN ({node_list})
+          AND year = {int(year)}
+        GROUP BY node
     """
-    
-    result = conn.execute(avg_query).fetchdf()
+
+    result = conn.execute(summary_query).fetchdf()
     if result.empty:
-        return {'success': False, 'error': 'No data found'}
-    
+        return {'success': False, 'error': 'No data found in summary table'}
+
     per_node = {row['node']: float(row['avg_price']) for _, row in result.iterrows()}
-    
+
     hours_query = f"""
         WITH ranked AS (
             SELECT opr_dt, node, opr_hr, mw,
@@ -156,21 +155,17 @@ def get_node_bx(conn, bx, nodes, year):
         GROUP BY node, opr_hr
         ORDER BY node, cnt DESC
     """
-    
     hours_result = conn.execute(hours_query).fetchdf()
     per_node_hours = {}
     for node in nodes:
         node_hours = hours_result[hours_result['node'] == node].head(bx)
         per_node_hours[node] = [int(h) for h in node_hours['opr_hr'].tolist()]
-    
-    try:
-        avg_price = float(result['avg_price'].mean()) if len(result) > 0 else 0.0
-        min_price = float(result['min_price'].min()) if len(result) > 0 else 0.0
-        max_price = float(result['max_price'].max()) if len(result) > 0 else 0.0
-        day_count = int(result['day_count'].iloc[0]) if len(result) > 0 else 0
-    except Exception as e:
-        return {'success': False, 'error': f'Stats calculation error: {str(e)}'}
-    
+
+    avg_price = float(result['avg_price'].mean()) if len(result) > 0 else 0.0
+    min_price = float(result['min_price'].min()) if len(result) > 0 else 0.0
+    max_price = float(result['max_price'].max()) if len(result) > 0 else 0.0
+    day_count = int(result['day_count'].iloc[0]) if len(result) > 0 else 0
+
     return {
         'success': True,
         'avg_price': avg_price,
@@ -664,6 +659,66 @@ def get_unique_nodes(conn, limit=5):
     """Get unique node names from bx_daily_summary"""
     result = conn.execute(f"SELECT DISTINCT node FROM bx_daily_summary ORDER BY node LIMIT {int(limit)}").fetchdf()
     return [str(n) for n in result['node'].tolist()]
+
+
+def get_node_map_data(conn, bx, year, time_period, month=None):
+    """Get node BX prices with coordinates for the geographic map."""
+    col = f'b{bx}_avg'
+
+    if time_period == 'Monthly' and month:
+        price_sql = f"""
+            SELECT node,
+                   {col} AS avg_price,
+                   days_count
+            FROM node_bx_monthly_summary
+            WHERE year = {int(year)} AND month = {int(month)}
+        """
+    else:
+        price_sql = f"""
+            SELECT node,
+                   SUM({col} * days_count) / SUM(days_count) AS avg_price,
+                   SUM(days_count) AS days_count
+            FROM node_bx_monthly_summary
+            WHERE year = {int(year)}
+            GROUP BY node
+        """
+
+    query = f"""
+        WITH prices AS ({price_sql}),
+        mapped AS (
+            SELECT p.node AS pnode_id,
+                   p.avg_price,
+                   c.lat,
+                   c.lon,
+                   c.node_type,
+                   c.area,
+                   z.zone
+            FROM prices p
+            JOIN pnode_coordinates c ON c.pnode_id = p.node
+            LEFT JOIN node_zone_mapping z ON z.pnode_id = p.node
+            WHERE c.lat IS NOT NULL AND c.lon IS NOT NULL
+              AND c.lat BETWEEN 30 AND 50
+              AND c.lon BETWEEN -130 AND -100
+        )
+        SELECT pnode_id, avg_price, lat, lon, node_type, area, zone
+        FROM mapped
+        ORDER BY pnode_id
+    """
+
+    result = conn.execute(query).fetchdf()
+    return [
+        {
+            'pnode_id': str(r['pnode_id']),
+            'avg_price': float(r['avg_price']) if r['avg_price'] is not None else None,
+            'lat': float(r['lat']),
+            'lon': float(r['lon']),
+            'node_type': str(r['node_type']),
+            'area': str(r['area']),
+            'zone': str(r['zone']) if r['zone'] is not None else None,
+        }
+        for _, r in result.iterrows()
+    ]
+
 
 if __name__ == '__main__':
     run_query()

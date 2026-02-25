@@ -34,7 +34,8 @@ from charts import (
     create_month_hour_heatmap,
     create_node_hourly_lines_chart,
     create_node_month_hour_heatmap,
-    create_8760_heatmap
+    create_8760_heatmap,
+    create_pnode_map
 )
 
 def main():
@@ -133,13 +134,19 @@ def main():
         """)
         
     else:
-        tab_dashboard, tab_methodology, tab_ai = st.tabs(["📊 Dashboard", "📋 Methodology & Data", "💬 AI Assistant"])
+        tab_dashboard, tab_node_map, tab_methodology, tab_ai = st.tabs(["📊 Dashboard", "🗺️ Node Map", "📋 Methodology & Data", "💬 AI Assistant"])
         
         # =====================================================================
         # DASHBOARD TAB - Primary interface for BX analysis with zone filtering
         # =====================================================================
         with tab_dashboard:
             render_dashboard_tab()
+        
+        # =====================================================================
+        # NODE MAP TAB - Geographic PNODE price map
+        # =====================================================================
+        with tab_node_map:
+            render_node_map_tab()
         
         # =====================================================================
         # METHODOLOGY & DATA TAB
@@ -623,6 +630,115 @@ conn.close()
     except Exception as e:
         st.warning(f"Could not load BX statistics: {str(e)}")
         st.info("Make sure LMP data is loaded and BX calculations have been run.")
+
+
+def render_node_map_tab():
+    """Render the geographic PNODE price map tab."""
+    import subprocess
+    import json
+
+    st.header("Node Map")
+    st.markdown("Geographic view of PNODE B*X* average prices. Joined from the pre-computed monthly summary table and coordinate data.")
+
+    # ── Filters ──────────────────────────────────────────────────────────────
+    map_col1, map_col2, map_col3, map_col4, map_col5 = st.columns([1, 1, 1, 1, 1])
+
+    with map_col1:
+        map_bx = st.selectbox(
+            "BX Hours",
+            options=SUPPORTED_BX_VALUES,
+            index=4,
+            format_func=lambda x: f"B{x} (Cheapest {x} hours)",
+            key="map_bx",
+        )
+
+    with map_col2:
+        map_time_period = st.selectbox(
+            "Time Period",
+            options=["Annual", "Monthly"],
+            key="map_time_period",
+        )
+
+    month_options = ["January", "February", "March", "April", "May", "June",
+                     "July", "August", "September", "October", "November", "December"]
+
+    available_years = st.session_state.get('parquet_years', [2024, 2025])
+    map_years = [y for y in available_years]
+    if not map_years:
+        map_years = [2024]
+
+    with map_col3:
+        map_year = st.selectbox(
+            "Year",
+            options=map_years,
+            key="map_year",
+        )
+
+    map_month = None
+    if map_time_period == "Monthly":
+        with map_col4:
+            map_month_name = st.selectbox("Month", options=month_options, key="map_month")
+            map_month = month_options.index(map_month_name) + 1
+
+    with map_col5:
+        color_by = st.radio("Color by", options=["Zone", "Price"], key="map_color_by", horizontal=True)
+
+    st.divider()
+
+    # ── Data fetch ────────────────────────────────────────────────────────────
+    period_label = str(map_year) if map_time_period == "Annual" else f"{month_options[map_month - 1]} {map_year}"
+    cache_key = f"node_map_{map_bx}_{map_year}_{map_time_period}_{map_month}"
+
+    if cache_key not in st.session_state:
+        with st.spinner(f"Loading B{map_bx} node map for {period_label}…"):
+            cmd = [
+                'python3', 'subprocess_query.py', 'node_map',
+                str(map_bx), str(map_year), map_time_period,
+                str(map_month) if map_month else '',
+            ]
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                if proc.returncode == 0:
+                    st.session_state[cache_key] = json.loads(proc.stdout)
+                else:
+                    st.session_state[cache_key] = {'error': proc.stderr}
+            except subprocess.TimeoutExpired:
+                st.session_state[cache_key] = {'error': 'Query timed out after 60s'}
+            except Exception as exc:
+                st.session_state[cache_key] = {'error': str(exc)}
+
+    map_data = st.session_state.get(cache_key, [])
+
+    if isinstance(map_data, dict) and map_data.get('error'):
+        st.error(f"Map data error: {map_data['error']}")
+        return
+
+    if not map_data:
+        st.warning("No coordinate data found for the selected period.")
+        return
+
+    # ── Summary metrics ───────────────────────────────────────────────────────
+    import pandas as pd
+    df_map = pd.DataFrame(map_data)
+
+    total_nodes = len(df_map)
+    zone_avgs = {}
+    for zone in ['NP15', 'SP15', 'ZP26']:
+        zone_df = df_map[df_map['zone'] == zone]
+        if not zone_df.empty and zone_df['avg_price'].notna().any():
+            zone_avgs[zone] = zone_df['avg_price'].mean()
+
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    mc1.metric("Nodes Plotted", f"{total_nodes:,}")
+    for col, zone in zip([mc2, mc3, mc4], ['NP15', 'SP15', 'ZP26']):
+        if zone in zone_avgs:
+            col.metric(f"{zone} Avg B{map_bx}", f"${zone_avgs[zone]:.2f}/MWh")
+        else:
+            col.metric(f"{zone} Avg B{map_bx}", "N/A")
+
+    # ── Map chart ─────────────────────────────────────────────────────────────
+    fig = create_pnode_map(map_data, bx_label=f"B{map_bx}", color_by=color_by.lower())
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def render_methodology_tab():

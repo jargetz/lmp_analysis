@@ -10,6 +10,7 @@ Usage in Streamlit:
     st.plotly_chart(fig, use_container_width=True)
 """
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -997,3 +998,107 @@ def create_node_box_plot(
     )
     
     return fig, clipping_info
+
+
+def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone') -> go.Figure:
+    """
+    Create a geographic scatter map of PNODE BX prices.
+
+    Args:
+        data: List of dicts with keys: pnode_id, lat, lon, node_type, area, zone, avg_price
+        bx_label: e.g. "B8" for hover/title text
+        color_by: 'zone' or 'price'
+
+    Returns:
+        Plotly Figure
+    """
+    if not data:
+        return create_empty_chart("No coordinate data available for the selected period")
+
+    df = pd.DataFrame(data)
+    df = df.dropna(subset=['lat', 'lon'])
+
+    if df.empty:
+        return create_empty_chart("No nodes with valid coordinates found")
+
+    zone_colors = {'NP15': '#1f77b4', 'SP15': '#ff7f0e', 'ZP26': '#2ca02c'}
+    default_color = '#aec7e8'
+
+    if color_by == 'zone':
+        df['color_zone'] = df['zone'].fillna('Other')
+        color_discrete_map = {
+            'NP15': zone_colors['NP15'],
+            'SP15': zone_colors['SP15'],
+            'ZP26': zone_colors['ZP26'],
+            'Other': '#d3d3d3',
+        }
+        df['hover_text'] = (
+            '<b>' + df['pnode_id'].astype(str) + '</b><br>' +
+            'Zone: ' + df['color_zone'].astype(str) + '<br>' +
+            'Type: ' + df['node_type'].fillna('').astype(str) + '<br>' +
+            'Area: ' + df['area'].fillna('').astype(str) + '<br>' +
+            bx_label + ' Avg: $' + df['avg_price'].apply(
+                lambda x: f'{x:.2f}' if pd.notna(x) else 'N/A'
+            ) + '/MWh'
+        )
+        fig = px.scatter_mapbox(
+            df,
+            lat='lat',
+            lon='lon',
+            color='color_zone',
+            color_discrete_map=color_discrete_map,
+            custom_data=['hover_text'],
+            zoom=5,
+            center={'lat': 37.0, 'lon': -119.0},
+            mapbox_style='carto-positron',
+            title=f'PNODE {bx_label} Price Map — Colored by Zone',
+            height=650,
+        )
+        fig.update_traces(
+            hovertemplate='%{customdata[0]}<extra></extra>',
+            marker=dict(size=6, opacity=0.75)
+        )
+        fig.update_layout(
+            legend_title_text='Zone',
+            margin=dict(l=0, r=0, t=50, b=0)
+        )
+
+    else:
+        df = df.dropna(subset=['avg_price'])
+        if df.empty:
+            return create_empty_chart("No price data available for coloring")
+
+        p2 = float(np.percentile(df['avg_price'], 2))
+        p98 = float(np.percentile(df['avg_price'], 98))
+
+        df['hover_text'] = (
+            '<b>' + df['pnode_id'].astype(str) + '</b><br>' +
+            'Zone: ' + df['zone'].fillna('Other').astype(str) + '<br>' +
+            'Type: ' + df['node_type'].fillna('').astype(str) + '<br>' +
+            'Area: ' + df['area'].fillna('').astype(str) + '<br>' +
+            bx_label + ' Avg: $' + df['avg_price'].apply(lambda x: f'{x:.2f}') + '/MWh'
+        )
+        fig = px.scatter_mapbox(
+            df,
+            lat='lat',
+            lon='lon',
+            color='avg_price',
+            color_continuous_scale='RdYlGn_r',
+            range_color=[p2, p98],
+            custom_data=['hover_text'],
+            zoom=5,
+            center={'lat': 37.0, 'lon': -119.0},
+            mapbox_style='carto-positron',
+            title=f'PNODE {bx_label} Price Map — Colored by Price',
+            height=650,
+        )
+        fig.update_traces(
+            hovertemplate='%{customdata[0]}<extra></extra>',
+            marker=dict(size=6, opacity=0.75)
+        )
+        fig.update_layout(
+            coloraxis_colorbar=dict(title='$/MWh'),
+            margin=dict(l=0, r=0, t=50, b=0)
+        )
+
+    return fig
