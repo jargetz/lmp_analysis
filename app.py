@@ -35,7 +35,8 @@ from charts import (
     create_node_hourly_lines_chart,
     create_node_month_hour_heatmap,
     create_8760_heatmap,
-    create_pnode_map
+    create_pnode_map,
+    create_pnode_price_histogram
 )
 
 def main():
@@ -717,24 +718,11 @@ def render_node_map_tab():
         st.warning("No coordinate data found for the selected period.")
         return
 
-    # ── Summary metrics ───────────────────────────────────────────────────────
-    import pandas as pd
-    df_map = pd.DataFrame(map_data)
-
-    total_nodes = len(df_map)
-    zone_avgs = {}
-    for zone in ['NP15', 'SP15', 'ZP26']:
-        zone_df = df_map[df_map['zone'] == zone]
-        if not zone_df.empty and zone_df['avg_price'].notna().any():
-            zone_avgs[zone] = zone_df['avg_price'].mean()
-
-    mc1, mc2, mc3, mc4 = st.columns(4)
-    mc1.metric("Nodes Plotted", f"{total_nodes:,}")
-    for col, zone in zip([mc2, mc3, mc4], ['NP15', 'SP15', 'ZP26']):
-        if zone in zone_avgs:
-            col.metric(f"{zone} Avg B{map_bx}", f"${zone_avgs[zone]:.2f}/MWh")
-        else:
-            col.metric(f"{zone} Avg B{map_bx}", "N/A")
+    # ── Price distribution histogram ──────────────────────────────────────────
+    total_nodes = len(map_data)
+    st.caption(f"{total_nodes:,} nodes with coordinates plotted")
+    hist_fig = create_pnode_price_histogram(map_data, bx_label=f"B{map_bx}")
+    st.plotly_chart(hist_fig, use_container_width=True)
 
     # ── Map chart ─────────────────────────────────────────────────────────────
     fig = create_pnode_map(map_data, bx_label=f"B{map_bx}", color_by=color_by.lower())

@@ -36,6 +36,10 @@ Preferred communication style: Simple, everyday language.
 - **Three Averaging Methods**: (1) EIA load-weighted zone averages from `zone_hourly_lmp`, (2) Generator settlement from `generator_bx_summary` (TH_*_GEN-APND nodes), (3) Unweighted node averages from `bx_daily_summary`.
 - **Node-Zone Mapping**: Uses CAISO AS Region Map files to assign nodes to zones. Logic: AS_NP15 ∩ AS_NP26 → NP15, AS_SP15 ∩ AS_NP26 → ZP26, AS_SP15 only → SP15. Stored in `node_zone_mapping` table (6,394 nodes: 3,206 NP15, 2,627 SP15, 561 ZP26).
 - **APNode Mapping**: `node_apnode_mapping` table maps component nodes to aggregated pricing nodes (TH_NP15_GEN-APND: 698, TH_SP15_GEN-APND: 1,076, TH_ZP26_GEN-APND: 178).
+- **Node BX Monthly Summary**: `node_bx_monthly_summary` table (418K rows) pre-computes B4–B10 averages per node per month in a single scan. Used by the Node Selection tool and Node Map tab for fast lookups. Annual mode uses days_count-weighted average of monthly values. The `subprocess_query.py` `get_node_bx()` function reads from this table.
+- **Node Map Tab**: Geographic PNODE price map using Plotly scatter_mapbox (carto-positron, no API key). Data joined from `node_bx_monthly_summary` + `pnode_coordinates` + `node_zone_mapping`. Color by zone (NP15=blue, SP15=orange, ZP26=green) or by price (RdYlGn diverging scale). Price distribution histogram shown above the map.
+- **PNODE Coordinates**: `pnode_coordinates` table (11,978 rows) from CAISO pricemap markers CSV. Covers full Western Interconnect; 2,602 CA nodes overlap with LMP data and zone mappings.
+- **Data Quality**: Dec 10, 2024 data in `node_hourly_lmp` was corrupted during ETL (all nodes at ~-$2,594/MWh). Corrected by replacing with data from the official CAISO CSV (DAM_LMP, v12). Always validate node data against `generator_bx_summary` TH apnode values as ground truth.
 - **Security**: Input sanitization for node names, zone names, S3 bucket names, and parameterized queries to prevent SQL injection.
 - **Dynamic Node Selection**: Supports both zone-based and search-based node analysis with autocomplete.
 

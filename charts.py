@@ -1102,3 +1102,68 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone') -> go.Fi
         )
 
     return fig
+
+
+def create_pnode_price_histogram(data: list, bx_label: str) -> go.Figure:
+    """
+    Create a stacked bar histogram of node count by price bin, colored by zone.
+
+    Args:
+        data: List of dicts with keys: pnode_id, avg_price, zone
+        bx_label: e.g. "B8" for axis labels
+
+    Returns:
+        Plotly Figure
+    """
+    if not data:
+        return create_empty_chart("No data for histogram")
+
+    df = pd.DataFrame(data).dropna(subset=['avg_price'])
+    if df.empty:
+        return create_empty_chart("No price data for histogram")
+
+    p2 = float(np.percentile(df['avg_price'], 2))
+    p98 = float(np.percentile(df['avg_price'], 98))
+    df_clip = df[(df['avg_price'] >= p2) & (df['avg_price'] <= p98)].copy()
+    df_clip['zone_label'] = df_clip['zone'].fillna('Other')
+
+    bin_size = 5
+    bin_min = (p2 // bin_size) * bin_size
+    bin_max = ((p98 // bin_size) + 1) * bin_size
+    bins = np.arange(bin_min, bin_max + bin_size, bin_size)
+    df_clip['bin'] = pd.cut(df_clip['avg_price'], bins=bins, right=False)
+    df_clip['bin_mid'] = df_clip['bin'].apply(lambda x: (x.left + x.right) / 2 if pd.notna(x) else None)
+
+    zone_color_map = {
+        'NP15': '#1f77b4',
+        'SP15': '#ff7f0e',
+        'ZP26': '#2ca02c',
+        'Other': '#d3d3d3',
+    }
+    zone_order = ['NP15', 'SP15', 'ZP26', 'Other']
+
+    fig = go.Figure()
+    for zone in zone_order:
+        zone_df = df_clip[df_clip['zone_label'] == zone]
+        if zone_df.empty:
+            continue
+        counts = zone_df.groupby('bin_mid', observed=True).size().reset_index(name='count')
+        fig.add_trace(go.Bar(
+            x=counts['bin_mid'],
+            y=counts['count'],
+            name=zone,
+            marker_color=zone_color_map.get(zone, '#999'),
+            hovertemplate=f'<b>{zone}</b><br>Price: $%{{x:.0f}}/MWh<br>Nodes: %{{y}}<extra></extra>',
+        ))
+
+    fig.update_layout(
+        barmode='stack',
+        title=f'{bx_label} Price Distribution by Node',
+        xaxis_title=f'{bx_label} Avg Price ($/MWh)',
+        yaxis_title='Node Count',
+        legend_title='Zone',
+        bargap=0.05,
+        height=260,
+        margin=dict(l=40, r=40, t=45, b=40),
+    )
+    return fig
