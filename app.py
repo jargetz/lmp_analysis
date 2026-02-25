@@ -761,7 +761,7 @@ def render_node_map_tab():
         color_by=color_by.lower(),
         facilities=facilities_to_show if facilities_to_show else None,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
 
 def render_methodology_tab():
