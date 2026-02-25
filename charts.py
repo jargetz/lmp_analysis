@@ -1184,7 +1184,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
         price_str = f"${nearest_node['avg_price']:.2f}/MWh" if nearest_node.get('avg_price') is not None else "N/A"
         hover_nn = (
             f"<b>Nearest node: {nearest_node['pnode_id']}</b><br>"
-            f"Zone: {nearest_node.get('zone', '—')}<br>"
+            f"Zone: {nearest_node.get('zone') or '—'}<br>"
             f"{bx_label} avg: {price_str}"
         )
         fig.add_trace(go.Scattermapbox(
