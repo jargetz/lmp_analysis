@@ -1056,6 +1056,13 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
     if df.empty:
         return create_empty_chart("No nodes with valid coordinates found")
 
+    dup_mask = df.duplicated(subset=['lat', 'lon'], keep=False)
+    if dup_mask.any():
+        rng = np.random.default_rng(seed=42)
+        n_dups = dup_mask.sum()
+        df.loc[dup_mask, 'lat'] = df.loc[dup_mask, 'lat'] + rng.uniform(-0.004, 0.004, n_dups)
+        df.loc[dup_mask, 'lon'] = df.loc[dup_mask, 'lon'] + rng.uniform(-0.004, 0.004, n_dups)
+
     zone_colors = {'NP15': '#1f77b4', 'SP15': '#ff7f0e', 'ZP26': '#2ca02c'}
     default_color = '#aec7e8'
 
