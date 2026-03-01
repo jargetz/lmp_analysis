@@ -532,6 +532,7 @@ conn.close()
                             for node, price in sorted(per_node.items(), key=lambda x: x[1])
                         ])
                         st.dataframe(node_stats_df, use_container_width=True, hide_index=True)
+                        st.caption("Hours shown are the most frequently selected across all days — actual hours vary each day based on that day's prices.")
                     
                     # Note about DST hour 25
                     st.caption("Note: Hour 25 (DST transition) is excluded from charts")
