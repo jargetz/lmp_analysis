@@ -507,15 +507,10 @@ conn.close()
                 if bx_stats.get('error'):
                     st.error(f"Query error: {bx_stats.get('error')}")
                 elif bx_stats.get('success') and bx_stats.get('avg_price'):
-                    stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
-                    
+                    stat_col1, stat_col2 = st.columns(2)
                     with stat_col1:
                         st.metric(f"B{selected_bx} Overall Avg", f"${bx_stats['avg_price']:.2f}/MWh")
                     with stat_col2:
-                        st.metric("Min", f"${bx_stats['min_price']:.2f}/MWh" if bx_stats.get('min_price') else "N/A")
-                    with stat_col3:
-                        st.metric("Max", f"${bx_stats['max_price']:.2f}/MWh" if bx_stats.get('max_price') else "N/A")
-                    with stat_col4:
                         st.metric("Nodes", f"{bx_stats.get('node_count', 0):,}")
                     
                     # Per-node BX stats table

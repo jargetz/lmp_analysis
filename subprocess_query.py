@@ -116,7 +116,8 @@ def run_query():
         print(json.dumps({'error': str(e)}))
 
 def get_node_bx(conn, bx, nodes, year):
-    """Compute BX average for nodes using pre-computed monthly summary table."""
+    """Compute BX average for nodes. Uses pre-computed monthly summary when available,
+    falls back to scanning node_hourly_lmp directly for years not in the summary."""
     import re
     nodes = [n for n in nodes if re.match(r'^[A-Za-z0-9_\-\.]+$', n)]
     if not nodes:
@@ -128,18 +129,38 @@ def get_node_bx(conn, bx, nodes, year):
     summary_query = f"""
         SELECT node,
                SUM({col} * days_count) / SUM(days_count) AS avg_price,
-               MIN({col}) AS min_price,
-               MAX({col}) AS max_price,
                SUM(days_count) AS day_count
         FROM node_bx_monthly_summary
         WHERE node IN ({node_list})
           AND year = {int(year)}
         GROUP BY node
     """
-
     result = conn.execute(summary_query).fetchdf()
+
     if result.empty:
-        return {'success': False, 'error': 'No data found in summary table'}
+        fallback_query = f"""
+            WITH ranked AS (
+                SELECT opr_dt, node, opr_hr, mw,
+                    ROW_NUMBER() OVER (PARTITION BY opr_dt, node ORDER BY mw ASC) AS rn
+                FROM node_hourly_lmp
+                WHERE node IN ({node_list})
+                  AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
+                  AND opr_hr BETWEEN 1 AND 24
+            ),
+            daily_bx AS (
+                SELECT node, opr_dt, AVG(mw) AS daily_avg, COUNT(*) AS hrs
+                FROM ranked WHERE rn <= {bx}
+                GROUP BY node, opr_dt
+            )
+            SELECT node,
+                   AVG(daily_avg) AS avg_price,
+                   COUNT(DISTINCT opr_dt) AS day_count
+            FROM daily_bx
+            GROUP BY node
+        """
+        result = conn.execute(fallback_query).fetchdf()
+        if result.empty:
+            return {'success': False, 'error': f'No data found for {year} — year may not be loaded'}
 
     per_node = {row['node']: float(row['avg_price']) for _, row in result.iterrows()}
 
@@ -164,15 +185,11 @@ def get_node_bx(conn, bx, nodes, year):
         per_node_hours[node] = [int(h) for h in node_hours['opr_hr'].tolist()]
 
     avg_price = float(result['avg_price'].mean()) if len(result) > 0 else 0.0
-    min_price = float(result['min_price'].min()) if len(result) > 0 else 0.0
-    max_price = float(result['max_price'].max()) if len(result) > 0 else 0.0
     day_count = int(result['day_count'].iloc[0]) if len(result) > 0 else 0
 
     return {
         'success': True,
         'avg_price': avg_price,
-        'min_price': min_price,
-        'max_price': max_price,
         'node_count': len(nodes),
         'day_count': day_count,
         'per_node': per_node,
