@@ -482,6 +482,15 @@ def init_dashboard(conn):
         result['zone_years'] = [int(y) for y in zone_yr['yr'].tolist()] if not zone_yr.empty else [2024]
     except Exception:
         result['zone_years'] = [2024]
+    try:
+        node_yr = conn.execute("""
+            SELECT DISTINCT EXTRACT(YEAR FROM opr_dt)::INT as yr
+            FROM node_hourly_lmp
+            ORDER BY yr DESC
+        """).fetchdf()
+        result['node_years'] = [int(y) for y in node_yr['yr'].tolist()] if not node_yr.empty else [2024]
+    except Exception:
+        result['node_years'] = [2024]
     return result
 
 def run_multi_sql(conn, queries):

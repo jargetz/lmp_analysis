@@ -73,15 +73,18 @@ def main():
                 st.session_state.init_nodes = init_data.get('all_nodes', [])
                 st.session_state.individual_nodes = init_data.get('individual_nodes', [])
                 st.session_state.zone_years = init_data.get('zone_years', [2024])
+                st.session_state.node_years = init_data.get('node_years', [2024])
             else:
                 st.session_state.db_summary = {}
                 st.session_state.init_years = [2024]
+                st.session_state.node_years = [2024]
                 st.session_state.init_nodes = []
                 st.session_state.individual_nodes = []
                 st.session_state.zone_years = [2024]
         except Exception:
             st.session_state.db_summary = {}
             st.session_state.init_years = [2024]
+            st.session_state.node_years = [2024]
             st.session_state.init_nodes = []
             st.session_state.individual_nodes = []
             st.session_state.zone_years = [2024]
@@ -295,8 +298,8 @@ def render_dashboard_tab():
                 selected_month = month_options.index(selected_month_name) + 1
     else:
         # Node mode: options in the side column
-        # Use parquet years (only years with node data)
-        parquet_years = st.session_state.get('parquet_years', [2024])
+        # Use node_years (only years present in node_hourly_lmp)
+        parquet_years = st.session_state.get('node_years', st.session_state.get('parquet_years', [2024]))
         
         with options_col:
             selected_bx = st.selectbox(
