@@ -777,15 +777,41 @@ def render_node_map_tab():
             key="map_facility_search",
         )
 
+    import math as _math
+    import numpy as _np
+
+    if 'ca_substations_df' not in st.session_state:
+        try:
+            _sub_df = pd.read_csv(
+                'attached_assets/CA_Substation_Coordinates_1773167584973.csv',
+                dtype=str,
+            )
+            for _c in _sub_df.columns:
+                if _sub_df[_c].dtype == object:
+                    _sub_df[_c] = _sub_df[_c].str.strip()
+            _sub_df['lat'] = pd.to_numeric(_sub_df['Y'], errors='coerce')
+            _sub_df['lon'] = pd.to_numeric(_sub_df['X'], errors='coerce')
+            _sub_df['Highest_kV'] = _sub_df['Highest_kV'].replace('33kV to 92Kv', '33kV to 92kV')
+            _sub_df = _sub_df.dropna(subset=['lat', 'lon']).reset_index(drop=True)
+            st.session_state['ca_substations_df'] = _sub_df
+        except Exception:
+            st.session_state['ca_substations_df'] = pd.DataFrame()
+
+    sub_df = st.session_state['ca_substations_df']
+
     selected_facility = None
     nearest_node = None
+    nearest_substation = None
+    nearest_node_to_substation = None
+
     if selected_name:
         selected_facility = next((f for f in all_facilities_sorted if f['facility'] == selected_name), None)
 
     if selected_facility and map_data:
         flat = selected_facility['lat']
         flon = selected_facility['lon']
-        cos_lat = __import__('math').cos(__import__('math').radians(flat))
+        cos_lat = _math.cos(_math.radians(flat))
+
         best, best_dist = None, float('inf')
         for node in map_data:
             if node.get('lat') is None or node.get('lon') is None:
@@ -799,10 +825,75 @@ def render_node_map_tab():
         nearest_node = best
         dist_km = (best_dist ** 0.5) * 111.0
 
+        if not sub_df.empty:
+            sub_lats = sub_df['lat'].values
+            sub_lons = sub_df['lon'].values
+            dlat_s = sub_lats - flat
+            dlon_s = (sub_lons - flon) * cos_lat
+            dists_s = _np.sqrt(dlat_s ** 2 + dlon_s ** 2) * 111.0
+            si = int(dists_s.argmin())
+            sr = sub_df.iloc[si]
+            nearest_substation = {
+                'substation_name': str(sr['Substation_Name']),
+                'owner': str(sr['Owner']),
+                'highest_kv': str(sr['Highest_kV']) if pd.notna(sr['Highest_kV']) else None,
+                'status': str(sr['Status']),
+                'lat': float(sr['lat']),
+                'lon': float(sr['lon']),
+                'dist_km': float(dists_s[si]),
+            }
+
+            slat2 = nearest_substation['lat']
+            slon2 = nearest_substation['lon']
+            cos_s = _math.cos(_math.radians(slat2))
+            best2, best2_dist = None, float('inf')
+            for node in map_data:
+                if node.get('lat') is None or node.get('lon') is None:
+                    continue
+                dlat2 = node['lat'] - slat2
+                dlon2 = (node['lon'] - slon2) * cos_s
+                d2 = dlat2 * dlat2 + dlon2 * dlon2
+                if d2 < best2_dist:
+                    best2_dist = d2
+                    best2 = node
+            nearest_node_to_substation = best2
+
         with search_col2:
             ct_badge = "Cap-and-Trade" if selected_facility['cap_and_trade'] == 'Yes' else "Non-covered"
             node_price = f"${nearest_node['avg_price']:.2f}/MWh" if nearest_node and nearest_node.get('avg_price') is not None else "N/A"
             node_name = nearest_node['pnode_id'] if nearest_node else "—"
+
+            node_sub = nearest_node.get('substation_name') if nearest_node else None
+            node_sub_owner = nearest_node.get('substation_owner') if nearest_node else None
+            node_sub_kv = nearest_node.get('highest_kv') if nearest_node else None
+            node_sub_dist = nearest_node.get('dist_km_to_substation') if nearest_node else None
+            node_sub_str = ''
+            if node_sub:
+                dist_s = f', {node_sub_dist:.1f} km' if node_sub_dist is not None else ''
+                kv_s = f', {node_sub_kv}' if node_sub_kv else ''
+                node_sub_str = f' → substation: **{node_sub}** ({node_sub_owner or "—"}{kv_s}{dist_s})'
+
+            ns_str = ''
+            nns_str = ''
+            if nearest_substation:
+                ns = nearest_substation
+                kv_s2 = f', {ns["highest_kv"]}' if ns.get('highest_kv') else ''
+                status_warn = f' ⚠ {ns["status"]}' if ns.get('status') and ns['status'] != 'Operational' else ''
+                ns_str = (
+                    f'  \nNearest substation: **{ns["substation_name"]}** '
+                    f'({ns["owner"]}{kv_s2}, {ns["dist_km"]:.1f} km){status_warn}'
+                )
+                if nearest_node_to_substation and nearest_node_to_substation.get('pnode_id') != node_name:
+                    nns = nearest_node_to_substation
+                    nns_dist = (_math.sqrt(
+                        (nns['lat'] - ns['lat']) ** 2 +
+                        ((nns['lon'] - ns['lon']) * _math.cos(_math.radians(ns['lat']))) ** 2
+                    ) * 111.0)
+                    nns_price = f"${nns['avg_price']:.2f}/MWh" if nns.get('avg_price') is not None else "N/A"
+                    nns_str = f' → nearest node: **{nns["pnode_id"]}** ({nns_dist:.1f} km, {nns_price})'
+                elif nearest_node_to_substation:
+                    nns_str = ' → same as nearest node above'
+
             st.info(
                 f"**{selected_facility['facility']}** · {ct_badge}  \n"
                 f"{selected_facility['primary_sector']} · {selected_facility['county']} Co. · {selected_facility['city']}  \n"
@@ -812,6 +903,8 @@ def render_node_map_tab():
                 f"SOx: {selected_facility['sox']:,.1f} · "
                 f"PM2.5: {selected_facility['pm25']:,.1f}  \n"
                 f"Nearest node: **{node_name}** ({dist_km:.1f} km) · B{map_bx} avg {node_price}"
+                f"{node_sub_str}"
+                f"{ns_str}{nns_str}"
             )
 
     # ── Map chart ─────────────────────────────────────────────────────────────
@@ -822,6 +915,8 @@ def render_node_map_tab():
         facilities=facilities_to_show if facilities_to_show else None,
         selected_facility=selected_facility,
         nearest_node=nearest_node,
+        nearest_substation=nearest_substation,
+        nearest_node_to_substation=nearest_node_to_substation,
     )
     st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 

@@ -1036,7 +1036,9 @@ def _add_facility_traces(fig: go.Figure, facilities: list) -> None:
 def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
                      facilities: list = None,
                      selected_facility: dict = None,
-                     nearest_node: dict = None) -> go.Figure:
+                     nearest_node: dict = None,
+                     nearest_substation: dict = None,
+                     nearest_node_to_substation: dict = None) -> go.Figure:
     """
     Create a geographic scatter map of PNODE BX prices with optional facility overlay.
 
@@ -1209,10 +1211,26 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
 
     if nearest_node and nearest_node.get('lat') is not None:
         price_str = f"${nearest_node['avg_price']:.2f}/MWh" if nearest_node.get('avg_price') is not None else "N/A"
+        sub_name = nearest_node.get('substation_name')
+        sub_owner = nearest_node.get('substation_owner')
+        sub_kv = nearest_node.get('highest_kv')
+        sub_status = nearest_node.get('substation_status')
+        sub_dist = nearest_node.get('dist_km_to_substation')
+        sub_lines = []
+        if sub_name:
+            dist_str = f', {sub_dist:.1f} km' if sub_dist is not None else ''
+            sub_lines.append(f'Substation: {sub_name} ({sub_owner or "—"}){dist_str}')
+        if sub_kv:
+            sub_lines.append(f'Voltage: {sub_kv}')
+        if sub_status and sub_status != 'Operational':
+            sub_lines.append(f'⚠ Status: {sub_status}')
+        sub_text = ('<br>' + '<br>'.join(sub_lines)) if sub_lines else ''
         hover_nn = (
             f"<b>Nearest node: {nearest_node['pnode_id']}</b><br>"
             f"Zone: {nearest_node.get('zone') or '—'}<br>"
+            f"Type: {nearest_node.get('node_type') or '—'}<br>"
             f"{bx_label} avg: {price_str}"
+            f"{sub_text}"
         )
         fig.add_trace(go.Scattermapbox(
             lat=[nearest_node['lat']],
@@ -1221,6 +1239,48 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             name='Nearest Node',
             marker=dict(size=16, color='cyan', opacity=1.0),
             customdata=[hover_nn],
+            hovertemplate='%{customdata}<extra></extra>',
+        ))
+
+    if nearest_substation and nearest_substation.get('lat') is not None:
+        ns = nearest_substation
+        status_warn = f'<br>⚠ Status: {ns["status"]}' if ns.get('status') and ns['status'] != 'Operational' else ''
+        dist_str = f'{ns["dist_km"]:.1f} km' if ns.get('dist_km') is not None else '—'
+        hover_sub = (
+            f"<b>Nearest substation: {ns['substation_name']}</b><br>"
+            f"Owner: {ns.get('owner') or '—'}<br>"
+            f"Voltage: {ns.get('highest_kv') or '—'}<br>"
+            f"Distance to facility: {dist_str}"
+            f"{status_warn}"
+        )
+        fig.add_trace(go.Scattermapbox(
+            lat=[ns['lat']],
+            lon=[ns['lon']],
+            mode='markers',
+            name='Nearest Substation',
+            marker=dict(size=16, color='#e377c2', opacity=1.0, symbol='star'),
+            customdata=[hover_sub],
+            hovertemplate='%{customdata}<extra></extra>',
+        ))
+
+    if (nearest_node_to_substation
+            and nearest_node_to_substation.get('lat') is not None
+            and nearest_node and
+            nearest_node_to_substation['pnode_id'] != nearest_node.get('pnode_id')):
+        nns = nearest_node_to_substation
+        price2 = f"${nns['avg_price']:.2f}/MWh" if nns.get('avg_price') is not None else "N/A"
+        hover_nns = (
+            f"<b>Node nearest to substation: {nns['pnode_id']}</b><br>"
+            f"Zone: {nns.get('zone') or '—'}<br>"
+            f"{bx_label} avg: {price2}"
+        )
+        fig.add_trace(go.Scattermapbox(
+            lat=[nns['lat']],
+            lon=[nns['lon']],
+            mode='markers',
+            name='Node nearest to substation',
+            marker=dict(size=12, color='#17becf', opacity=0.9),
+            customdata=[hover_nns],
             hovertemplate='%{customdata}<extra></extra>',
         ))
 
