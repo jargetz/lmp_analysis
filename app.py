@@ -897,6 +897,45 @@ This tool does **not** interpolate or fill in missing days.
 - `node_zone_mapping`: EIA mapping of individual pricing nodes to zones
 """)
 
+    with st.expander("AB 617 Community Data Source", expanded=False):
+        st.markdown("""
+**Assembly Bill 617 — Community Air Protection Program**
+
+AB 617 (signed 2017) established CARB's Community Air Protection Program to reduce air pollution 
+in California's most burdened communities. CARB maintains a "Consistently Nominated Communities" 
+list — areas repeatedly identified by air districts, community-based organizations, or self-nomination 
+as priority locations for air quality intervention.
+
+**Data used in this tool**
+
+The Node Finder tab uses the **August 2023 Consistently Nominated Communities list** (65 communities 
+across 5 air districts), sourced live from CARB's ArcGIS FeatureServer API:
+
+| Air District | Communities |
+|---|---|
+| Bay Area AQMD | 20 |
+| South Coast AQMD | 19 |
+| San Joaquin Valley APCD | 17 |
+| Sacramento Metropolitan AQMD | 6 |
+| Imperial APCD | 2 |
+| Other | 1 |
+
+**Official PDF reference:**  
+[2023 Consistently Nominated AB 617 Communities List (CARB, October 2023)](https://ww2.arb.ca.gov/sites/default/files/2023-10/2023%2008%20Consistently%20Nominated%20Communities_10.16.2023.pdf)
+
+**How it's used in Node Finder**
+
+When "AB 617 communities only" is checked, facilities from `facility_emissions` are filtered to 
+those within **30 km** of any AB 617 community centroid. This surfaces industrial emitters that 
+are already subject to (or near) community air quality programs — and whose nearest CAISO nodes 
+may represent decarbonization opportunities.
+
+**Known data note:** CARB's ArcGIS API has its `centroid_latitude` and `centroid_longtitude` 
+field names reversed relative to their actual values. This tool applies the correct mapping 
+(matching all 65 communities to valid California coordinates). Minor name discrepancies between 
+the PDF and the API exist (CARB's own data) but do not affect geographic proximity calculations.
+""")
+
     st.divider()
 
     st.header("Data Coverage Report")
@@ -1095,9 +1134,9 @@ This tool does **not** interpolate or fill in missing days.
 
 def render_node_finder_tab():
     """
-    Node Finder tab: find cheapest B8 nodes (Set A) and nodes nearest to the
-    top GHG-emitting CARB facilities (Set B, proxy for load centers).
-    Shows summary metrics, a combined data table, and a map.
+    Facility-centric Node Finder: for each CARB GHG emitter, find its
+    geographically nearest CAISO node and show that node's B-hour price.
+    Facilities are ranked by cheapest nearest-node price.
     """
     import subprocess
     import json as json_mod
@@ -1118,38 +1157,37 @@ def render_node_finder_tab():
 
     st.header("Node Finder")
     st.markdown(
-        "Identify the cheapest B-hour nodes **(Set A)** and nodes geographically "
-        "nearest to the largest GHG-emitting facilities **(Set B)** — a proxy for "
-        "load centers. The union and intersection of these two sets reveals where "
-        "cheap electricity supply meets industrial demand."
+        "For each CARB-reported GHG-emitting facility, this tool finds the "
+        "**geographically nearest CAISO pricing node** and shows its B-hour electricity price. "
+        "Facilities are ranked by how cheap that nearest node is — giving you a picture of "
+        "which industrial sites have access to the cheapest off-peak power."
     )
 
     node_years = st.session_state.get('node_years', [2025, 2024])
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        nf_year = st.selectbox("Year", options=node_years,
-                               index=0, key="nf_year")
+        nf_year = st.selectbox("Year", options=node_years, index=0, key="nf_year")
     with c2:
         nf_bx = st.selectbox("BX", options=SUPPORTED_BX_VALUES, index=4,
                               format_func=lambda x: f"B{x}", key="nf_bx")
     with c3:
-        nf_zone = st.selectbox("Zone", options=["All", "NP15", "SP15", "ZP26"],
-                               key="nf_zone")
+        nf_zone = st.selectbox("Node zone filter",
+                               options=["All", "NP15", "SP15", "ZP26"], key="nf_zone",
+                               help="Restrict which CAISO nodes are considered when finding nearest node")
     with c4:
-        nf_top_n = st.slider("Top N cheapest nodes", 10, 200, 50, step=10,
-                              key="nf_top_n")
+        nf_top_m = st.slider("Top N facilities by GHG", 0, 391, 0, step=10,
+                              key="nf_top_m",
+                              help="0 = all 391 facilities. Otherwise limit to top N by total GHG emissions.")
     with c5:
-        nf_top_m = st.slider("Top M emitters", 5, 50, 20, step=5,
-                              key="nf_top_m")
-    with c6:
         nf_ab617 = st.checkbox(
             "AB 617 communities only",
             key="nf_ab617",
-            help="Filter emitters to those within 30 km of a CARB AB 617 community"
+            help="Filter facilities to those within 30 km of a CARB AB 617 nominated community"
         )
 
-    cache_key = f"nf_{nf_bx}_{nf_year}_{nf_top_n}_{nf_top_m}_{nf_ab617}_{nf_zone}"
+    top_m_label = "all" if nf_top_m == 0 else str(nf_top_m)
+    cache_key = f"nf_{nf_bx}_{nf_year}_{nf_top_m}_{nf_ab617}_{nf_zone}"
 
     run_col, _ = st.columns([1, 5])
     with run_col:
@@ -1157,11 +1195,10 @@ def render_node_finder_tab():
 
     if run_clicked and cache_key not in st.session_state:
         with st.spinner(
-            f"Searching {nf_top_n} cheapest B{nf_bx} nodes and "
-            f"{nf_top_m} top emitters for {nf_year}…"
+            f"Finding nearest node for {top_m_label} facilities ({nf_year} B{nf_bx})…"
         ):
             result = _run(
-                'node_finder', nf_bx, nf_year, nf_top_n, nf_top_m,
+                'node_finder', nf_bx, nf_year, nf_top_m,
                 str(nf_ab617).lower(), nf_zone,
                 timeout=120
             )
@@ -1177,116 +1214,81 @@ def render_node_finder_tab():
         return
 
     summary = result.get('summary', {})
-    cheapest = result.get('cheapest', [])
-    nearest = result.get('nearest', [])
-    emitters = result.get('emitters', [])
+    facilities = result.get('facilities', [])
     ab617 = result.get('ab617_communities', [])
+
+    if not facilities:
+        st.warning("No facilities returned — try adjusting the filters.")
+        return
 
     m1, m2, m3, m4 = st.columns(4)
     with m1:
-        st.metric("Cheapest B8 Nodes (Set A)", summary.get('n_cheapest', 0))
+        st.metric("Facilities Analyzed", summary.get('n_facilities', 0))
     with m2:
-        st.metric("Nodes Near Top Emitters (Set B)", summary.get('n_nearest', 0))
+        st.metric("With Negative B Avg", summary.get('n_negative_b', 0),
+                  help="Facilities whose nearest node has a negative average price during cheapest hours")
     with m3:
-        st.metric("In Both Sets (A ∩ B)", summary.get('n_overlap', 0))
+        avg_b = summary.get('avg_b_all')
+        st.metric(f"Avg B{nf_bx} at Nearest Node",
+                  f"${avg_b:.2f}/MWh" if avg_b is not None else "N/A")
     with m4:
-        avg_ov = summary.get('avg_b8_overlap')
-        st.metric(
-            f"Avg B{nf_bx} — Overlap Nodes",
-            f"${avg_ov:.2f}/MWh" if avg_ov is not None else "N/A"
-        )
+        avg_d = summary.get('avg_dist_km')
+        st.metric("Avg Distance to Node",
+                  f"{avg_d:.1f} km" if avg_d is not None else "N/A")
 
-    cheapest_nodes_set = {r['node'] for r in cheapest}
-    nearest_nodes_set = {r['node'] for r in nearest}
-
-    union_rows = {}
-    for r in cheapest:
-        union_rows[r['node']] = {
-            'Node': r['node'],
-            f'B{nf_bx} Avg ($/MWh)': round(r['b8_avg'], 2),
-            'Zone': r['zone'],
-            'Set': 'Cheapest only',
-            'Nearest Facility': r.get('nearest_fac') or '—',
-            'Facility GHG (MT CO₂e)': r.get('nearest_fac_ghg'),
-            'Dist to Facility (km)': round(r['nearest_dist_km'], 1) if r.get('nearest_dist_km') is not None else None,
-            '_lat': r['lat'],
-            '_lon': r['lon'],
-        }
-    for r in nearest:
-        if r['node'] in union_rows:
-            union_rows[r['node']]['Set'] = 'Both'
-        else:
-            union_rows[r['node']] = {
-                'Node': r['node'],
-                f'B{nf_bx} Avg ($/MWh)': round(r['b8_avg'], 2),
-                'Zone': r['zone'],
-                'Set': 'Near emitter only',
-                'Nearest Facility': r.get('emitter') or '—',
-                'Facility GHG (MT CO₂e)': r.get('emitter_ghg'),
-                'Dist to Facility (km)': round(r['dist_km'], 1) if r.get('dist_km') is not None else None,
-                '_lat': r['lat'],
-                '_lon': r['lon'],
-            }
-
-    union_df = pd.DataFrame(list(union_rows.values()))
     price_col = f'B{nf_bx} Avg ($/MWh)'
-    union_df = union_df.sort_values(price_col).reset_index(drop=True)
+    table_rows = []
+    for r in facilities:
+        table_rows.append({
+            'Facility': r['facility'],
+            'County': r['county'],
+            'Sector': r['primary_sector'],
+            'GHG (MT CO₂e)': r['total_ghg'],
+            'Cap & Trade': r['cap_and_trade'],
+            'Nearest Node': r['nearest_node'],
+            'Zone': r['node_zone'],
+            'Dist (km)': round(r['dist_km'], 1),
+            price_col: round(r['node_b_avg'], 2),
+        })
+    display_df = pd.DataFrame(table_rows)
 
     st.divider()
     tab_table, tab_map = st.tabs(["📋 Data Table", "🗺️ Map"])
 
     with tab_table:
-        display_df = union_df.drop(columns=['_lat', '_lon'], errors='ignore').copy()
-        display_df['Facility GHG (MT CO₂e)'] = display_df['Facility GHG (MT CO₂e)'].apply(
-            lambda x: f"{x:,.0f}" if x is not None and not pd.isna(x) else "—"
-        )
-        display_df['Dist to Facility (km)'] = display_df['Dist to Facility (km)'].apply(
-            lambda x: f"{x:.1f}" if x is not None and not pd.isna(x) else "—"
-        )
-        st.dataframe(display_df, use_container_width=True, hide_index=True, height=500)
+        fmt_df = display_df.copy()
+        fmt_df['GHG (MT CO₂e)'] = fmt_df['GHG (MT CO₂e)'].apply(lambda x: f"{x:,.0f}")
+        st.dataframe(fmt_df, use_container_width=True, hide_index=True, height=520)
 
         with st.expander("Summary Statistics"):
-            stat_col1, stat_col2, stat_col3 = st.columns(3)
-            with stat_col1:
-                st.markdown("**Set A — Cheapest Nodes**")
-                avg_a = summary.get('avg_b8_cheapest')
-                st.markdown(f"Count: **{summary.get('n_cheapest', 0)}**")
-                st.markdown(f"Avg B{nf_bx}: **{'${:.2f}/MWh'.format(avg_a) if avg_a is not None else 'N/A'}**")
-                if cheapest:
-                    mn = min(r['b8_avg'] for r in cheapest)
-                    mx = max(r['b8_avg'] for r in cheapest)
-                    st.markdown(f"Range: **${mn:.2f}** to **${mx:.2f}**/MWh")
-            with stat_col2:
-                st.markdown("**Set B — Near Top Emitters**")
-                avg_b = summary.get('avg_b8_nearest')
-                nearest_unique = {r['node']: r for r in nearest}
-                st.markdown(f"Unique nodes: **{len(nearest_unique)}**")
-                st.markdown(f"Avg B{nf_bx}: **{'${:.2f}/MWh'.format(avg_b) if avg_b is not None else 'N/A'}**")
-                if nearest_unique:
-                    mn = min(r['b8_avg'] for r in nearest_unique.values())
-                    mx = max(r['b8_avg'] for r in nearest_unique.values())
-                    st.markdown(f"Range: **${mn:.2f}** to **${mx:.2f}**/MWh")
-            with stat_col3:
-                st.markdown("**Overlap (A ∩ B)**")
-                avg_ov2 = summary.get('avg_b8_overlap')
-                st.markdown(f"Count: **{summary.get('n_overlap', 0)}**")
-                st.markdown(f"Avg B{nf_bx}: **{'${:.2f}/MWh'.format(avg_ov2) if avg_ov2 is not None else 'N/A'}**")
-                if emitters:
-                    top_em = sorted(emitters, key=lambda x: x['total_ghg'], reverse=True)[:3]
-                    st.markdown("**Top 3 facilities:**")
-                    for e in top_em:
-                        st.markdown(f"- {e['facility']}: {e['total_ghg']:,.0f} MT CO₂e")
+            sc1, sc2, sc3 = st.columns(3)
+            with sc1:
+                mn = summary.get('min_b')
+                mx = summary.get('max_b')
+                st.markdown(f"**Cheapest nearest-node B{nf_bx}:** ${mn:.2f}/MWh" if mn is not None else "N/A")
+                st.markdown(f"**Most expensive:** ${mx:.2f}/MWh" if mx is not None else "N/A")
+            with sc2:
+                if facilities:
+                    top5 = facilities[:5]
+                    st.markdown("**Top 5 facilities with cheapest nearest node:**")
+                    for f in top5:
+                        st.markdown(f"- **{f['facility'][:40]}** → {f['nearest_node']} (${f['node_b_avg']:.2f}/MWh, {f['dist_km']:.1f} km)")
+            with sc3:
+                if facilities:
+                    worst5 = facilities[-5:][::-1]
+                    st.markdown("**Top 5 facilities with most expensive nearest node:**")
+                    for f in worst5:
+                        st.markdown(f"- **{f['facility'][:40]}** → {f['nearest_node']} (${f['node_b_avg']:.2f}/MWh, {f['dist_km']:.1f} km)")
 
-        csv_df = display_df.copy()
         st.download_button(
             "Download as CSV",
-            data=csv_df.to_csv(index=False),
+            data=display_df.to_csv(index=False),
             file_name=f"node_finder_B{nf_bx}_{nf_year}_{nf_zone}.csv",
             mime="text/csv",
         )
 
     with tab_map:
-        fig = create_node_finder_map(cheapest, nearest, ab617, emitters=emitters)
+        fig = create_node_finder_map(facilities, ab617, bx_label=f'B{nf_bx}')
         st.plotly_chart(
             fig,
             use_container_width=True,
@@ -1294,8 +1296,9 @@ def render_node_finder_tab():
                     'toImageButtonOptions': {'filename': f'node_finder_B{nf_bx}_{nf_year}'}}
         )
         st.caption(
-            "Green = cheapest only (Set A) | Orange = near emitter only (Set B) | "
-            "Red = both sets | Gray = top GHG emitters | Purple = AB 617 communities"
+            "Circles = facilities, colored by their nearest CAISO node's B-hour price "
+            "(green = cheap, red = expensive). Size = relative GHG emissions. "
+            "Gray dots = matched CAISO nodes. Purple = AB 617 communities."
         )
 
 
