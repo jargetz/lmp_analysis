@@ -1230,13 +1230,13 @@ def create_node_finder_map(facilities: list, ab617_communities: list,
 
     hover_fac = (
         '<b>' + fdf['facility'].astype(str) + '</b><br>'
-        'County: ' + fdf['county'].astype(str) + '<br>'
-        'Sector: ' + fdf['primary_sector'].astype(str) + '<br>'
-        'GHG: ' + fdf['total_ghg'].apply(lambda x: f'{x:,.0f}') + ' MT CO₂e<br>'
-        'Cap & Trade: ' + fdf['cap_and_trade'].astype(str) + '<br>'
-        'Nearest node: <b>' + fdf['nearest_node'].astype(str) + '</b> (' + fdf['node_zone'].astype(str) + ')<br>'
-        bx_label + ' avg: $' + fdf['node_b_avg'].apply(lambda x: f'{x:.2f}') + '/MWh<br>'
-        'Distance: ' + fdf['dist_km'].apply(lambda x: f'{x:.1f}') + ' km'
+        + 'County: ' + fdf['county'].astype(str) + '<br>'
+        + 'Sector: ' + fdf['primary_sector'].astype(str) + '<br>'
+        + 'GHG: ' + fdf['total_ghg'].apply(lambda x: f'{x:,.0f}') + ' MT CO₂e<br>'
+        + 'Cap & Trade: ' + fdf['cap_and_trade'].astype(str) + '<br>'
+        + 'Nearest node: <b>' + fdf['nearest_node'].astype(str) + '</b> (' + fdf['node_zone'].astype(str) + ')<br>'
+        + bx_label + ' avg: $' + fdf['node_b_avg'].apply(lambda x: f'{x:.2f}') + '/MWh<br>'
+        + 'Distance: ' + fdf['dist_km'].apply(lambda x: f'{x:.1f}') + ' km'
     )
 
     fig.add_trace(go.Scattermapbox(
@@ -1259,9 +1259,9 @@ def create_node_finder_map(facilities: list, ab617_communities: list,
 
     hover_node = (
         'Node: <b>' + fdf['nearest_node'].astype(str) + '</b><br>'
-        'Zone: ' + fdf['node_zone'].astype(str) + '<br>'
-        bx_label + ' avg: $' + fdf['node_b_avg'].apply(lambda x: f'{x:.2f}') + '/MWh<br>'
-        '← nearest to: ' + fdf['facility'].astype(str)
+        + 'Zone: ' + fdf['node_zone'].astype(str) + '<br>'
+        + bx_label + ' avg: $' + fdf['node_b_avg'].apply(lambda x: f'{x:.2f}') + '/MWh<br>'
+        + '← nearest to: ' + fdf['facility'].astype(str)
     )
     fig.add_trace(go.Scattermapbox(
         lat=fdf['node_lat'].tolist(),
