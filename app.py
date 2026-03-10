@@ -809,27 +809,33 @@ def render_node_map_tab():
     if selected_facility and map_data:
         flat = selected_facility['lat']
         flon = selected_facility['lon']
-        cos_lat = _math.cos(_math.radians(flat))
+        _R = 6371.0
+        _phi1 = _math.radians(flat)
 
-        best, best_dist = None, float('inf')
-        for node in map_data:
-            if node.get('lat') is None or node.get('lon') is None:
-                continue
-            dlat = node['lat'] - flat
-            dlon = (node['lon'] - flon) * cos_lat
-            d = dlat * dlat + dlon * dlon
-            if d < best_dist:
-                best_dist = d
-                best = node
-        nearest_node = best
-        dist_km = (best_dist ** 0.5) * 111.0
+        valid_nodes = [n for n in map_data if n.get('lat') is not None and n.get('lon') is not None]
+        if valid_nodes:
+            _nlats = _np.array([n['lat'] for n in valid_nodes])
+            _nlons = _np.array([n['lon'] for n in valid_nodes])
+            _dphi = _np.radians(_nlats - flat)
+            _dlam = _np.radians(_nlons - flon)
+            _a = (_np.sin(_dphi / 2) ** 2
+                  + _math.cos(_phi1) * _np.cos(_np.radians(_nlats)) * _np.sin(_dlam / 2) ** 2)
+            _node_dists = _R * 2 * _np.arcsin(_np.sqrt(_np.clip(_a, 0, 1)))
+            _ni = int(_node_dists.argmin())
+            nearest_node = valid_nodes[_ni]
+            dist_km = float(_node_dists[_ni])
+        else:
+            nearest_node = None
+            dist_km = 0.0
 
         if not sub_df.empty:
             sub_lats = sub_df['lat'].values
             sub_lons = sub_df['lon'].values
-            dlat_s = sub_lats - flat
-            dlon_s = (sub_lons - flon) * cos_lat
-            dists_s = _np.sqrt(dlat_s ** 2 + dlon_s ** 2) * 111.0
+            _dphi_s = _np.radians(sub_lats - flat)
+            _dlam_s = _np.radians(sub_lons - flon)
+            _a_s = (_np.sin(_dphi_s / 2) ** 2
+                    + _math.cos(_phi1) * _np.cos(_np.radians(sub_lats)) * _np.sin(_dlam_s / 2) ** 2)
+            dists_s = _R * 2 * _np.arcsin(_np.sqrt(_np.clip(_a_s, 0, 1)))
             si = int(dists_s.argmin())
             sr = sub_df.iloc[si]
             nearest_substation = {
@@ -890,8 +896,8 @@ def render_methodology_tab():
 
     st.header("Methodology")
 
-    with st.expander("BX Calculation Methodology", expanded=True):
-        st.markdown("""
+    st.subheader("BX Calculation Methodology")
+    st.markdown("""
 **BX (Cheapest X Hours) Calculation**
 
 For each operating day, the BX value is computed as follows:
@@ -916,8 +922,8 @@ For each operating day, the BX value is computed as follows:
 the B8 price for that day = ($5 + $8 + $10 + $12 + $15 + $18 + $20 + $22) / 8 = $13.75/MWh
 """)
 
-    with st.expander("EIA Zone Averaging", expanded=True):
-        st.markdown("""
+    st.subheader("EIA Zone Averaging")
+    st.markdown("""
 **Zone Price Source**
 
 The zone-level hourly prices (NP15, SP15, ZP26) come from CAISO's published **EIA zone aggregate** files 
@@ -938,8 +944,8 @@ year's calendar days (e.g., January = 31/366 in a leap year), matching the BX me
 This tool does **not** interpolate or fill in missing days.
 """)
 
-    with st.expander("Data Sources & Storage", expanded=False):
-        st.markdown("""
+    st.subheader("Data Sources & Storage")
+    st.markdown("""
 **Data Pipeline**
 
 - **Source**: CAISO OASIS Day Ahead LMP files (ZIP format, one per day)
@@ -954,8 +960,8 @@ This tool does **not** interpolate or fill in missing days.
 - `node_zone_mapping`: EIA mapping of individual pricing nodes to zones
 """)
 
-    with st.expander("California Substation Data", expanded=False):
-        st.markdown("""
+    st.subheader("California Substation Data")
+    st.markdown("""
 **Source**
 
 [DataBasin / HIFLD — California Electric Substations](https://databasin.org/datasets/20502139197843f7b1b2751a427d9f68/)  
@@ -1007,8 +1013,8 @@ For non-CA nodes, the nearest substation may be far away — this is expected.
   This is correct behavior, not a data error.
 """)
 
-    with st.expander("AB 617 Community Data Source", expanded=False):
-        st.markdown("""
+    st.subheader("AB 617 Community Data Source")
+    st.markdown("""
 **Assembly Bill 617 — Community Air Protection Program**
 
 AB 617 (signed 2017) established CARB's Community Air Protection Program to reduce air pollution 

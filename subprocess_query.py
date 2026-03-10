@@ -865,14 +865,18 @@ def get_node_finder_data(conn, bx, year, top_m_emitters, ab617_only, zone_filter
         "SELECT community_name, lat, lon FROM ab617_communities"
     ).fetchdf()
 
+    _R = 6371.0
+
     if ab617_only and not ab617_df.empty:
         ab617_lats = ab617_df['lat'].values
         ab617_lons = ab617_df['lon'].values
         keep_mask = []
         for _, em in emitters_df.iterrows():
-            dlat = ab617_lats - float(em['lat'])
-            dlon = (ab617_lons - float(em['lon'])) * math.cos(math.radians(float(em['lat'])))
-            dists_km = np.sqrt(dlat ** 2 + dlon ** 2) * 111.0
+            _phi1 = math.radians(float(em['lat']))
+            _dphi = np.radians(ab617_lats - float(em['lat']))
+            _dlam = np.radians(ab617_lons - float(em['lon']))
+            _a = np.sin(_dphi / 2) ** 2 + math.cos(_phi1) * np.cos(np.radians(ab617_lats)) * np.sin(_dlam / 2) ** 2
+            dists_km = _R * 2 * np.arcsin(np.sqrt(np.clip(_a, 0, 1)))
             keep_mask.append(bool(dists_km.min() <= 30.0))
         emitters_df = emitters_df[keep_mask].reset_index(drop=True)
 
@@ -889,9 +893,11 @@ def get_node_finder_data(conn, bx, year, top_m_emitters, ab617_only, zone_filter
     for _, em in emitters_df.iterrows():
         em_lat = float(em['lat'])
         em_lon = float(em['lon'])
-        dlat = node_lats - em_lat
-        dlon = (node_lons - em_lon) * math.cos(math.radians(em_lat))
-        dists_km = np.sqrt(dlat ** 2 + dlon ** 2) * 111.0
+        _phi1 = math.radians(em_lat)
+        _dphi = np.radians(node_lats - em_lat)
+        _dlam = np.radians(node_lons - em_lon)
+        _a = np.sin(_dphi / 2) ** 2 + math.cos(_phi1) * np.cos(np.radians(node_lats)) * np.sin(_dlam / 2) ** 2
+        dists_km = _R * 2 * np.arcsin(np.sqrt(np.clip(_a, 0, 1)))
         idx = int(dists_km.argmin())
         nearest_row = nodes_df.iloc[idx]
         facility_rows.append({
