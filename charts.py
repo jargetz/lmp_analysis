@@ -1081,7 +1081,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
         kv = row.get('highest_kv')
         dist = row.get('dist_km_to_substation')
         if name:
-            dist_str = f', {dist:.1f} km' if dist is not None else ''
+            dist_str = f', {dist*0.621371:.1f} mi ({dist:.1f} km)' if dist is not None else ''
             lines.append(f'Substation: {name} ({owner or "—"}){dist_str}')
         if kv:
             lines.append(f'Voltage: {kv}')
@@ -1218,7 +1218,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
         sub_dist = nearest_node.get('dist_km_to_substation')
         sub_lines = []
         if sub_name:
-            dist_str = f'{sub_dist:.1f} km from node' if sub_dist is not None else ''
+            dist_str = f'{sub_dist*0.621371:.1f} mi ({sub_dist:.1f} km) from node' if sub_dist is not None else ''
             sub_lines.append(f'Nearest substation: {sub_name} ({sub_owner or "—"})')
             if dist_str:
                 sub_lines.append(f'Node → substation: {dist_str}')
@@ -1247,7 +1247,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
     if nearest_substation and nearest_substation.get('lat') is not None:
         ns = nearest_substation
         status_warn = f'<br>⚠ Status: {ns["status"]}' if ns.get('status') and ns['status'] != 'Operational' else ''
-        dist_str = f'{ns["dist_km"]:.1f} km' if ns.get('dist_km') is not None else '—'
+        dist_str = f'{ns["dist_km"]*0.621371:.1f} mi ({ns["dist_km"]:.1f} km)' if ns.get('dist_km') is not None else '—'
         hover_sub = (
             f"<b>Nearest ≥110kV substation: {ns['substation_name']}</b><br>"
             f"Owner: {ns.get('owner') or '—'}<br>"
@@ -1268,7 +1268,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
     if nearest_lv_substation and nearest_lv_substation.get('lat') is not None:
         lv = nearest_lv_substation
         status_warn_lv = f'<br>⚠ Status: {lv["status"]}' if lv.get('status') and lv['status'] != 'Operational' else ''
-        dist_str_lv = f'{lv["dist_km"]:.1f} km' if lv.get('dist_km') is not None else '—'
+        dist_str_lv = f'{lv["dist_km"]*0.621371:.1f} mi ({lv["dist_km"]:.1f} km)' if lv.get('dist_km') is not None else '—'
         hover_lv = (
             f"<b>Closer lower-voltage substation: {lv['substation_name']}</b><br>"
             f"Owner: {lv.get('owner') or '—'}<br>"
@@ -1325,7 +1325,7 @@ def create_node_finder_map(facilities: list, ab617_communities: list,
         d = row.get('dist_km_to_substation')
         if not name:
             return ''
-        dist_str = f', {d:.1f} km' if d is not None else ''
+        dist_str = f', {d*0.621371:.1f} mi ({d:.1f} km)' if d is not None else ''
         line = f'Substation: {name} ({owner or "—"}){dist_str}'
         if kv:
             line += f' | {kv}'
@@ -1348,7 +1348,7 @@ def create_node_finder_map(facilities: list, ab617_communities: list,
         + 'Cap & Trade: ' + fdf['cap_and_trade'].astype(str) + '<br>'
         + 'Nearest node: <b>' + fdf['nearest_node'].astype(str) + '</b> (' + fdf['node_zone'].astype(str) + ')<br>'
         + bx_label + ' avg: $' + fdf['node_b_avg'].apply(lambda x: f'{x:.2f}') + '/MWh<br>'
-        + 'Distance to node: ' + fdf['dist_km'].apply(lambda x: f'{x:.1f}') + ' km'
+        + 'Distance to node: ' + fdf['dist_km'].apply(lambda x: f'{x*0.621371:.1f} mi ({x:.1f} km)')
         + fdf['sub_line']
     )
 

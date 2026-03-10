@@ -871,7 +871,7 @@ def render_node_map_tab():
                 status_warn = f' ⚠ {ns["status"]}' if ns.get('status') and ns['status'] != 'Operational' else ''
                 ns_line = (
                     f'  \n**Nearest Substation (≥110kV):** {ns["substation_name"]} '
-                    f'({ns["owner"]}{kv_s}, {ns["dist_km"]:.1f} km){status_warn}'
+                    f'({ns["owner"]}{kv_s}, {ns["dist_km"]*0.621371:.1f} mi ({ns["dist_km"]:.1f} km)){status_warn}'
                 )
                 if (nearest_any_sub
                         and nearest_any_sub['substation_name'] != ns['substation_name']
@@ -880,7 +880,7 @@ def render_node_map_tab():
                     lv_kv = f', {lv["highest_kv"]}' if lv.get('highest_kv') else ''
                     closer_lv_line = (
                         f'  \n⚠ Closer lower-voltage substation: {lv["substation_name"]} '
-                        f'({lv["owner"]}{lv_kv}, {lv["dist_km"]:.1f} km)'
+                        f'({lv["owner"]}{lv_kv}, {lv["dist_km"]*0.621371:.1f} mi ({lv["dist_km"]:.1f} km))'
                     )
 
             st.info(
@@ -891,7 +891,7 @@ def render_node_map_tab():
                 f"NOx: {selected_facility['nox']:,.1f} · "
                 f"SOx: {selected_facility['sox']:,.1f} · "
                 f"PM2.5: {selected_facility['pm25']:,.1f}  \n"
-                f"**Nearest Node:** {node_name} ({dist_km:.1f} km) · B{map_bx} avg {node_price}"
+                f"**Nearest Node:** {node_name} ({dist_km*0.621371:.1f} mi ({dist_km:.1f} km)) · B{map_bx} avg {node_price}"
                 f"{ns_line}"
                 f"{closer_lv_line}"
             )
@@ -1378,7 +1378,7 @@ def render_node_finder_tab():
     with m4:
         avg_d = summary.get('avg_dist_km')
         st.metric("Avg Distance to Node",
-                  f"{avg_d:.1f} km" if avg_d is not None else "N/A")
+                  f"{avg_d*0.621371:.1f} mi ({avg_d:.1f} km)" if avg_d is not None else "N/A")
 
     price_col = f'B{nf_bx} Avg ($/MWh)'
     table_rows = []
@@ -1395,7 +1395,7 @@ def render_node_finder_tab():
             'Cap & Trade': r['cap_and_trade'],
             'Nearest Node': r['nearest_node'],
             'Zone': r['node_zone'],
-            'Dist (km)': round(r['dist_km'], 1),
+            'Dist (mi)': round(r['dist_km'] * 0.621371, 1),
             price_col: round(r['node_b_avg'], 2),
             'Substation': sub_name,
             'Owner': r.get('substation_owner') or '—',
@@ -1423,13 +1423,13 @@ def render_node_finder_tab():
                     top5 = facilities[:5]
                     st.markdown("**Top 5 facilities with cheapest nearest node:**")
                     for f in top5:
-                        st.markdown(f"- **{f['facility'][:40]}** → {f['nearest_node']} (${f['node_b_avg']:.2f}/MWh, {f['dist_km']:.1f} km)")
+                        st.markdown(f"- **{f['facility'][:40]}** → {f['nearest_node']} (${f['node_b_avg']:.2f}/MWh, {f['dist_km']*0.621371:.1f} mi ({f['dist_km']:.1f} km))")
             with sc3:
                 if facilities:
                     worst5 = facilities[-5:][::-1]
                     st.markdown("**Top 5 facilities with most expensive nearest node:**")
                     for f in worst5:
-                        st.markdown(f"- **{f['facility'][:40]}** → {f['nearest_node']} (${f['node_b_avg']:.2f}/MWh, {f['dist_km']:.1f} km)")
+                        st.markdown(f"- **{f['facility'][:40]}** → {f['nearest_node']} (${f['node_b_avg']:.2f}/MWh, {f['dist_km']*0.621371:.1f} mi ({f['dist_km']:.1f} km))")
 
         st.download_button(
             "Download as CSV",
