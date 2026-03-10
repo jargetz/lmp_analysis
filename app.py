@@ -863,25 +863,15 @@ def render_node_map_tab():
             node_price = f"${nearest_node['avg_price']:.2f}/MWh" if nearest_node and nearest_node.get('avg_price') is not None else "N/A"
             node_name = nearest_node['pnode_id'] if nearest_node else "—"
 
-            node_sub = nearest_node.get('substation_name') if nearest_node else None
-            node_sub_owner = nearest_node.get('substation_owner') if nearest_node else None
-            node_sub_kv = nearest_node.get('highest_kv') if nearest_node else None
-            node_sub_dist = nearest_node.get('dist_km_to_substation') if nearest_node else None
-            node_sub_str = ''
-            if node_sub:
-                dist_s = f', {node_sub_dist:.1f} km' if node_sub_dist is not None else ''
-                kv_s = f', {node_sub_kv}' if node_sub_kv else ''
-                node_sub_str = f' → substation: **{node_sub}** ({node_sub_owner or "—"}{kv_s}{dist_s})'
-
-            ns_str = ''
-            nns_str = ''
+            ns_line = ''
+            nns_line = ''
             if nearest_substation:
                 ns = nearest_substation
-                kv_s2 = f', {ns["highest_kv"]}' if ns.get('highest_kv') else ''
+                kv_s = f', {ns["highest_kv"]}' if ns.get('highest_kv') else ''
                 status_warn = f' ⚠ {ns["status"]}' if ns.get('status') and ns['status'] != 'Operational' else ''
-                ns_str = (
-                    f'  \nNearest substation: **{ns["substation_name"]}** '
-                    f'({ns["owner"]}{kv_s2}, {ns["dist_km"]:.1f} km){status_warn}'
+                ns_line = (
+                    f'  \n**Nearest Substation:** {ns["substation_name"]} '
+                    f'({ns["owner"]}{kv_s}, {ns["dist_km"]:.1f} km){status_warn}'
                 )
                 if nearest_node_to_substation and nearest_node_to_substation.get('pnode_id') != node_name:
                     nns = nearest_node_to_substation
@@ -890,9 +880,9 @@ def render_node_map_tab():
                         ((nns['lon'] - ns['lon']) * _math.cos(_math.radians(ns['lat']))) ** 2
                     ) * 111.0)
                     nns_price = f"${nns['avg_price']:.2f}/MWh" if nns.get('avg_price') is not None else "N/A"
-                    nns_str = f' → nearest node: **{nns["pnode_id"]}** ({nns_dist:.1f} km, {nns_price})'
-                elif nearest_node_to_substation:
-                    nns_str = ' → same as nearest node above'
+                    nns_line = f'  \n**Nearest Node to Substation:** {nns["pnode_id"]} ({nns_dist:.1f} km) · B{map_bx} avg {nns_price}'
+                else:
+                    nns_line = f'  \n**Nearest Node to Substation:** same as nearest node'
 
             st.info(
                 f"**{selected_facility['facility']}** · {ct_badge}  \n"
@@ -902,9 +892,9 @@ def render_node_map_tab():
                 f"NOx: {selected_facility['nox']:,.1f} · "
                 f"SOx: {selected_facility['sox']:,.1f} · "
                 f"PM2.5: {selected_facility['pm25']:,.1f}  \n"
-                f"Nearest node: **{node_name}** ({dist_km:.1f} km) · B{map_bx} avg {node_price}"
-                f"{node_sub_str}"
-                f"{ns_str}{nns_str}"
+                f"**Nearest Node:** {node_name} ({dist_km:.1f} km) · B{map_bx} avg {node_price}"
+                f"{ns_line}"
+                f"{nns_line}"
             )
 
     # ── Map chart ─────────────────────────────────────────────────────────────

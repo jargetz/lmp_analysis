@@ -1258,7 +1258,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             lon=[ns['lon']],
             mode='markers',
             name='Nearest Substation',
-            marker=dict(size=16, color='#e377c2', opacity=1.0, symbol='star'),
+            marker=dict(size=16, color='#e377c2', opacity=1.0),
             customdata=[hover_sub],
             hovertemplate='%{customdata}<extra></extra>',
         ))
