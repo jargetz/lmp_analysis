@@ -905,6 +905,13 @@ def render_node_map_tab():
         selected_facility=selected_facility,
         nearest_node=nearest_node,
         nearest_substation=nearest_substation,
+        nearest_lv_substation=(
+            nearest_any_sub
+            if nearest_any_sub and nearest_substation
+            and nearest_any_sub['substation_name'] != nearest_substation['substation_name']
+            and nearest_any_sub['dist_km'] < nearest_substation['dist_km']
+            else None
+        ),
     )
     st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 

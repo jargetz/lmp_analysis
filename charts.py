@@ -1037,7 +1037,8 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
                      facilities: list = None,
                      selected_facility: dict = None,
                      nearest_node: dict = None,
-                     nearest_substation: dict = None) -> go.Figure:
+                     nearest_substation: dict = None,
+                     nearest_lv_substation: dict = None) -> go.Figure:
     """
     Create a geographic scatter map of PNODE BX prices with optional facility overlay.
 
@@ -1217,8 +1218,10 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
         sub_dist = nearest_node.get('dist_km_to_substation')
         sub_lines = []
         if sub_name:
-            dist_str = f', {sub_dist:.1f} km' if sub_dist is not None else ''
-            sub_lines.append(f'Substation: {sub_name} ({sub_owner or "—"}){dist_str}')
+            dist_str = f'{sub_dist:.1f} km from node' if sub_dist is not None else ''
+            sub_lines.append(f'Nearest substation: {sub_name} ({sub_owner or "—"})')
+            if dist_str:
+                sub_lines.append(f'Node → substation: {dist_str}')
         if sub_kv:
             sub_lines.append(f'Voltage: {sub_kv}')
         if sub_status and sub_status != 'Operational':
@@ -1246,7 +1249,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
         status_warn = f'<br>⚠ Status: {ns["status"]}' if ns.get('status') and ns['status'] != 'Operational' else ''
         dist_str = f'{ns["dist_km"]:.1f} km' if ns.get('dist_km') is not None else '—'
         hover_sub = (
-            f"<b>Nearest substation: {ns['substation_name']}</b><br>"
+            f"<b>Nearest ≥110kV substation: {ns['substation_name']}</b><br>"
             f"Owner: {ns.get('owner') or '—'}<br>"
             f"Voltage: {ns.get('highest_kv') or '—'}<br>"
             f"Distance to facility: {dist_str}"
@@ -1256,9 +1259,30 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             lat=[ns['lat']],
             lon=[ns['lon']],
             mode='markers',
-            name='Nearest Substation',
+            name='Nearest ≥110kV Substation',
             marker=dict(size=16, color='#e377c2', opacity=1.0),
             customdata=[hover_sub],
+            hovertemplate='%{customdata}<extra></extra>',
+        ))
+
+    if nearest_lv_substation and nearest_lv_substation.get('lat') is not None:
+        lv = nearest_lv_substation
+        status_warn_lv = f'<br>⚠ Status: {lv["status"]}' if lv.get('status') and lv['status'] != 'Operational' else ''
+        dist_str_lv = f'{lv["dist_km"]:.1f} km' if lv.get('dist_km') is not None else '—'
+        hover_lv = (
+            f"<b>Closer lower-voltage substation: {lv['substation_name']}</b><br>"
+            f"Owner: {lv.get('owner') or '—'}<br>"
+            f"Voltage: {lv.get('highest_kv') or '—'}<br>"
+            f"Distance to facility: {dist_str_lv}"
+            f"{status_warn_lv}"
+        )
+        fig.add_trace(go.Scattermapbox(
+            lat=[lv['lat']],
+            lon=[lv['lon']],
+            mode='markers',
+            name='Closer Lower-Voltage Substation',
+            marker=dict(size=14, color='#ff7f0e', opacity=0.9),
+            customdata=[hover_lv],
             hovertemplate='%{customdata}<extra></extra>',
         ))
 
