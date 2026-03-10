@@ -1,0 +1,58 @@
+Got it. I will stop doing that.
+
+The method researchers commonly use is to **map facilities to the nearest transmission infrastructure first, then map that infrastructure to a CAISO price node** instead of mapping facilities directly to the nearest PNode.
+
+Directly matching a facility to the nearest PNode can produce unrealistic results because PNodes are not always located where real infrastructure is. Some are aggregated nodes, some represent load zones, and their coordinates are sometimes approximate.
+
+The more defensible workflow looks like this.
+
+Step 1. Identify candidate transmission substations
+Use your substation dataset and filter to substations likely connected to the transmission grid. In your case you could use:
+
+* ≥220 kV if you want strict CAISO transmission
+* ≥110 kV if you want transmission plus subtransmission
+
+Step 2. Map each facility to the nearest candidate substation
+This gives you the **likely physical interconnection point**. This step uses real infrastructure instead of market objects.
+
+Step 3. Map that substation to a CAISO pricing node
+You then assign the price node that is electrically closest to that transmission location. This might be:
+
+* a nearby generator node
+* a nearby load node
+* a hub if you are simplifying
+
+Step 4. Use that node for price analysis
+You now have a defensible mapping chain:
+
+facility → transmission substation → CAISO node
+
+Instead of:
+
+facility → nearest PNode
+
+The advantage is that your mapping is anchored to **physical grid topology first**, which is much more realistic.
+
+Researchers often describe this in methods sections as something like:
+
+“Facilities were mapped to the nearest high-voltage substation (≥110 kV) as a proxy for transmission interconnection. Each substation was then associated with the nearest CAISO pricing node to estimate locational electricity prices.”
+
+This approach avoids several problems:
+
+Nearest PNode problems
+
+* PNodes may represent aggregated load
+* coordinates may be approximate
+* nodes may not correspond to physical infrastructure
+
+Substation-first mapping advantages
+
+* substations are real grid assets
+* voltage level indicates connection type
+* easier to sanity check on maps
+
+For the type of work you are doing, this approach is common in grid economics and industrial electrification studies because the exact bus used in the CAISO network model is usually not publicly mapped cleanly.
+
+One more practical tip. When you compute the nearest substation, use **geodesic distance (great circle)** or project your data to something like **California Albers (EPSG:3310)** so the distance calculations are correct. That avoids distortion from using raw lat/long.
+
+If you want, I can also show you a very simple QGIS workflow to compute **nearest ≥220 kV substation for every facility in about two clicks**, which saves a lot of scripting.
