@@ -802,6 +802,7 @@ def render_node_map_tab():
     selected_facility = None
     nearest_node = None
     nearest_substation = None
+    nearest_any_sub = None
 
     if selected_name:
         selected_facility = next((f for f in all_facilities_sorted if f['facility'] == selected_name), None)
@@ -829,24 +830,32 @@ def render_node_map_tab():
             dist_km = 0.0
 
         if not sub_df.empty:
-            sub_lats = sub_df['lat'].values
-            sub_lons = sub_df['lon'].values
-            _dphi_s = _np.radians(sub_lats - flat)
-            _dlam_s = _np.radians(sub_lons - flon)
-            _a_s = (_np.sin(_dphi_s / 2) ** 2
-                    + _math.cos(_phi1) * _np.cos(_np.radians(sub_lats)) * _np.sin(_dlam_s / 2) ** 2)
-            dists_s = _R * 2 * _np.arcsin(_np.sqrt(_np.clip(_a_s, 0, 1)))
-            si = int(dists_s.argmin())
-            sr = sub_df.iloc[si]
-            nearest_substation = {
-                'substation_name': str(sr['Substation_Name']),
-                'owner': str(sr['Owner']),
-                'highest_kv': str(sr['Highest_kV']) if pd.notna(sr['Highest_kV']) else None,
-                'status': str(sr['Status']),
-                'lat': float(sr['lat']),
-                'lon': float(sr['lon']),
-                'dist_km': float(dists_s[si]),
-            }
+            _low_kv = {'12kV to 32kV', '33kV to 92kV', '33kV to 92Kv'}
+            hv_df = sub_df[~sub_df['Highest_kV'].isin(_low_kv)].reset_index(drop=True)
+            _search_df = hv_df if not hv_df.empty else sub_df
+
+            def _nearest_sub(sdf):
+                _lats = sdf['lat'].values
+                _lons = sdf['lon'].values
+                _dp = _np.radians(_lats - flat)
+                _dl = _np.radians(_lons - flon)
+                _av = (_np.sin(_dp / 2) ** 2
+                       + _math.cos(_phi1) * _np.cos(_np.radians(_lats)) * _np.sin(_dl / 2) ** 2)
+                _ds = _R * 2 * _np.arcsin(_np.sqrt(_np.clip(_av, 0, 1)))
+                _i = int(_ds.argmin())
+                _r = sdf.iloc[_i]
+                return {
+                    'substation_name': str(_r['Substation_Name']),
+                    'owner': str(_r['Owner']),
+                    'highest_kv': str(_r['Highest_kV']) if pd.notna(_r['Highest_kV']) else None,
+                    'status': str(_r['Status']),
+                    'lat': float(_r['lat']),
+                    'lon': float(_r['lon']),
+                    'dist_km': float(_ds[_i]),
+                }
+
+            nearest_substation = _nearest_sub(_search_df)
+            nearest_any_sub = _nearest_sub(sub_df)
 
 
         with search_col2:
@@ -855,14 +864,24 @@ def render_node_map_tab():
             node_name = nearest_node['pnode_id'] if nearest_node else "—"
 
             ns_line = ''
+            closer_lv_line = ''
             if nearest_substation:
                 ns = nearest_substation
                 kv_s = f', {ns["highest_kv"]}' if ns.get('highest_kv') else ''
                 status_warn = f' ⚠ {ns["status"]}' if ns.get('status') and ns['status'] != 'Operational' else ''
                 ns_line = (
-                    f'  \n**Nearest Substation:** {ns["substation_name"]} '
+                    f'  \n**Nearest Substation (≥110kV):** {ns["substation_name"]} '
                     f'({ns["owner"]}{kv_s}, {ns["dist_km"]:.1f} km){status_warn}'
                 )
+                if (nearest_any_sub
+                        and nearest_any_sub['substation_name'] != ns['substation_name']
+                        and nearest_any_sub['dist_km'] < ns['dist_km']):
+                    lv = nearest_any_sub
+                    lv_kv = f', {lv["highest_kv"]}' if lv.get('highest_kv') else ''
+                    closer_lv_line = (
+                        f'  \n⚠ Closer lower-voltage substation: {lv["substation_name"]} '
+                        f'({lv["owner"]}{lv_kv}, {lv["dist_km"]:.1f} km)'
+                    )
 
             st.info(
                 f"**{selected_facility['facility']}** · {ct_badge}  \n"
@@ -874,6 +893,7 @@ def render_node_map_tab():
                 f"PM2.5: {selected_facility['pm25']:,.1f}  \n"
                 f"**Nearest Node:** {node_name} ({dist_km:.1f} km) · B{map_bx} avg {node_price}"
                 f"{ns_line}"
+                f"{closer_lv_line}"
             )
 
     # ── Map chart ─────────────────────────────────────────────────────────────
@@ -1272,6 +1292,7 @@ def render_node_finder_tab():
             return {'error': str(e)}
 
     st.header("Node Finder")
+    st.warning("This tab is a work in progress. Results and methodology may change.")
     st.markdown(
         "For each CARB-reported GHG-emitting facility, this tool finds the "
         "**geographically nearest CAISO pricing node** and shows its B-hour electricity price. "
