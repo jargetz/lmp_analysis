@@ -1211,28 +1211,11 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
 
     if nearest_node and nearest_node.get('lat') is not None:
         price_str = f"${nearest_node['avg_price']:.2f}/MWh" if nearest_node.get('avg_price') is not None else "N/A"
-        sub_name = nearest_node.get('substation_name')
-        sub_owner = nearest_node.get('substation_owner')
-        sub_kv = nearest_node.get('highest_kv')
-        sub_status = nearest_node.get('substation_status')
-        sub_dist = nearest_node.get('dist_km_to_substation')
-        sub_lines = []
-        if sub_name:
-            dist_str = f'{sub_dist*0.621371:.1f} mi ({sub_dist:.1f} km) from node' if sub_dist is not None else ''
-            sub_lines.append(f'Nearest substation: {sub_name} ({sub_owner or "—"})')
-            if dist_str:
-                sub_lines.append(f'Node → substation: {dist_str}')
-        if sub_kv:
-            sub_lines.append(f'Voltage: {sub_kv}')
-        if sub_status and sub_status != 'Operational':
-            sub_lines.append(f'⚠ Status: {sub_status}')
-        sub_text = ('<br>' + '<br>'.join(sub_lines)) if sub_lines else ''
         hover_nn = (
             f"<b>Nearest node: {nearest_node['pnode_id']}</b><br>"
             f"Zone: {nearest_node.get('zone') or '—'}<br>"
             f"Type: {nearest_node.get('node_type') or '—'}<br>"
             f"{bx_label} avg: {price_str}"
-            f"{sub_text}"
         )
         fig.add_trace(go.Scattermapbox(
             lat=[nearest_node['lat']],
