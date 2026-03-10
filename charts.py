@@ -1037,8 +1037,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
                      facilities: list = None,
                      selected_facility: dict = None,
                      nearest_node: dict = None,
-                     nearest_substation: dict = None,
-                     nearest_node_to_substation: dict = None) -> go.Figure:
+                     nearest_substation: dict = None) -> go.Figure:
     """
     Create a geographic scatter map of PNODE BX prices with optional facility overlay.
 
@@ -1260,27 +1259,6 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             name='Nearest Substation',
             marker=dict(size=16, color='#e377c2', opacity=1.0),
             customdata=[hover_sub],
-            hovertemplate='%{customdata}<extra></extra>',
-        ))
-
-    if (nearest_node_to_substation
-            and nearest_node_to_substation.get('lat') is not None
-            and nearest_node and
-            nearest_node_to_substation['pnode_id'] != nearest_node.get('pnode_id')):
-        nns = nearest_node_to_substation
-        price2 = f"${nns['avg_price']:.2f}/MWh" if nns.get('avg_price') is not None else "N/A"
-        hover_nns = (
-            f"<b>Node nearest to substation: {nns['pnode_id']}</b><br>"
-            f"Zone: {nns.get('zone') or '—'}<br>"
-            f"{bx_label} avg: {price2}"
-        )
-        fig.add_trace(go.Scattermapbox(
-            lat=[nns['lat']],
-            lon=[nns['lon']],
-            mode='markers',
-            name='Node nearest to substation',
-            marker=dict(size=12, color='#17becf', opacity=0.9),
-            customdata=[hover_nns],
             hovertemplate='%{customdata}<extra></extra>',
         ))
 

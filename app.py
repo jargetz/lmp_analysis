@@ -802,7 +802,6 @@ def render_node_map_tab():
     selected_facility = None
     nearest_node = None
     nearest_substation = None
-    nearest_node_to_substation = None
 
     if selected_name:
         selected_facility = next((f for f in all_facilities_sorted if f['facility'] == selected_name), None)
@@ -843,20 +842,6 @@ def render_node_map_tab():
                 'dist_km': float(dists_s[si]),
             }
 
-            slat2 = nearest_substation['lat']
-            slon2 = nearest_substation['lon']
-            cos_s = _math.cos(_math.radians(slat2))
-            best2, best2_dist = None, float('inf')
-            for node in map_data:
-                if node.get('lat') is None or node.get('lon') is None:
-                    continue
-                dlat2 = node['lat'] - slat2
-                dlon2 = (node['lon'] - slon2) * cos_s
-                d2 = dlat2 * dlat2 + dlon2 * dlon2
-                if d2 < best2_dist:
-                    best2_dist = d2
-                    best2 = node
-            nearest_node_to_substation = best2
 
         with search_col2:
             ct_badge = "Cap-and-Trade" if selected_facility['cap_and_trade'] == 'Yes' else "Non-covered"
@@ -864,7 +849,6 @@ def render_node_map_tab():
             node_name = nearest_node['pnode_id'] if nearest_node else "—"
 
             ns_line = ''
-            nns_line = ''
             if nearest_substation:
                 ns = nearest_substation
                 kv_s = f', {ns["highest_kv"]}' if ns.get('highest_kv') else ''
@@ -873,16 +857,6 @@ def render_node_map_tab():
                     f'  \n**Nearest Substation:** {ns["substation_name"]} '
                     f'({ns["owner"]}{kv_s}, {ns["dist_km"]:.1f} km){status_warn}'
                 )
-                if nearest_node_to_substation and nearest_node_to_substation.get('pnode_id') != node_name:
-                    nns = nearest_node_to_substation
-                    nns_dist = (_math.sqrt(
-                        (nns['lat'] - ns['lat']) ** 2 +
-                        ((nns['lon'] - ns['lon']) * _math.cos(_math.radians(ns['lat']))) ** 2
-                    ) * 111.0)
-                    nns_price = f"${nns['avg_price']:.2f}/MWh" if nns.get('avg_price') is not None else "N/A"
-                    nns_line = f'  \n**Nearest Node to Substation:** {nns["pnode_id"]} ({nns_dist:.1f} km) · B{map_bx} avg {nns_price}'
-                else:
-                    nns_line = f'  \n**Nearest Node to Substation:** same as nearest node'
 
             st.info(
                 f"**{selected_facility['facility']}** · {ct_badge}  \n"
@@ -894,7 +868,6 @@ def render_node_map_tab():
                 f"PM2.5: {selected_facility['pm25']:,.1f}  \n"
                 f"**Nearest Node:** {node_name} ({dist_km:.1f} km) · B{map_bx} avg {node_price}"
                 f"{ns_line}"
-                f"{nns_line}"
             )
 
     # ── Map chart ─────────────────────────────────────────────────────────────
@@ -906,7 +879,6 @@ def render_node_map_tab():
         selected_facility=selected_facility,
         nearest_node=nearest_node,
         nearest_substation=nearest_substation,
-        nearest_node_to_substation=nearest_node_to_substation,
     )
     st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
