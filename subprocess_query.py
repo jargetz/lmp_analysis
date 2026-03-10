@@ -107,6 +107,14 @@ def run_query():
             result = get_node_map_data(conn, bx, year, time_period, month)
         elif query_type == 'facility_emissions':
             result = get_facility_emissions(conn)
+        elif query_type == 'node_finder':
+            bx = int(sys.argv[2])
+            year = int(sys.argv[3])
+            top_n = int(sys.argv[4])
+            top_m = int(sys.argv[5])
+            ab617_only = sys.argv[6].lower() == 'true' if len(sys.argv) > 6 else False
+            zone_filter = sys.argv[7] if len(sys.argv) > 7 else 'All'
+            result = get_node_finder_data(conn, bx, year, top_n, top_m, ab617_only, zone_filter)
         else:
             result = {'error': f'Unknown query type: {query_type}'}
         
@@ -777,6 +785,163 @@ def get_node_map_data(conn, bx, year, time_period, month=None):
         }
         for _, r in result.iterrows()
     ]
+
+
+def get_node_finder_data(conn, bx, year, top_n_nodes, top_m_emitters, ab617_only, zone_filter):
+    """Find cheapest B8 nodes (Set A) and nodes nearest top GHG emitters (Set B).
+
+    Returns dict with keys: cheapest, nearest, emitters, summary, ab617_communities.
+    """
+    import math
+    import numpy as np
+
+    bx = int(bx)
+    year = int(year)
+    top_n_nodes = int(top_n_nodes)
+    top_m_emitters = int(top_m_emitters)
+    col = f'b{bx}_avg'
+
+    zone_clause = f"AND nz.zone = '{zone_filter}'" if zone_filter and zone_filter != 'All' else ''
+
+    nodes_df = conn.execute(f"""
+        WITH annual AS (
+            SELECT node, SUM({col} * days_count) / SUM(days_count) AS b_avg
+            FROM node_bx_monthly_summary
+            WHERE year = {year}
+            GROUP BY node
+        )
+        SELECT a.node, a.b_avg, p.lat, p.lon, COALESCE(nz.zone, 'Other') AS zone
+        FROM annual a
+        JOIN pnode_coordinates p ON p.pnode_id = a.node
+        LEFT JOIN node_zone_mapping nz ON nz.pnode_id = a.node
+        WHERE p.lat BETWEEN 30 AND 50 AND p.lon BETWEEN -130 AND -100
+        {zone_clause}
+        ORDER BY a.b_avg ASC
+    """).fetchdf()
+
+    if nodes_df.empty:
+        return {'error': f'No node data with coordinates for year {year}'}
+
+    cheapest_df = nodes_df.head(top_n_nodes).copy()
+
+    emitters_df = conn.execute(f"""
+        SELECT facility, county, primary_sector, total_ghg, lat, lon
+        FROM facility_emissions
+        WHERE total_ghg IS NOT NULL AND lat IS NOT NULL AND lon IS NOT NULL
+        ORDER BY total_ghg DESC
+        LIMIT {top_m_emitters * 6}
+    """).fetchdf()
+
+    ab617_df = conn.execute(
+        "SELECT community_name, lat, lon FROM ab617_communities"
+    ).fetchdf()
+
+    if ab617_only and not ab617_df.empty:
+        ab617_lats = ab617_df['lat'].values
+        ab617_lons = ab617_df['lon'].values
+        keep = []
+        for _, em in emitters_df.iterrows():
+            dlat = ab617_lats - em['lat']
+            dlon = (ab617_lons - em['lon']) * math.cos(math.radians(em['lat']))
+            dists_km = np.sqrt(dlat ** 2 + dlon ** 2) * 111.0
+            keep.append(dists_km.min() <= 30.0)
+        emitters_df = emitters_df[keep].head(top_m_emitters).reset_index(drop=True)
+    else:
+        emitters_df = emitters_df.head(top_m_emitters).reset_index(drop=True)
+
+    node_lats = nodes_df['lat'].values
+    node_lons = nodes_df['lon'].values
+
+    def nearest_emitter_for_node(node_lat, node_lon):
+        if emitters_df.empty:
+            return None, None, None
+        dlat = emitters_df['lat'].values - node_lat
+        dlon = (emitters_df['lon'].values - node_lon) * math.cos(math.radians(node_lat))
+        dists_km = np.sqrt(dlat ** 2 + dlon ** 2) * 111.0
+        idx = int(dists_km.argmin())
+        return (
+            str(emitters_df.iloc[idx]['facility']),
+            float(emitters_df.iloc[idx]['total_ghg']),
+            float(dists_km[idx]),
+        )
+
+    cheapest_records = []
+    for _, row in cheapest_df.iterrows():
+        nf, ng, nd = nearest_emitter_for_node(float(row['lat']), float(row['lon']))
+        cheapest_records.append({
+            'node': str(row['node']),
+            'b8_avg': float(row['b_avg']),
+            'lat': float(row['lat']),
+            'lon': float(row['lon']),
+            'zone': str(row['zone']),
+            'nearest_fac': nf,
+            'nearest_fac_ghg': ng,
+            'nearest_dist_km': nd,
+        })
+
+    nearest_records = []
+    for _, em in emitters_df.iterrows():
+        em_lat = float(em['lat'])
+        em_lon = float(em['lon'])
+        dlat = node_lats - em_lat
+        dlon = (node_lons - em_lon) * math.cos(math.radians(em_lat))
+        dists_km = np.sqrt(dlat ** 2 + dlon ** 2) * 111.0
+        nearest_idxs = np.argsort(dists_km)[:3]
+        for idx in nearest_idxs:
+            row = nodes_df.iloc[int(idx)]
+            nearest_records.append({
+                'node': str(row['node']),
+                'b8_avg': float(row['b_avg']),
+                'lat': float(row['lat']),
+                'lon': float(row['lon']),
+                'zone': str(row['zone']),
+                'emitter': str(em['facility']),
+                'emitter_ghg': float(em['total_ghg']),
+                'emitter_lat': em_lat,
+                'emitter_lon': em_lon,
+                'dist_km': float(dists_km[int(idx)]),
+            })
+
+    emitter_rows = [
+        {
+            'facility': str(r['facility']),
+            'total_ghg': float(r['total_ghg']),
+            'lat': float(r['lat']),
+            'lon': float(r['lon']),
+            'county': str(r['county']),
+            'primary_sector': str(r['primary_sector']),
+        }
+        for _, r in emitters_df.iterrows()
+    ]
+
+    cheapest_nodes_set = {r['node'] for r in cheapest_records}
+    nearest_nodes_set = {r['node'] for r in nearest_records}
+    overlap_set = cheapest_nodes_set & nearest_nodes_set
+    overlap_prices = [r['b8_avg'] for r in cheapest_records if r['node'] in overlap_set]
+
+    summary = {
+        'n_cheapest': len(cheapest_nodes_set),
+        'n_nearest': len(nearest_nodes_set),
+        'n_overlap': len(overlap_set),
+        'avg_b8_cheapest': float(np.mean([r['b8_avg'] for r in cheapest_records])) if cheapest_records else None,
+        'avg_b8_nearest': float(np.mean([r['b8_avg'] for r in {
+            rec['node']: rec for rec in nearest_records
+        }.values()])) if nearest_records else None,
+        'avg_b8_overlap': float(np.mean(overlap_prices)) if overlap_prices else None,
+    }
+
+    ab617_list = [
+        {'name': str(r['community_name']), 'lat': float(r['lat']), 'lon': float(r['lon'])}
+        for _, r in ab617_df.iterrows()
+    ]
+
+    return {
+        'cheapest': cheapest_records,
+        'nearest': nearest_records,
+        'emitters': emitter_rows,
+        'summary': summary,
+        'ab617_communities': ab617_list,
+    }
 
 
 if __name__ == '__main__':

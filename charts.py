@@ -1200,6 +1200,125 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
     return fig
 
 
+def create_node_finder_map(cheapest: list, nearest: list, ab617_communities: list,
+                           emitters: list = None) -> go.Figure:
+    """
+    Map for Node Finder tab.
+
+    Traces:
+      - Cheapest only (Set A):   green circles, size 7
+      - Near emitter only (B):   orange circles, size 7
+      - Both sets (A ∩ B):       red circles, size 12
+      - Top Emitters:            gray triangle-up markers, size 10
+      - AB 617 Communities:      purple diamond markers, size 9
+    """
+    cheapest_nodes_set = {r['node'] for r in cheapest}
+    nearest_nodes_set = {r['node'] for r in nearest}
+    overlap_nodes_set = cheapest_nodes_set & nearest_nodes_set
+
+    fig = go.Figure()
+
+    cheapest_only = [r for r in cheapest if r['node'] not in nearest_nodes_set]
+    if cheapest_only:
+        df = pd.DataFrame(cheapest_only)
+        hover = (
+            '<b>' + df['node'].astype(str) + '</b><br>'
+            'B Avg: $' + df['b8_avg'].apply(lambda x: f'{x:.2f}') + '/MWh<br>'
+            'Zone: ' + df['zone'].astype(str) + '<br>'
+            'Set: Cheapest only<br>'
+            'Nearest Facility: ' + df['nearest_fac'].fillna('—').astype(str) + '<br>'
+            'Distance: ' + df['nearest_dist_km'].apply(
+                lambda x: f'{x:.1f} km' if x is not None else '—')
+        )
+        fig.add_trace(go.Scattermapbox(
+            lat=df['lat'].tolist(), lon=df['lon'].tolist(),
+            mode='markers', name='Cheapest only (Set A)',
+            marker=dict(size=7, color='#2ca02c', opacity=0.85),
+            customdata=hover.tolist(),
+            hovertemplate='%{customdata}<extra></extra>',
+        ))
+
+    overlap_records = [r for r in cheapest if r['node'] in overlap_nodes_set]
+    if overlap_records:
+        df = pd.DataFrame(overlap_records)
+        hover = (
+            '<b>' + df['node'].astype(str) + '</b><br>'
+            'B Avg: $' + df['b8_avg'].apply(lambda x: f'{x:.2f}') + '/MWh<br>'
+            'Zone: ' + df['zone'].astype(str) + '<br>'
+            '<b>Set: Both sets (A ∩ B)</b><br>'
+            'Nearest Facility: ' + df['nearest_fac'].fillna('—').astype(str) + '<br>'
+            'Distance: ' + df['nearest_dist_km'].apply(
+                lambda x: f'{x:.1f} km' if x is not None else '—')
+        )
+        fig.add_trace(go.Scattermapbox(
+            lat=df['lat'].tolist(), lon=df['lon'].tolist(),
+            mode='markers', name='Both sets (A ∩ B)',
+            marker=dict(size=12, color='#d62728', opacity=0.95),
+            customdata=hover.tolist(),
+            hovertemplate='%{customdata}<extra></extra>',
+        ))
+
+    seen_near_only = set()
+    near_only_unique = []
+    for r in nearest:
+        if r['node'] not in cheapest_nodes_set and r['node'] not in seen_near_only:
+            seen_near_only.add(r['node'])
+            near_only_unique.append(r)
+    if near_only_unique:
+        df = pd.DataFrame(near_only_unique)
+        hover = (
+            '<b>' + df['node'].astype(str) + '</b><br>'
+            'B Avg: $' + df['b8_avg'].apply(lambda x: f'{x:.2f}') + '/MWh<br>'
+            'Zone: ' + df['zone'].astype(str) + '<br>'
+            'Set: Near emitter only<br>'
+            'Nearest Emitter: ' + df['emitter'].fillna('—').astype(str) + '<br>'
+            'Distance: ' + df['dist_km'].apply(lambda x: f'{x:.1f} km')
+        )
+        fig.add_trace(go.Scattermapbox(
+            lat=df['lat'].tolist(), lon=df['lon'].tolist(),
+            mode='markers', name='Near emitter only (Set B)',
+            marker=dict(size=7, color='#ff7f0e', opacity=0.85),
+            customdata=hover.tolist(),
+            hovertemplate='%{customdata}<extra></extra>',
+        ))
+
+    if emitters:
+        edf = pd.DataFrame(emitters)
+        hover_e = (
+            '<b>' + edf['facility'].astype(str) + '</b><br>'
+            'Sector: ' + edf['primary_sector'].astype(str) + ' | ' + edf['county'].astype(str) + ' Co.<br>'
+            'Total GHG: ' + edf['total_ghg'].apply(lambda x: f'{x:,.0f}') + ' MT CO₂e'
+        )
+        fig.add_trace(go.Scattermapbox(
+            lat=edf['lat'].tolist(), lon=edf['lon'].tolist(),
+            mode='markers', name='Top GHG Emitters',
+            marker=dict(size=12, color='#7f7f7f', opacity=0.9),
+            customdata=hover_e.tolist(),
+            hovertemplate='%{customdata}<extra></extra>',
+        ))
+
+    if ab617_communities:
+        adf = pd.DataFrame(ab617_communities)
+        hover_a = '<b>AB 617: ' + adf['name'].astype(str) + '</b>'
+        fig.add_trace(go.Scattermapbox(
+            lat=adf['lat'].tolist(), lon=adf['lon'].tolist(),
+            mode='markers', name='AB 617 Communities',
+            marker=dict(size=9, color='#9467bd', opacity=0.85),
+            customdata=hover_a.tolist(),
+            hovertemplate='%{customdata}<extra></extra>',
+        ))
+
+    fig.update_layout(
+        mapbox=dict(style='carto-positron', center=dict(lat=37.0, lon=-119.0), zoom=5),
+        margin=dict(l=0, r=0, t=30, b=0),
+        height=620,
+        legend=dict(orientation='v', x=0.01, y=0.99, xanchor='left', yanchor='top',
+                    bgcolor='rgba(255,255,255,0.85)'),
+        uirevision='node_finder_map',
+    )
+    return fig
+
+
 def create_pnode_price_histogram(data: list, bx_label: str) -> go.Figure:
     """
     Create a stacked bar histogram of node count by price bin, colored by zone.
