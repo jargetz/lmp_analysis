@@ -897,6 +897,59 @@ This tool does **not** interpolate or fill in missing days.
 - `node_zone_mapping`: EIA mapping of individual pricing nodes to zones
 """)
 
+    with st.expander("California Substation Data", expanded=False):
+        st.markdown("""
+**Source**
+
+[DataBasin / HIFLD — California Electric Substations](https://databasin.org/datasets/20502139197843f7b1b2751a427d9f68/)  
+3,261 CA substations with geographic coordinates, owner, voltage class, and operational status.
+
+**Coverage**
+
+| Status | Count |
+|---|---|
+| Operational | 3,199 |
+| Low kV (distribution-only, too small to appear in CAISO) | 36 |
+| Proposed (not yet built) | 17 |
+| Closed | 9 |
+
+Non-operational substations are flagged with a ⚠ warning wherever shown in this tool.
+
+**Major owners:** PG&E (991), SCE (945), SMUD (258), SDG&E (145), IID (133), LADWP (45), WAPA (33)
+
+**Voltage tier explanation (Highest_kV column)**
+
+The `Highest_kV` field records the *maximum* voltage class operating at that substation — derived 
+from six boolean tier columns in the source data (kV_12_TO_32 through kV_500_DC):
+
+| Tier | Typical role |
+|---|---|
+| 12–32 kV | Local distribution (neighborhood feeders) |
+| 33–92 kV | Sub-transmission / distribution |
+| 110–161 kV | Regional sub-transmission |
+| 220–287 kV | Bulk transmission |
+| 345–500 kV | High-voltage interstate backbone |
+| 500 kV DC | HVDC long-distance transmission |
+
+Higher kV generally means the substation sits closer to the bulk transmission grid and can 
+handle larger power flows — relevant to industrial and data-center loads.
+
+**How nodes are matched to substations**
+
+Each CAISO pricing node (PNODE) is matched to its geographically nearest CA substation using 
+Euclidean distance with a cos(lat) correction on longitude. All 11,978 pnodes in the CAISO 
+pricemap are matched, but most are outside California (Western Interconnect coverage). 
+For non-CA nodes, the nearest substation may be far away — this is expected.
+
+**Node type note (sanity check)**
+
+- **LOAD nodes** (9,076 total) — represent load aggregation points, typically at or near 
+  substations. CA load nodes generally match within a few km.
+- **GEN nodes** (2,902 total) — represent individual generation units (power plants). 
+  Plants are not substations; their nearest substation match is often 5–50+ km away. 
+  This is correct behavior, not a data error.
+""")
+
     with st.expander("AB 617 Community Data Source", expanded=False):
         st.markdown("""
 **Assembly Bill 617 — Community Air Protection Program**
@@ -1239,6 +1292,10 @@ def render_node_finder_tab():
     price_col = f'B{nf_bx} Avg ($/MWh)'
     table_rows = []
     for r in facilities:
+        sub_name = r.get('substation_name') or '—'
+        sub_status = r.get('substation_status')
+        if sub_status and sub_status != 'Operational':
+            sub_name = f'⚠ {sub_name} ({sub_status})'
         table_rows.append({
             'Facility': r['facility'],
             'County': r['county'],
@@ -1249,6 +1306,9 @@ def render_node_finder_tab():
             'Zone': r['node_zone'],
             'Dist (km)': round(r['dist_km'], 1),
             price_col: round(r['node_b_avg'], 2),
+            'Substation': sub_name,
+            'Owner': r.get('substation_owner') or '—',
+            'Voltage': r.get('highest_kv') or '—',
         })
     display_df = pd.DataFrame(table_rows)
 

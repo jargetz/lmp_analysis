@@ -758,20 +758,35 @@ def get_node_map_data(conn, bx, year, time_period, month=None):
                    c.lon,
                    c.node_type,
                    c.area,
-                   z.zone
+                   z.zone,
+                   s.substation_name,
+                   s.owner          AS substation_owner,
+                   s.status         AS substation_status,
+                   s.highest_kv,
+                   s.dist_km        AS dist_km_to_substation
             FROM prices p
             JOIN pnode_coordinates c ON c.pnode_id = p.node
             LEFT JOIN node_zone_mapping z ON z.pnode_id = p.node
+            LEFT JOIN node_substation_mapping s ON s.pnode_id = p.node
             WHERE c.lat IS NOT NULL AND c.lon IS NOT NULL
               AND c.lat BETWEEN 30 AND 50
               AND c.lon BETWEEN -130 AND -100
         )
-        SELECT pnode_id, avg_price, lat, lon, node_type, area, zone
+        SELECT pnode_id, avg_price, lat, lon, node_type, area, zone,
+               substation_name, substation_owner, substation_status, highest_kv,
+               dist_km_to_substation
         FROM mapped
         ORDER BY pnode_id
     """
 
     result = conn.execute(query).fetchdf()
+
+    def _str_or_none(v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s if s and s.lower() not in ('none', 'nan') else None
+
     return [
         {
             'pnode_id': str(r['pnode_id']),
@@ -780,7 +795,12 @@ def get_node_map_data(conn, bx, year, time_period, month=None):
             'lon': float(r['lon']),
             'node_type': str(r['node_type']),
             'area': str(r['area']),
-            'zone': str(r['zone']) if r['zone'] is not None else None,
+            'zone': _str_or_none(r['zone']),
+            'substation_name': _str_or_none(r['substation_name']),
+            'substation_owner': _str_or_none(r['substation_owner']),
+            'substation_status': _str_or_none(r['substation_status']),
+            'highest_kv': _str_or_none(r['highest_kv']),
+            'dist_km_to_substation': float(r['dist_km_to_substation']) if r['dist_km_to_substation'] is not None else None,
         }
         for _, r in result.iterrows()
     ]
@@ -816,10 +836,14 @@ def get_node_finder_data(conn, bx, year, top_m_emitters, ab617_only, zone_filter
             WHERE year = {year}
             GROUP BY node
         )
-        SELECT a.node, a.b_avg, p.lat, p.lon, COALESCE(nz.zone, 'Other') AS zone
+        SELECT a.node, a.b_avg, p.lat, p.lon, COALESCE(nz.zone, 'Other') AS zone,
+               s.substation_name, s.owner AS substation_owner,
+               s.status AS substation_status, s.highest_kv,
+               s.dist_km AS dist_km_to_substation
         FROM annual a
         JOIN pnode_coordinates p ON p.pnode_id = a.node
         LEFT JOIN node_zone_mapping nz ON nz.pnode_id = a.node
+        LEFT JOIN node_substation_mapping s ON s.pnode_id = a.node
         WHERE p.lat BETWEEN 30 AND 50 AND p.lon BETWEEN -130 AND -100
         {zone_clause}
         ORDER BY a.b_avg ASC
@@ -855,6 +879,12 @@ def get_node_finder_data(conn, bx, year, top_m_emitters, ab617_only, zone_filter
     node_lats = nodes_df['lat'].values
     node_lons = nodes_df['lon'].values
 
+    def _snone(v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s if s and s.lower() not in ('none', 'nan') else None
+
     facility_rows = []
     for _, em in emitters_df.iterrows():
         em_lat = float(em['lat'])
@@ -878,6 +908,11 @@ def get_node_finder_data(conn, bx, year, top_m_emitters, ab617_only, zone_filter
             'dist_km': float(dists_km[idx]),
             'node_lat': float(nearest_row['lat']),
             'node_lon': float(nearest_row['lon']),
+            'substation_name': _snone(nearest_row.get('substation_name')),
+            'substation_owner': _snone(nearest_row.get('substation_owner')),
+            'substation_status': _snone(nearest_row.get('substation_status')),
+            'highest_kv': _snone(nearest_row.get('highest_kv')),
+            'dist_km_to_substation': float(nearest_row['dist_km_to_substation']) if nearest_row.get('dist_km_to_substation') is not None else None,
         })
 
     facility_rows.sort(key=lambda r: r['node_b_avg'])

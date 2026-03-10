@@ -1071,6 +1071,31 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
     zone_colors = {'NP15': '#1f77b4', 'SP15': '#ff7f0e', 'ZP26': '#2ca02c'}
     default_color = '#aec7e8'
 
+    def _substation_hover_lines(row):
+        lines = []
+        name = row.get('substation_name')
+        owner = row.get('substation_owner')
+        status = row.get('substation_status')
+        kv = row.get('highest_kv')
+        dist = row.get('dist_km_to_substation')
+        if name:
+            dist_str = f', {dist:.1f} km' if dist is not None else ''
+            lines.append(f'Substation: {name} ({owner or "—"}){dist_str}')
+        if kv:
+            lines.append(f'Voltage: {kv}')
+        if status and status != 'Operational':
+            lines.append(f'⚠ Status: {status}')
+        return '<br>'.join(lines)
+
+    if 'substation_name' not in df.columns:
+        df['substation_name'] = None
+        df['substation_owner'] = None
+        df['substation_status'] = None
+        df['highest_kv'] = None
+        df['dist_km_to_substation'] = None
+
+    df['sub_hover'] = df.apply(_substation_hover_lines, axis=1)
+
     if color_by == 'zone':
         df['color_zone'] = df['zone'].fillna('Other')
         color_discrete_map = {
@@ -1086,7 +1111,8 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             'Area: ' + df['area'].fillna('').astype(str) + '<br>' +
             bx_label + ' Avg: $' + df['avg_price'].apply(
                 lambda x: f'{x:.2f}' if pd.notna(x) else 'N/A'
-            ) + '/MWh'
+            ) + '/MWh<br>' +
+            df['sub_hover']
         )
         fig = px.scatter_mapbox(
             df,
@@ -1123,7 +1149,8 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             'Zone: ' + df['zone'].fillna('Other').astype(str) + '<br>' +
             'Type: ' + df['node_type'].fillna('').astype(str) + '<br>' +
             'Area: ' + df['area'].fillna('').astype(str) + '<br>' +
-            bx_label + ' Avg: $' + df['avg_price'].apply(lambda x: f'{x:.2f}') + '/MWh'
+            bx_label + ' Avg: $' + df['avg_price'].apply(lambda x: f'{x:.2f}') + '/MWh<br>' +
+            df['sub_hover']
         )
         fig = px.scatter_mapbox(
             df,
@@ -1228,6 +1255,29 @@ def create_node_finder_map(facilities: list, ab617_communities: list,
     else:
         marker_sizes = np.full(len(fdf), 12.0)
 
+    def _sub_line(row):
+        name = row.get('substation_name')
+        owner = row.get('substation_owner')
+        kv = row.get('highest_kv')
+        status = row.get('substation_status')
+        d = row.get('dist_km_to_substation')
+        if not name:
+            return ''
+        dist_str = f', {d:.1f} km' if d is not None else ''
+        line = f'Substation: {name} ({owner or "—"}){dist_str}'
+        if kv:
+            line += f' | {kv}'
+        if status and status != 'Operational':
+            line += f'<br>⚠ Status: {status}'
+        return '<br>' + line
+
+    for col in ('substation_name', 'substation_owner', 'substation_status',
+                'highest_kv', 'dist_km_to_substation'):
+        if col not in fdf.columns:
+            fdf[col] = None
+
+    fdf['sub_line'] = fdf.apply(_sub_line, axis=1)
+
     hover_fac = (
         '<b>' + fdf['facility'].astype(str) + '</b><br>'
         + 'County: ' + fdf['county'].astype(str) + '<br>'
@@ -1236,7 +1286,8 @@ def create_node_finder_map(facilities: list, ab617_communities: list,
         + 'Cap & Trade: ' + fdf['cap_and_trade'].astype(str) + '<br>'
         + 'Nearest node: <b>' + fdf['nearest_node'].astype(str) + '</b> (' + fdf['node_zone'].astype(str) + ')<br>'
         + bx_label + ' avg: $' + fdf['node_b_avg'].apply(lambda x: f'{x:.2f}') + '/MWh<br>'
-        + 'Distance: ' + fdf['dist_km'].apply(lambda x: f'{x:.1f}') + ' km'
+        + 'Distance to node: ' + fdf['dist_km'].apply(lambda x: f'{x:.1f}') + ' km'
+        + fdf['sub_line']
     )
 
     fig.add_trace(go.Scattermapbox(
