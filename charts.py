@@ -1391,6 +1391,80 @@ def create_node_finder_map(facilities: list, ab617_communities: list,
     return fig
 
 
+def create_node_analysis_chart(
+    monthly_data: list,
+    node_name: str,
+    bx_label: str,
+    zone: str,
+    zone_avg_price: float = None
+) -> go.Figure:
+    """
+    Compact monthly bar chart for the right-panel node analysis.
+
+    Bars are green when avg_price <= zone_avg_price, red when above.
+    A dashed horizontal line marks the zone average if provided.
+
+    Args:
+        monthly_data: List of {month, avg_price, days_count} dicts
+        node_name: Node identifier shown in title
+        bx_label: e.g. "B8"
+        zone: Zone name (for reference line label)
+        zone_avg_price: Optional zone-wide average to draw as baseline
+
+    Returns:
+        Plotly Figure
+    """
+    if not monthly_data:
+        return create_empty_chart("No monthly data available")
+
+    month_names_short = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+    months = [d['month'] for d in monthly_data]
+    prices = [d['avg_price'] for d in monthly_data]
+    labels = [month_names_short[m - 1] if 1 <= m <= 12 else str(m) for m in months]
+
+    if zone_avg_price is not None:
+        bar_colors = [
+            '#2ca02c' if (p is not None and p <= zone_avg_price) else '#d62728'
+            for p in prices
+        ]
+    else:
+        bar_colors = ['#1f77b4'] * len(prices)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=labels,
+        y=prices,
+        marker_color=bar_colors,
+        hovertemplate='%{x}: $%{y:.2f}/MWh<extra></extra>',
+        name=bx_label,
+    ))
+
+    if zone_avg_price is not None:
+        fig.add_hline(
+            y=zone_avg_price,
+            line_dash='dash',
+            line_color='#7f7f7f',
+            line_width=1.5,
+            annotation_text=f'{zone} avg ${zone_avg_price:.2f}',
+            annotation_position='top left',
+            annotation_font_size=10,
+        )
+
+    short_name = node_name[:32] + '…' if len(node_name) > 32 else node_name
+    fig.update_layout(
+        title=dict(text=f'{bx_label} Monthly — {short_name}', font=dict(size=12)),
+        xaxis_title='',
+        yaxis_title='$/MWh',
+        margin=dict(l=45, r=15, t=45, b=35),
+        height=280,
+        showlegend=False,
+        hovermode='x unified',
+    )
+    return fig
+
+
 def create_pnode_price_histogram(data: list, bx_label: str) -> go.Figure:
     """
     Create a stacked bar histogram of node count by price bin, colored by zone.

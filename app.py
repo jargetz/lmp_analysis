@@ -2,9 +2,10 @@
 BX CAISO Nodal Analysis Tool - Main Application
 
 Primary views:
-1. Dashboard - BX analysis and zone/node filtering
-2. Node Map - Geographic PNODE price map with facility overlay
-3. Methodology & Data - Calculation explanations and spot-check tables
+1. Site Analysis - Two-column geographic PNODE map + facility-to-node analysis panel
+2. Zone Analysis - BX analysis and zone/node filtering (formerly Dashboard)
+3. Node Finder - Cheapest nodes near top CARB GHG emitters
+4. Methodology & Data - Calculation explanations and spot-check tables
 """
 
 import streamlit as st
@@ -37,6 +38,7 @@ from charts import (
     create_pnode_map,
     create_pnode_price_histogram,
     create_node_finder_map,
+    create_node_analysis_chart,
 )
 
 def main():
@@ -138,21 +140,21 @@ def main():
         """)
         
     else:
-        tab_dashboard, tab_node_map, tab_node_finder, tab_methodology = st.tabs([
-            "📊 Dashboard", "🗺️ Node Map", "🔍 Node Finder", "📋 Methodology & Data"
+        tab_site_analysis, tab_zone_analysis, tab_node_finder, tab_methodology = st.tabs([
+            "🗺️ Site Analysis", "📊 Zone Analysis", "🔍 Node Finder", "📋 Methodology & Data"
         ])
         
         # =====================================================================
-        # DASHBOARD TAB - Primary interface for BX analysis with zone filtering
+        # SITE ANALYSIS TAB - Two-column map + node analysis panel
         # =====================================================================
-        with tab_dashboard:
-            render_dashboard_tab()
+        with tab_site_analysis:
+            render_node_map_tab()
         
         # =====================================================================
-        # NODE MAP TAB - Geographic PNODE price map with facility overlay
+        # ZONE ANALYSIS TAB - BX analysis and zone/node filtering
         # =====================================================================
-        with tab_node_map:
-            render_node_map_tab()
+        with tab_zone_analysis:
+            render_dashboard_tab()
         
         # =====================================================================
         # NODE FINDER TAB - Cheapest nodes ∪ nodes near top GHG emitters
@@ -635,14 +637,17 @@ conn.close()
 
 
 def render_node_map_tab():
-    """Render the geographic PNODE price map tab."""
+    """Render the Site Analysis tab: two-column map + node analysis panel."""
     import subprocess
     import json
+    import math as _math
+    import numpy as _np
+    import statistics as _stats
 
-    st.header("Node Map")
-    st.markdown("Geographic view of PNODE B*X* average prices. Joined from the pre-computed monthly summary table and coordinate data.")
+    st.header("Site Analysis")
+    st.markdown("Geographic view of PNODE B*X* average prices. Select a facility or click a node to see its analysis.")
 
-    # ── Filters ──────────────────────────────────────────────────────────────
+    # ── Filters (full width) ──────────────────────────────────────────────────
     map_col1, map_col2, map_col3, map_col4, map_col5 = st.columns([1, 1, 1, 1, 1])
 
     with map_col1:
@@ -687,7 +692,7 @@ def render_node_map_tab():
     with map_col5:
         color_by = st.radio("Color by", options=["Zone", "Price"], key="map_color_by", horizontal=True)
 
-    # ── Facility controls ─────────────────────────────────────────────────────
+    # ── Facility show/filter controls (full width) ────────────────────────────
     fac_col1, fac_col2 = st.columns([1, 2])
     with fac_col1:
         show_facilities = st.checkbox("Show CARB facilities (2023 data)", value=True, key="map_show_facilities")
@@ -759,27 +764,14 @@ def render_node_map_tab():
         st.warning("No coordinate data found for the selected period.")
         return
 
-    # ── Price distribution histogram ──────────────────────────────────────────
+    # ── Histogram (full width, above columns) ─────────────────────────────────
     total_nodes = len(map_data)
     fac_note = f" · {len(facilities_to_show)} facilities shown" if facilities_to_show else ""
     st.caption(f"{total_nodes:,} nodes with coordinates plotted{fac_note}")
     hist_fig = create_pnode_price_histogram(map_data, bx_label=f"B{map_bx}")
     st.plotly_chart(hist_fig, use_container_width=True)
 
-    # ── Facility search + nearest-node (above map) ────────────────────────────
-    search_col1, search_col2 = st.columns([2, 3])
-    with search_col1:
-        selected_name = st.selectbox(
-            "Search facility",
-            options=all_facility_names,
-            index=None,
-            placeholder="Type to search...",
-            key="map_facility_search",
-        )
-
-    import math as _math
-    import numpy as _np
-
+    # ── Load substation CSV (cached) ──────────────────────────────────────────
     if 'ca_substations_df' not in st.session_state:
         try:
             _sub_df = pd.read_csv(
@@ -799,121 +791,254 @@ def render_node_map_tab():
 
     sub_df = st.session_state['ca_substations_df']
 
-    selected_facility = None
-    nearest_node = None
-    nearest_substation = None
-    nearest_any_sub = None
+    # ── Shared geo helpers ────────────────────────────────────────────────────
+    _R = 6371.0
+    _LOW_KV = {'12kV to 32kV', '33kV to 92kV', '33kV to 92Kv'}
 
-    if selected_name:
-        selected_facility = next((f for f in all_facilities_sorted if f['facility'] == selected_name), None)
+    def _haversine_dists(flat, flon, lats_arr, lons_arr):
+        phi1 = _math.radians(flat)
+        dp = _np.radians(lats_arr - flat)
+        dl = _np.radians(lons_arr - flon)
+        a = (_np.sin(dp / 2) ** 2
+             + _math.cos(phi1) * _np.cos(_np.radians(lats_arr)) * _np.sin(dl / 2) ** 2)
+        return _R * 2 * _np.arcsin(_np.sqrt(_np.clip(a, 0, 1)))
 
-    if selected_facility and map_data:
-        flat = selected_facility['lat']
-        flon = selected_facility['lon']
-        _R = 6371.0
-        _phi1 = _math.radians(flat)
+    def _find_nearest_node(flat, flon):
+        valid = [n for n in map_data if n.get('lat') is not None and n.get('lon') is not None]
+        if not valid:
+            return None, 0.0
+        lats = _np.array([n['lat'] for n in valid])
+        lons = _np.array([n['lon'] for n in valid])
+        dists = _haversine_dists(flat, flon, lats, lons)
+        i = int(dists.argmin())
+        return valid[i], float(dists[i])
 
-        valid_nodes = [n for n in map_data if n.get('lat') is not None and n.get('lon') is not None]
-        if valid_nodes:
-            _nlats = _np.array([n['lat'] for n in valid_nodes])
-            _nlons = _np.array([n['lon'] for n in valid_nodes])
-            _dphi = _np.radians(_nlats - flat)
-            _dlam = _np.radians(_nlons - flon)
-            _a = (_np.sin(_dphi / 2) ** 2
-                  + _math.cos(_phi1) * _np.cos(_np.radians(_nlats)) * _np.sin(_dlam / 2) ** 2)
-            _node_dists = _R * 2 * _np.arcsin(_np.sqrt(_np.clip(_a, 0, 1)))
-            _ni = int(_node_dists.argmin())
-            nearest_node = valid_nodes[_ni]
-            dist_km = float(_node_dists[_ni])
-        else:
-            nearest_node = None
-            dist_km = 0.0
+    def _nearest_sub(sdf, flat, flon):
+        if sdf.empty:
+            return None
+        lats = sdf['lat'].values
+        lons = sdf['lon'].values
+        dists = _haversine_dists(flat, flon, lats, lons)
+        i = int(dists.argmin())
+        r = sdf.iloc[i]
+        return {
+            'substation_name': str(r['Substation_Name']),
+            'owner': str(r['Owner']),
+            'highest_kv': str(r['Highest_kV']) if pd.notna(r['Highest_kV']) else None,
+            'status': str(r['Status']),
+            'lat': float(r['lat']),
+            'lon': float(r['lon']),
+            'dist_km': float(dists[i]),
+        }
 
-        if not sub_df.empty:
-            _low_kv = {'12kV to 32kV', '33kV to 92kV', '33kV to 92Kv'}
-            hv_df = sub_df[~sub_df['Highest_kV'].isin(_low_kv)].reset_index(drop=True)
-            _search_df = hv_df if not hv_df.empty else sub_df
+    # ── Two-column layout ─────────────────────────────────────────────────────
+    left_col, right_col = st.columns([0.6, 0.4])
 
-            def _nearest_sub(sdf):
-                _lats = sdf['lat'].values
-                _lons = sdf['lon'].values
-                _dp = _np.radians(_lats - flat)
-                _dl = _np.radians(_lons - flon)
-                _av = (_np.sin(_dp / 2) ** 2
-                       + _math.cos(_phi1) * _np.cos(_np.radians(_lats)) * _np.sin(_dl / 2) ** 2)
-                _ds = _R * 2 * _np.arcsin(_np.sqrt(_np.clip(_av, 0, 1)))
-                _i = int(_ds.argmin())
-                _r = sdf.iloc[_i]
-                return {
-                    'substation_name': str(_r['Substation_Name']),
-                    'owner': str(_r['Owner']),
-                    'highest_kv': str(_r['Highest_kV']) if pd.notna(_r['Highest_kV']) else None,
-                    'status': str(_r['Status']),
-                    'lat': float(_r['lat']),
-                    'lon': float(_r['lon']),
-                    'dist_km': float(_ds[_i]),
-                }
+    with left_col:
+        # Facility search dropdown
+        selected_name = st.selectbox(
+            "Search facility",
+            options=all_facility_names,
+            index=None,
+            placeholder="Type to search...",
+            key="map_facility_search",
+        )
 
-            nearest_substation = _nearest_sub(_search_df)
-            nearest_any_sub = _nearest_sub(sub_df)
+        # Resolve facility → nearest node
+        selected_facility = None
+        nearest_node = None
+        nearest_substation = None
+        nearest_any_sub = None
+        dist_km = 0.0
 
-
-        with search_col2:
-            ct_badge = "Cap-and-Trade" if selected_facility['cap_and_trade'] == 'Yes' else "Non-covered"
-            node_price = f"${nearest_node['avg_price']:.2f}/MWh" if nearest_node and nearest_node.get('avg_price') is not None else "N/A"
-            node_name = nearest_node['pnode_id'] if nearest_node else "—"
-
-            ns_line = ''
-            closer_lv_line = ''
-            if nearest_substation:
-                ns = nearest_substation
-                kv_s = f', {ns["highest_kv"]}' if ns.get('highest_kv') else ''
-                status_warn = f' ⚠ {ns["status"]}' if ns.get('status') and ns['status'] != 'Operational' else ''
-                ns_line = (
-                    f'  \n**Nearest Substation (≥110kV):** {ns["substation_name"]} '
-                    f'({ns["owner"]}{kv_s}, {ns["dist_km"]*0.621371:.1f} mi ({ns["dist_km"]:.1f} km)){status_warn}'
-                )
-                if (nearest_any_sub
-                        and nearest_any_sub['substation_name'] != ns['substation_name']
-                        and nearest_any_sub['dist_km'] < ns['dist_km']):
-                    lv = nearest_any_sub
-                    lv_kv = f', {lv["highest_kv"]}' if lv.get('highest_kv') else ''
-                    closer_lv_line = (
-                        f'  \n⚠ Closer lower-voltage substation: {lv["substation_name"]} '
-                        f'({lv["owner"]}{lv_kv}, {lv["dist_km"]*0.621371:.1f} mi ({lv["dist_km"]:.1f} km))'
-                    )
-
-            st.info(
-                f"**{selected_facility['facility']}** · {ct_badge}  \n"
-                f"{selected_facility['primary_sector']} · {selected_facility['county']} Co. · {selected_facility['city']}  \n"
-                f"Total GHG: **{selected_facility['total_ghg']:,.0f}** MT CO₂e · "
-                f"CO₂: {selected_facility['co2']:,.0f} · "
-                f"NOx: {selected_facility['nox']:,.1f} · "
-                f"SOx: {selected_facility['sox']:,.1f} · "
-                f"PM2.5: {selected_facility['pm25']:,.1f}  \n"
-                f"**Nearest Node:** {node_name} ({dist_km*0.621371:.1f} mi ({dist_km:.1f} km)) · B{map_bx} avg {node_price}"
-                f"{ns_line}"
-                f"{closer_lv_line}"
+        if selected_name:
+            selected_facility = next(
+                (f for f in all_facilities_sorted if f['facility'] == selected_name), None
             )
 
-    # ── Map chart ─────────────────────────────────────────────────────────────
-    fig = create_pnode_map(
-        map_data,
-        bx_label=f"B{map_bx}",
-        color_by=color_by.lower(),
-        facilities=facilities_to_show if facilities_to_show else None,
-        selected_facility=selected_facility,
-        nearest_node=nearest_node,
-        nearest_substation=nearest_substation,
-        nearest_lv_substation=(
+        if selected_facility and map_data:
+            flat = selected_facility['lat']
+            flon = selected_facility['lon']
+            nearest_node, dist_km = _find_nearest_node(flat, flon)
+
+            if not sub_df.empty:
+                hv_df = sub_df[~sub_df['Highest_kV'].isin(_LOW_KV)].reset_index(drop=True)
+                _search_df = hv_df if not hv_df.empty else sub_df
+                nearest_substation = _nearest_sub(_search_df, flat, flon)
+                nearest_any_sub = _nearest_sub(sub_df, flat, flon)
+
+            # Facility selected → drive the analysis panel
+            st.session_state['map_selected_node'] = nearest_node
+            st.session_state['map_selected_dist_km'] = dist_km
+            st.session_state['map_selected_facility'] = selected_facility
+            st.session_state['map_select_source'] = 'facility'
+
+        elif selected_name is None and st.session_state.get('map_select_source') == 'facility':
+            # User cleared the facility selection — clear the analysis panel
+            st.session_state['map_selected_node'] = None
+            st.session_state['map_selected_facility'] = None
+            st.session_state['map_select_source'] = None
+
+        # Build map
+        nearest_lv_sub = (
             nearest_any_sub
             if nearest_any_sub and nearest_substation
             and nearest_any_sub['substation_name'] != nearest_substation['substation_name']
             and nearest_any_sub['dist_km'] < nearest_substation['dist_km']
             else None
-        ),
-    )
-    st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
+        )
+        fig = create_pnode_map(
+            map_data,
+            bx_label=f"B{map_bx}",
+            color_by=color_by.lower(),
+            facilities=facilities_to_show if facilities_to_show else None,
+            selected_facility=selected_facility,
+            nearest_node=nearest_node,
+            nearest_substation=nearest_substation,
+            nearest_lv_substation=nearest_lv_sub,
+        )
+
+        map_event = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            config={'scrollZoom': True},
+            on_select="rerun",
+            key="pnode_map_chart",
+        )
+
+        # Decode map click → update selected node (only when no facility selected)
+        if (map_event and hasattr(map_event, 'selection')
+                and map_event.selection and map_event.selection.points
+                and not selected_facility):
+            pt = map_event.selection.points[0]
+            click_lat = pt.get('lat')
+            click_lon = pt.get('lon')
+            if click_lat is not None and click_lon is not None:
+                clicked_node, click_dist = _find_nearest_node(click_lat, click_lon)
+                if clicked_node:
+                    st.session_state['map_selected_node'] = clicked_node
+                    st.session_state['map_selected_dist_km'] = click_dist
+                    st.session_state['map_selected_facility'] = None
+                    st.session_state['map_select_source'] = 'map_click'
+
+    # ── Right column: analysis panel ──────────────────────────────────────────
+    with right_col:
+        node_to_analyze = st.session_state.get('map_selected_node')
+        sel_facility = st.session_state.get('map_selected_facility')
+
+        if node_to_analyze is None:
+            st.info("Click a node on the map or select a facility to see its analysis.")
+        else:
+            pnode_id = node_to_analyze.get('pnode_id', '—')
+            node_zone = node_to_analyze.get('zone') or '—'
+            node_type = node_to_analyze.get('node_type') or '—'
+            node_price = node_to_analyze.get('avg_price')
+            sel_dist_km = st.session_state.get('map_selected_dist_km', 0.0)
+
+            # Node header
+            st.subheader(pnode_id)
+            st.caption(f"Zone: {node_zone} · Type: {node_type}")
+            if sel_facility:
+                st.caption(
+                    f"Nearest to **{sel_facility['facility'][:50]}**  \n"
+                    f"{sel_dist_km * 0.621371:.1f} mi ({sel_dist_km:.1f} km) away"
+                )
+
+            # BX price metric
+            bx_label_str = f"B{map_bx}"
+            if node_price is not None:
+                st.metric(f"{bx_label_str} Avg ({period_label})", f"${node_price:.2f}/MWh")
+            else:
+                st.metric(f"{bx_label_str} Avg ({period_label})", "N/A")
+
+            # Zone comparison metric
+            zone_avg = None
+            if node_zone in ('NP15', 'SP15', 'ZP26'):
+                zone_prices = [
+                    n['avg_price'] for n in map_data
+                    if n.get('zone') == node_zone and n.get('avg_price') is not None
+                ]
+                if zone_prices:
+                    zone_avg = _stats.mean(zone_prices)
+                    if node_price is not None:
+                        delta = node_price - zone_avg
+                        st.metric(
+                            f"vs {node_zone} zone avg",
+                            f"${zone_avg:.2f}/MWh",
+                            delta=f"{delta:+.2f}",
+                            delta_color="inverse",
+                        )
+
+            # Monthly BX trend chart
+            monthly_cache_key = f"node_monthly_{pnode_id}_{map_bx}_{map_year}"
+            if monthly_cache_key not in st.session_state:
+                with st.spinner("Loading monthly data…"):
+                    cmd = ['python3', 'subprocess_query.py', 'node_bx_single',
+                           pnode_id, str(map_bx), str(map_year)]
+                    try:
+                        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                        if proc.returncode == 0 and proc.stdout.strip():
+                            st.session_state[monthly_cache_key] = json.loads(proc.stdout)
+                        else:
+                            st.session_state[monthly_cache_key] = {
+                                'success': False, 'error': proc.stderr or 'Empty response'
+                            }
+                    except Exception as exc:
+                        st.session_state[monthly_cache_key] = {'success': False, 'error': str(exc)}
+
+            monthly_result = st.session_state.get(monthly_cache_key, {})
+            if monthly_result.get('success') and monthly_result.get('monthly'):
+                analysis_fig = create_node_analysis_chart(
+                    monthly_data=monthly_result['monthly'],
+                    node_name=pnode_id,
+                    bx_label=bx_label_str,
+                    zone=node_zone,
+                    zone_avg_price=zone_avg,
+                )
+                st.plotly_chart(analysis_fig, use_container_width=True)
+            else:
+                err = monthly_result.get('error', 'No monthly summary data for this node/year')
+                st.caption(f"Monthly trend not available: {err}")
+
+            # Facility info box (when coming from facility search)
+            if sel_facility:
+                ct_badge = "Cap-and-Trade" if sel_facility['cap_and_trade'] == 'Yes' else "Non-covered"
+                ns_line = ''
+                closer_lv_line = ''
+                if nearest_substation:
+                    ns = nearest_substation
+                    kv_s = f', {ns["highest_kv"]}' if ns.get('highest_kv') else ''
+                    status_warn = (
+                        f' ⚠ {ns["status"]}' if ns.get('status') and ns['status'] != 'Operational' else ''
+                    )
+                    ns_line = (
+                        f'  \n**≥110kV Substation:** {ns["substation_name"]} '
+                        f'({ns["owner"]}{kv_s}, {ns["dist_km"]*0.621371:.1f} mi '
+                        f'({ns["dist_km"]:.1f} km)){status_warn}'
+                    )
+                    if (nearest_any_sub
+                            and nearest_any_sub['substation_name'] != ns['substation_name']
+                            and nearest_any_sub['dist_km'] < ns['dist_km']):
+                        lv = nearest_any_sub
+                        lv_kv = f', {lv["highest_kv"]}' if lv.get('highest_kv') else ''
+                        closer_lv_line = (
+                            f'  \n⚠ Closer lower-voltage: {lv["substation_name"]} '
+                            f'({lv["owner"]}{lv_kv}, {lv["dist_km"]*0.621371:.1f} mi '
+                            f'({lv["dist_km"]:.1f} km))'
+                        )
+                with st.expander("Facility Details"):
+                    st.markdown(
+                        f"**{sel_facility['facility']}** · {ct_badge}  \n"
+                        f"{sel_facility['primary_sector']} · {sel_facility['county']} Co."
+                        f" · {sel_facility['city']}  \n"
+                        f"Total GHG: **{sel_facility['total_ghg']:,.0f}** MT CO₂e · "
+                        f"CO₂: {sel_facility['co2']:,.0f} · "
+                        f"NOx: {sel_facility['nox']:,.1f} · "
+                        f"SOx: {sel_facility['sox']:,.1f} · "
+                        f"PM2.5: {sel_facility['pm25']:,.1f}"
+                        f"{ns_line}"
+                        f"{closer_lv_line}"
+                    )
 
 
 def render_methodology_tab():

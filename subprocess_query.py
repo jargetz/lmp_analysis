@@ -114,6 +114,11 @@ def run_query():
             ab617_only = sys.argv[5].lower() == 'true' if len(sys.argv) > 5 else False
             zone_filter = sys.argv[6] if len(sys.argv) > 6 else 'All'
             result = get_node_finder_data(conn, bx, year, top_m, ab617_only, zone_filter)
+        elif query_type == 'node_bx_single':
+            node_name = sys.argv[2]
+            bx = int(sys.argv[3])
+            year = int(sys.argv[4])
+            result = get_node_bx_single(conn, node_name, bx, year)
         else:
             result = {'error': f'Unknown query type: {query_type}'}
         
@@ -725,6 +730,36 @@ def get_facility_emissions(conn):
         }
         for _, r in result.iterrows()
     ]
+
+
+def get_node_bx_single(conn, node_name, bx, year):
+    """Get monthly B-hour averages for a single node from node_bx_monthly_summary."""
+    import re
+    if not re.match(r'^[A-Za-z0-9_\-\.]+$', str(node_name)):
+        return {'success': False, 'error': 'Invalid node name'}
+
+    col = f'b{bx}_avg'
+    query = f"""
+        SELECT month, {col} AS avg_price, days_count
+        FROM node_bx_monthly_summary
+        WHERE node = ?
+          AND year = {int(year)}
+        ORDER BY month
+    """
+    result = conn.execute(query, [node_name]).fetchdf()
+
+    if result.empty:
+        return {'success': False, 'error': f'No monthly summary data for {node_name} in {year}'}
+
+    rows = [
+        {
+            'month': int(r['month']),
+            'avg_price': float(r['avg_price']) if pd.notna(r['avg_price']) else None,
+            'days_count': int(r['days_count'])
+        }
+        for _, r in result.iterrows()
+    ]
+    return {'success': True, 'node': node_name, 'bx': bx, 'year': year, 'monthly': rows}
 
 
 def get_node_map_data(conn, bx, year, time_period, month=None):
