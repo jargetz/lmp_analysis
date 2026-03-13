@@ -669,7 +669,8 @@ def render_node_map_tab():
     month_options = ["January", "February", "March", "April", "May", "June",
                      "July", "August", "September", "October", "November", "December"]
 
-    available_years = st.session_state.get('parquet_years', [2024, 2025])
+    available_years = st.session_state.get('node_years',
+                        st.session_state.get('parquet_years', [2024, 2025]))
     map_years = [y for y in available_years]
     if not map_years:
         map_years = [2024]
