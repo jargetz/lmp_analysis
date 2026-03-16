@@ -770,13 +770,24 @@ def get_node_bx_single(conn, node_name, bx, year):
 
 
 def get_dlap_zone_bx(conn, zone, bx, year, time_period='Full Year', month=None):
-    """Get DLAP zone BX average and all-hours average from zone_hourly_lmp (load-weighted).
+    """Get utility DLAP BX average and all-hours average from node_hourly_lmp.
+
+    Zone-to-utility DLAP mapping:
+      NP15 -> DLAP_PGAE-APND
+      SP15 -> DLAP_SCE-APND
+      ZP26 -> DLAP_SCE-APND
 
     Returns bx_avg (bottom-X hours average) and allhours_avg for the given zone/period.
     """
-    valid_zones = ['NP15', 'SP15', 'ZP26']
-    if zone not in valid_zones:
+    zone_to_dlap = {
+        'NP15': 'DLAP_PGAE-APND',
+        'SP15': 'DLAP_SCE-APND',
+        'ZP26': 'DLAP_SCE-APND',
+    }
+    if zone not in zone_to_dlap:
         return {'success': False, 'error': f'Invalid zone: {zone}'}
+
+    dlap_node = zone_to_dlap[zone]
 
     period_filter = f"EXTRACT(YEAR FROM opr_dt) = {int(year)}"
     if time_period == 'Monthly' and month:
@@ -784,24 +795,22 @@ def get_dlap_zone_bx(conn, zone, bx, year, time_period='Full Year', month=None):
 
     bx_query = f"""
         WITH ranked AS (
-            SELECT zone, opr_dt, hour_num, lmp,
-                ROW_NUMBER() OVER (PARTITION BY opr_dt ORDER BY lmp ASC) as rn
-            FROM zone_hourly_lmp
-            WHERE zone = '{zone}'
+            SELECT opr_dt, opr_hr, mw,
+                ROW_NUMBER() OVER (PARTITION BY opr_dt ORDER BY mw ASC) as rn
+            FROM node_hourly_lmp
+            WHERE node = '{dlap_node}'
               AND {period_filter}
-              AND hour_num <= 24
         )
-        SELECT ROUND(AVG(lmp), 5) as bx_avg
+        SELECT ROUND(AVG(mw), 5) as bx_avg
         FROM ranked
         WHERE rn <= {int(bx)}
     """
 
     allhours_query = f"""
-        SELECT ROUND(AVG(lmp), 5) as allhours_avg
-        FROM zone_hourly_lmp
-        WHERE zone = '{zone}'
+        SELECT ROUND(AVG(mw), 5) as allhours_avg
+        FROM node_hourly_lmp
+        WHERE node = '{dlap_node}'
           AND {period_filter}
-          AND hour_num <= 24
     """
 
     try:
@@ -811,11 +820,10 @@ def get_dlap_zone_bx(conn, zone, bx, year, time_period='Full Year', month=None):
         bx_avg = float(bx_result[0]) if bx_result and bx_result[0] is not None else None
         allhours_avg = float(ah_result[0]) if ah_result and ah_result[0] is not None else None
 
-        dlap_name = f"DLAP_{zone}-APND"
         return {
             'success': True,
             'zone': zone,
-            'dlap_name': dlap_name,
+            'dlap_name': dlap_node,
             'bx_avg': bx_avg,
             'allhours_avg': allhours_avg,
             'bx_type': bx,
