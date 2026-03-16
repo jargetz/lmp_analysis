@@ -119,6 +119,13 @@ def run_query():
             bx = int(sys.argv[3])
             year = int(sys.argv[4])
             result = get_node_bx_single(conn, node_name, bx, year)
+        elif query_type == 'dlap_zone_bx':
+            zone = sys.argv[2]
+            bx = int(sys.argv[3])
+            year = int(sys.argv[4])
+            time_period = sys.argv[5] if len(sys.argv) > 5 else 'Full Year'
+            month = int(sys.argv[6]) if len(sys.argv) > 6 and sys.argv[6] else None
+            result = get_dlap_zone_bx(conn, zone, bx, year, time_period, month)
         else:
             result = {'error': f'Unknown query type: {query_type}'}
         
@@ -760,6 +767,62 @@ def get_node_bx_single(conn, node_name, bx, year):
         for _, r in result.iterrows()
     ]
     return {'success': True, 'node': node_name, 'bx': bx, 'year': year, 'monthly': rows}
+
+
+def get_dlap_zone_bx(conn, zone, bx, year, time_period='Full Year', month=None):
+    """Get DLAP zone BX average and all-hours average from zone_hourly_lmp (load-weighted).
+
+    Returns bx_avg (bottom-X hours average) and allhours_avg for the given zone/period.
+    """
+    valid_zones = ['NP15', 'SP15', 'ZP26']
+    if zone not in valid_zones:
+        return {'success': False, 'error': f'Invalid zone: {zone}'}
+
+    period_filter = f"EXTRACT(YEAR FROM opr_dt) = {int(year)}"
+    if time_period == 'Monthly' and month:
+        period_filter += f" AND EXTRACT(MONTH FROM opr_dt) = {int(month)}"
+
+    bx_query = f"""
+        WITH ranked AS (
+            SELECT zone, opr_dt, hour_num, lmp,
+                ROW_NUMBER() OVER (PARTITION BY opr_dt ORDER BY lmp ASC) as rn
+            FROM zone_hourly_lmp
+            WHERE zone = '{zone}'
+              AND {period_filter}
+              AND hour_num <= 24
+        )
+        SELECT ROUND(AVG(lmp), 5) as bx_avg
+        FROM ranked
+        WHERE rn <= {int(bx)}
+    """
+
+    allhours_query = f"""
+        SELECT ROUND(AVG(lmp), 5) as allhours_avg
+        FROM zone_hourly_lmp
+        WHERE zone = '{zone}'
+          AND {period_filter}
+          AND hour_num <= 24
+    """
+
+    try:
+        bx_result = conn.execute(bx_query).fetchone()
+        ah_result = conn.execute(allhours_query).fetchone()
+
+        bx_avg = float(bx_result[0]) if bx_result and bx_result[0] is not None else None
+        allhours_avg = float(ah_result[0]) if ah_result and ah_result[0] is not None else None
+
+        dlap_name = f"DLAP_{zone}-APND"
+        return {
+            'success': True,
+            'zone': zone,
+            'dlap_name': dlap_name,
+            'bx_avg': bx_avg,
+            'allhours_avg': allhours_avg,
+            'bx_type': bx,
+            'year': year,
+        }
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
 
 
 def get_node_map_data(conn, bx, year, time_period, month=None):

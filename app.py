@@ -3,7 +3,7 @@ BX CAISO Nodal Analysis Tool - Main Application
 
 Primary views:
 1. Site Analysis - Two-column geographic PNODE map + facility-to-node analysis panel
-2. Zone Analysis - BX analysis and zone/node filtering (formerly Dashboard)
+2. Price Analysis - BX analysis and zone/node filtering (formerly Dashboard)
 3. Node Finder - Cheapest nodes near top CARB GHG emitters
 4. Methodology & Data - Calculation explanations and spot-check tables
 """
@@ -140,8 +140,8 @@ def main():
         """)
         
     else:
-        tab_site_analysis, tab_zone_analysis, tab_node_finder, tab_methodology = st.tabs([
-            "🗺️ Site Analysis", "📊 Zone Analysis", "🔍 Node Finder", "📋 Methodology & Data"
+        tab_site_analysis, tab_price_analysis, tab_node_finder, tab_methodology = st.tabs([
+            "🗺️ Site Analysis", "📊 Price Analysis", "🔍 Node Finder", "📋 Methodology & Data"
         ])
         
         # =====================================================================
@@ -151,9 +151,9 @@ def main():
             render_node_map_tab()
         
         # =====================================================================
-        # ZONE ANALYSIS TAB - BX analysis and zone/node filtering
+        # PRICE ANALYSIS TAB - BX analysis and zone/node filtering
         # =====================================================================
-        with tab_zone_analysis:
+        with tab_price_analysis:
             render_dashboard_tab()
         
         # =====================================================================
@@ -642,8 +642,6 @@ def render_node_map_tab():
     import json
     import math as _math
     import numpy as _np
-    import statistics as _stats
-
     st.header("Site Analysis")
     st.markdown("Geographic view of PNODE B*X* average prices. Select a facility or click a node to see its analysis.")
 
@@ -952,22 +950,76 @@ def render_node_map_tab():
             else:
                 st.metric(f"{bx_label_str} Avg ({period_label})", "N/A")
 
-            # Zone comparison metric
-            zone_avg = None
+            # DLAP comparison metrics (always B8 benchmark)
+            dlap_bx_avg = None
+            dlap_name = None
             if node_zone in ('NP15', 'SP15', 'ZP26'):
-                zone_prices = [
-                    n['avg_price'] for n in map_data
-                    if n.get('zone') == node_zone and n.get('avg_price') is not None
-                ]
-                if zone_prices:
-                    zone_avg = _stats.mean(zone_prices)
-                    if node_price is not None:
-                        delta = node_price - zone_avg
+                dlap_cache_key = f"dlap_{node_zone}_8_{map_year}_{map_time_period}_{map_month}"
+                if dlap_cache_key not in st.session_state:
+                    cmd = ['python3', 'subprocess_query.py', 'dlap_zone_bx',
+                           node_zone, '8', str(map_year),
+                           map_time_period,
+                           str(map_month) if map_month else '']
+                    try:
+                        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                        if proc.returncode == 0 and proc.stdout.strip():
+                            st.session_state[dlap_cache_key] = json.loads(proc.stdout)
+                        else:
+                            st.session_state[dlap_cache_key] = {
+                                'success': False, 'error': proc.stderr or 'Empty response'
+                            }
+                    except Exception as exc:
+                        st.session_state[dlap_cache_key] = {'success': False, 'error': str(exc)}
+
+                dlap_result = st.session_state.get(dlap_cache_key, {})
+                if dlap_result.get('success'):
+                    dlap_bx_avg = dlap_result.get('bx_avg')
+                    dlap_allhours = dlap_result.get('allhours_avg')
+                    dlap_name = dlap_result.get('dlap_name', f'DLAP_{node_zone}-APND')
+
+                    node_b8_price = node_price if map_bx == 8 else None
+                    if map_bx != 8:
+                        node_b8_key = f"node_b8_{pnode_id}_{map_year}_{map_time_period}_{map_month}"
+                        if node_b8_key not in st.session_state:
+                            cmd_b8 = ['python3', 'subprocess_query.py', 'node_bx_single',
+                                      pnode_id, '8', str(map_year)]
+                            try:
+                                proc_b8 = subprocess.run(cmd_b8, capture_output=True, text=True, timeout=30)
+                                if proc_b8.returncode == 0 and proc_b8.stdout.strip():
+                                    st.session_state[node_b8_key] = json.loads(proc_b8.stdout)
+                                else:
+                                    st.session_state[node_b8_key] = {'success': False}
+                            except Exception:
+                                st.session_state[node_b8_key] = {'success': False}
+                        b8_result = st.session_state.get(node_b8_key, {})
+                        if b8_result.get('success') and b8_result.get('monthly'):
+                            monthly_rows = b8_result['monthly']
+                            if map_time_period == 'Monthly' and map_month:
+                                match = [r for r in monthly_rows if r.get('month') == map_month]
+                                if match and match[0].get('avg_price') is not None:
+                                    node_b8_price = match[0]['avg_price']
+                            else:
+                                valid = [(r['avg_price'], r.get('days_count', 1))
+                                         for r in monthly_rows if r.get('avg_price') is not None]
+                                if valid:
+                                    total_days = sum(d for _, d in valid)
+                                    node_b8_price = sum(p * d for p, d in valid) / total_days if total_days else None
+
+                    if dlap_bx_avg is not None and node_b8_price is not None:
+                        delta = node_b8_price - dlap_bx_avg
                         st.metric(
-                            f"vs {node_zone} zone avg",
-                            f"${zone_avg:.2f}/MWh",
+                            f"{dlap_name} B8",
+                            f"${dlap_bx_avg:.2f}/MWh",
                             delta=f"{delta:+.2f}",
                             delta_color="inverse",
+                        )
+                    elif dlap_bx_avg is not None:
+                        st.metric(f"{dlap_name} B8", f"${dlap_bx_avg:.2f}/MWh")
+
+                    if dlap_allhours is not None:
+                        st.metric(
+                            f"{dlap_name} All-Hours Avg",
+                            f"${dlap_allhours:.2f}/MWh",
                         )
 
             # Monthly BX trend chart
@@ -993,8 +1045,8 @@ def render_node_map_tab():
                     monthly_data=monthly_result['monthly'],
                     node_name=pnode_id,
                     bx_label=bx_label_str,
-                    zone=node_zone,
-                    zone_avg_price=zone_avg,
+                    zone=dlap_name if dlap_name else node_zone,
+                    zone_avg_price=dlap_bx_avg,
                 )
                 st.plotly_chart(analysis_fig, use_container_width=True)
             else:

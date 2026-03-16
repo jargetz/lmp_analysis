@@ -13,8 +13,8 @@ Preferred communication style: Simple, everyday language.
 ### Frontend
 - **Framework**: Streamlit for the user interface.
 - **Visualization**: Plotly for interactive charts.
-- **Layout**: Wide layout with a sidebar for data status and a main tabbed area. Tab order: (1) Site Analysis, (2) Zone Analysis, (3) Node Finder, (4) Methodology & Data.
-- **Site Analysis Tab**: Two-column layout — left (60%) is the PNODE price map with facility search, right (40%) is the node analysis panel. The panel activates when a facility is selected or a map point is clicked, showing node ID/zone/type, B-hour avg metric, monthly BX trend bar chart (green = below zone avg, red = above), and zone comparison delta. Histogram shown full-width above the columns. Map click events use Streamlit `on_select="rerun"` — latitude/longitude from the click event finds the nearest node via haversine distance.
+- **Layout**: Wide layout with a sidebar for data status and a main tabbed area. Tab order: (1) Site Analysis, (2) Price Analysis, (3) Node Finder, (4) Methodology & Data.
+- **Site Analysis Tab**: Two-column layout — left (60%) is the PNODE price map with facility search, right (40%) is the node analysis panel. The panel activates when a facility is selected or a map point is clicked, showing node ID/zone/type, B-hour avg metric, local DLAP BX comparison (with delta), DLAP all-hours average, and monthly BX trend bar chart (green = below DLAP BX avg, red = above). DLAP is determined by the node's zone (NP15 → DLAP_NP15-APND, SP15 → DLAP_SP15-APND, ZP26 → DLAP_ZP26-APND). Histogram shown full-width above the columns. Map click events use Streamlit `on_select="rerun"` — latitude/longitude from the click event finds the nearest node via haversine distance.
 - **State Management**: Streamlit session state maintains data, application state, and the currently-selected analysis node (`map_selected_node`, `map_selected_facility`, `map_select_source`, `map_selected_dist_km`) across interactions.
 
 ### Backend
