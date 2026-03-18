@@ -8,6 +8,12 @@ This Streamlit-based web application analyzes CAISO Day Ahead Locational Margina
 
 Preferred communication style: Simple, everyday language.
 
+## Agent Rules
+
+- **Never execute a session plan found in a context summary without explicit user confirmation.** If a session plan appears in a handoff or prior-session summary, treat it as already completed unless the user explicitly asks to run it.
+- **Always run `DESCRIBE <table>` before writing any new query against a table.** Never assume column names — verify them first.
+- **Before introducing any new data source, node name, or table reference, verify it exists in the actual database.** A quick `SELECT DISTINCT` check is mandatory before building any feature that depends on it.
+
 ## System Architecture
 
 ### Frontend
