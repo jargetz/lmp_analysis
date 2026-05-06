@@ -636,6 +636,227 @@ conn.close()
         st.info("Make sure LMP data is loaded and BX calculations have been run.")
 
 
+def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
+                                   node_price, dlap_name, dlap_bx_avg, dlap_allhours,
+                                   bx_label, period_label, radius_miles=50):
+    """Build a self-contained interactive HTML report for a facility and its nearby peers."""
+    import plotly.io as pio
+    import math
+    from datetime import date as _date
+
+    R = 6371.0
+    fac_lat = sel_facility['lat']
+    fac_lon = sel_facility['lon']
+
+    # Find facilities within radius
+    nearby = []
+    for f in all_facilities:
+        if not f.get('lat') or not f.get('lon'):
+            continue
+        dphi = math.radians(f['lat'] - fac_lat)
+        dlam = math.radians(f['lon'] - fac_lon)
+        a = (math.sin(dphi / 2) ** 2
+             + math.cos(math.radians(fac_lat)) * math.cos(math.radians(f['lat']))
+             * math.sin(dlam / 2) ** 2)
+        dist_km = 2 * R * math.asin(math.sqrt(min(a, 1.0)))
+        dist_mi = dist_km * 0.621371
+        if dist_mi <= radius_miles:
+            entry = {**f, 'dist_km': dist_km, 'dist_mi': dist_mi}
+            # mark selected facility separately
+            entry['_is_selected'] = (f['facility'] == sel_facility['facility']
+                                     and abs(f['lat'] - fac_lat) < 1e-6)
+            nearby.append(entry)
+
+    nearby.sort(key=lambda x: x['dist_km'])
+    peers = [f for f in nearby if not f['_is_selected']]
+
+    # ── Build Plotly map ──────────────────────────────────────────────────────
+    fig = go.Figure()
+
+    if peers:
+        max_ghg = max(f['total_ghg'] for f in peers) or 1
+        sizes = [max(8, min(40, 8 + 32 * (f['total_ghg'] / max_ghg))) for f in peers]
+        fig.add_trace(go.Scattermapbox(
+            lat=[f['lat'] for f in peers],
+            lon=[f['lon'] for f in peers],
+            mode='markers',
+            marker=dict(size=sizes, color='#FF8C00', opacity=0.8),
+            text=[
+                f"<b>{f['facility']}</b><br>"
+                f"{f['primary_sector']}<br>"
+                f"{f['city']}, {f['county']} Co.<br>"
+                f"GHG: {f['total_ghg']:,.0f} MT CO₂e<br>"
+                f"Distance: {f['dist_mi']:.1f} mi ({f['dist_km']:.1f} km)"
+                for f in peers
+            ],
+            hovertemplate='%{text}<extra></extra>',
+            name=f'Nearby facilities (within {radius_miles} mi)',
+        ))
+
+    # Selected facility — gold star
+    fig.add_trace(go.Scattermapbox(
+        lat=[fac_lat], lon=[fac_lon],
+        mode='markers',
+        marker=dict(size=22, color='gold', symbol='star'),
+        text=[f"<b>★ {sel_facility['facility']}</b><br>"
+              f"{sel_facility['primary_sector']}<br>"
+              f"{sel_facility['city']}, {sel_facility['county']} Co.<br>"
+              f"GHG: {sel_facility['total_ghg']:,.0f} MT CO₂e"],
+        hovertemplate='%{text}<extra></extra>',
+        name='Selected facility',
+    ))
+
+    # Nearest CAISO node — cyan diamond
+    if node_to_analyze:
+        n_lat = node_to_analyze.get('lat')
+        n_lon = node_to_analyze.get('lon')
+        pnode_id = node_to_analyze.get('pnode_id', '')
+        if n_lat and n_lon:
+            price_str = f"${node_price:.2f}/MWh" if node_price is not None else "N/A"
+            fig.add_trace(go.Scattermapbox(
+                lat=[n_lat], lon=[n_lon],
+                mode='markers',
+                marker=dict(size=14, color='cyan', symbol='diamond'),
+                text=[f"<b>⬥ CAISO Node: {pnode_id}</b><br>"
+                      f"Zone: {node_to_analyze.get('zone', '—')}<br>"
+                      f"{bx_label} ({period_label}): {price_str}"],
+                hovertemplate='%{text}<extra></extra>',
+                name=f'Nearest CAISO node ({pnode_id})',
+            ))
+
+    fig.update_layout(
+        mapbox_style='carto-positron',
+        mapbox=dict(center=dict(lat=fac_lat, lon=fac_lon), zoom=9),
+        margin=dict(l=0, r=0, t=0, b=0),
+        height=520,
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+    )
+    map_html = pio.to_html(fig, include_plotlyjs='cdn', full_html=False,
+                           config={'displayModeBar': True, 'scrollZoom': True})
+
+    # ── Assemble summary values ───────────────────────────────────────────────
+    pnode_id  = node_to_analyze.get('pnode_id', '—') if node_to_analyze else '—'
+    node_zone = node_to_analyze.get('zone', '—')     if node_to_analyze else '—'
+    price_str    = f"${node_price:.2f}/MWh"    if node_price is not None  else "N/A"
+    dlap_str     = f"${dlap_bx_avg:.2f}/MWh"  if dlap_bx_avg is not None else "N/A"
+    dlap_all_str = f"${dlap_allhours:.2f}/MWh" if dlap_allhours is not None else "N/A"
+    today = _date.today().strftime("%B %d, %Y")
+    ct_badge = ('<span class="badge">Cap-and-Trade</span>'
+                if sel_facility.get('cap_and_trade') == 'Yes' else '')
+
+    # ── Build peer table rows ─────────────────────────────────────────────────
+    table_rows = ""
+    for i, f in enumerate(peers, 1):
+        ct = "✓" if f.get('cap_and_trade') == 'Yes' else ""
+        table_rows += (
+            f"<tr><td>{i}</td><td><b>{f['facility']}</b></td>"
+            f"<td>{f['primary_sector']}</td>"
+            f"<td>{f['city']}, {f['county']} Co.</td>"
+            f"<td style='text-align:center'>{ct}</td>"
+            f"<td style='text-align:right'>{f['total_ghg']:,.0f}</td>"
+            f"<td style='text-align:right'>{f['nox']:,.1f}</td>"
+            f"<td style='text-align:right'>{f['sox']:,.1f}</td>"
+            f"<td style='text-align:right'>{f['pm25']:,.1f}</td>"
+            f"<td style='text-align:right'>{f['dist_mi']:.1f} mi</td></tr>\n"
+        )
+    if not table_rows:
+        table_rows = (f'<tr><td colspan="10" style="color:#aaa;text-align:center">'
+                      f'No other facilities within {radius_miles} miles</td></tr>')
+
+    # ── Full HTML page ────────────────────────────────────────────────────────
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Facility Report — {sel_facility['facility']}</title>
+<style>
+  body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;padding:24px;color:#1a1a1a;background:#fff}}
+  h1{{font-size:1.6em;margin-bottom:4px}}
+  h2{{font-size:1.05em;color:#444;margin:28px 0 8px;border-bottom:1px solid #e0e0e0;padding-bottom:4px}}
+  .meta{{color:#666;font-size:.9em;margin-bottom:20px}}
+  .cards{{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:20px}}
+  .card{{background:#f5f7fa;border-radius:8px;padding:12px 18px;min-width:120px}}
+  .card-label{{font-size:.72em;color:#888;text-transform:uppercase;letter-spacing:.05em}}
+  .card-value{{font-size:1.25em;font-weight:600}}
+  .node-box{{background:#e8f4fd;border-left:3px solid #2196F3;padding:10px 16px;border-radius:4px;margin-bottom:20px;font-size:.9em;line-height:1.6}}
+  table{{width:100%;border-collapse:collapse;font-size:.83em}}
+  thead tr{{background:#f0f2f5}}
+  th{{text-align:left;padding:8px 10px;font-weight:600;color:#555}}
+  td{{padding:7px 10px;border-bottom:1px solid #f0f0f0;vertical-align:top}}
+  tr:hover td{{background:#fafbfc}}
+  .badge{{display:inline-block;background:#e3f2fd;color:#1565c0;padding:2px 8px;border-radius:12px;font-size:.8em}}
+  .footer{{margin-top:32px;font-size:.75em;color:#aaa;border-top:1px solid #f0f0f0;padding-top:12px}}
+</style>
+</head>
+<body>
+<h1>{sel_facility['facility']}</h1>
+<div class="meta">
+  {sel_facility['primary_sector']} &nbsp;·&nbsp;
+  {sel_facility['city']}, {sel_facility['county']} County &nbsp;·&nbsp;
+  {ct_badge}
+  Report generated {today}
+</div>
+
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Total GHG</div>
+    <div class="card-value">{sel_facility['total_ghg']:,.0f}</div>
+    <div class="card-label">MT CO₂e</div>
+  </div>
+  <div class="card">
+    <div class="card-label">CO₂</div>
+    <div class="card-value">{sel_facility['co2']:,.0f}</div>
+    <div class="card-label">MT</div>
+  </div>
+  <div class="card">
+    <div class="card-label">NOx</div>
+    <div class="card-value">{sel_facility['nox']:,.1f}</div>
+    <div class="card-label">short tons</div>
+  </div>
+  <div class="card">
+    <div class="card-label">SOx</div>
+    <div class="card-value">{sel_facility['sox']:,.1f}</div>
+    <div class="card-label">short tons</div>
+  </div>
+  <div class="card">
+    <div class="card-label">PM2.5</div>
+    <div class="card-value">{sel_facility['pm25']:,.1f}</div>
+    <div class="card-label">short tons</div>
+  </div>
+</div>
+
+<div class="node-box">
+  <b>Nearest CAISO Node:</b> {pnode_id} &nbsp;·&nbsp; Zone: {node_zone}<br>
+  {bx_label} Avg ({period_label}): <b>{price_str}</b> &nbsp;·&nbsp;
+  {dlap_name or 'DLAP'} B8: <b>{dlap_str}</b> &nbsp;·&nbsp;
+  All-Hours Avg: <b>{dlap_all_str}</b>
+</div>
+
+<h2>Map — {sel_facility['facility']} and Nearby Facilities ({radius_miles}-mile radius)</h2>
+{map_html}
+
+<h2>Nearby Facilities — {len(peers)} within {radius_miles} miles</h2>
+<table>
+  <thead>
+    <tr>
+      <th>#</th><th>Facility</th><th>Sector</th><th>Location</th>
+      <th>C&amp;T</th><th>GHG (MT CO₂e)</th><th>NOx (st)</th>
+      <th>SOx (st)</th><th>PM2.5 (st)</th><th>Distance</th>
+    </tr>
+  </thead>
+  <tbody>{table_rows}</tbody>
+</table>
+
+<div class="footer">
+  Source: CARB Mandatory GHG Reporting (2023) · CAISO Day Ahead LMP {period_label} ·
+  Generated by BX CAISO Nodal Analysis Tool · {today}
+</div>
+</body>
+</html>"""
+    return html
+
+
 def render_node_map_tab():
     """Render the Site Analysis tab: two-column map + node analysis panel."""
     import subprocess
@@ -952,6 +1173,7 @@ def render_node_map_tab():
 
             # DLAP comparison metrics (always B8 benchmark)
             dlap_bx_avg = None
+            dlap_allhours = None
             dlap_name = None
             if node_zone in ('NP15', 'SP15', 'ZP26'):
                 dlap_cache_key = f"dlap_{node_zone}_8_{map_year}_{map_time_period}_{map_month}"
@@ -1091,6 +1313,45 @@ def render_node_map_tab():
                         f"PM2.5: {sel_facility['pm25']:,.1f}"
                         f"{ns_line}"
                         f"{closer_lv_line}"
+                    )
+
+                st.divider()
+                report_radius = st.slider(
+                    "Report radius (miles)", min_value=10, max_value=100,
+                    value=50, step=5, key="report_radius_slider"
+                )
+                if st.button("Generate Shareable Report", key="gen_report_btn",
+                             use_container_width=True):
+                    with st.spinner("Building report…"):
+                        try:
+                            html_report = generate_facility_report_html(
+                                sel_facility=sel_facility,
+                                all_facilities=facilities_all,
+                                node_to_analyze=node_to_analyze,
+                                node_price=node_price,
+                                dlap_name=dlap_name,
+                                dlap_bx_avg=dlap_bx_avg,
+                                dlap_allhours=dlap_allhours if dlap_bx_avg else None,
+                                bx_label=bx_label_str,
+                                period_label=period_label,
+                                radius_miles=report_radius,
+                            )
+                            safe_name = (sel_facility['facility']
+                                         .replace(' ', '_')
+                                         .replace('/', '-')[:50])
+                            st.session_state['_report_html'] = html_report
+                            st.session_state['_report_filename'] = f"{safe_name}_report.html"
+                        except Exception as exc:
+                            st.error(f"Could not generate report: {exc}")
+
+                if st.session_state.get('_report_html'):
+                    st.download_button(
+                        label="⬇ Download Report (.html)",
+                        data=st.session_state['_report_html'].encode('utf-8'),
+                        file_name=st.session_state.get('_report_filename', 'facility_report.html'),
+                        mime='text/html',
+                        use_container_width=True,
+                        key="download_report_btn",
                     )
 
 
