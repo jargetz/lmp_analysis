@@ -686,58 +686,14 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
     def _dot_size(ghg):
         return max(8, min(44, 8 + 36 * (ghg / max_ghg)))
 
-    if peers:
-        peer_sizes = [_dot_size(f['total_ghg']) for f in peers]
-        fig.add_trace(go.Scattermapbox(
-            lat=[f['lat'] for f in peers],
-            lon=[f['lon'] for f in peers],
-            mode='markers',
-            marker=dict(size=peer_sizes, color='#FF8C00', opacity=0.8),
-            text=[
-                f"<b>{f['facility']}</b><br>"
-                f"{f['primary_sector']}<br>"
-                f"{f['city']}, {f['county']} Co.<br>"
-                f"GHG: {f['total_ghg']:,.0f} MT CO₂e<br>"
-                f"Distance: {f['dist_mi']:.1f} mi ({f['dist_km']:.1f} km)"
-                for f in peers
-            ],
-            hovertemplate='%{text}<extra></extra>',
-            name=f'Nearby facilities (within {radius_miles} mi)',
-        ))
+    # ── Draw order: back → front ──────────────────────────────────────────────
+    # 1. Grey substations (background)
+    # 2. Peer facilities (orange)
+    # 3. Highlighted nearest substation(s) (pink / orange)
+    # 4. PNODE (cyan)
+    # 5. Selected facility (red) — always on top
 
-    # Selected facility — red, sized on same scale as peers
-    sel_size = max(18, _dot_size(sel_facility['total_ghg']))
-    fig.add_trace(go.Scattermapbox(
-        lat=[fac_lat], lon=[fac_lon],
-        mode='markers',
-        marker=dict(size=sel_size, color='#e8000d'),
-        text=[f"<b>▶ {sel_facility['facility']}</b><br>"
-              f"{sel_facility['primary_sector']}<br>"
-              f"{sel_facility['city']}, {sel_facility['county']} Co.<br>"
-              f"GHG: {sel_facility['total_ghg']:,.0f} MT CO₂e"],
-        hovertemplate='%{text}<extra></extra>',
-        name='⬤ Selected facility',
-    ))
-
-    # Nearest CAISO pricing node (PNODE) — cyan diamond
-    if node_to_analyze:
-        n_lat = node_to_analyze.get('lat')
-        n_lon = node_to_analyze.get('lon')
-        pnode_id = node_to_analyze.get('pnode_id', '')
-        if n_lat and n_lon:
-            price_str_node = f"${node_price:.2f}/MWh" if node_price is not None else "N/A"
-            fig.add_trace(go.Scattermapbox(
-                lat=[n_lat], lon=[n_lon],
-                mode='markers',
-                marker=dict(size=14, color='cyan', symbol='diamond'),
-                text=[f"<b>⬥ Pricing node (PNODE): {pnode_id}</b><br>"
-                      f"Zone: {node_to_analyze.get('zone', '—')}<br>"
-                      f"{bx_label} ({period_label}): {price_str_node}"],
-                hovertemplate='%{text}<extra></extra>',
-                name=f'Nearest PNODE ({pnode_id})',
-            ))
-
-    # All substations within radius — small grey dots drawn first (underneath)
+    # 1. All substations within radius — drawn first so everything sits on top
     if substations_df is not None and not substations_df.empty:
         radius_km = radius_miles * 1.60934
         ns_name = nearest_substation.get('substation_name') if nearest_substation else None
@@ -784,7 +740,27 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
                 name=f'Substations within {radius_miles} mi ({len(sub_in_radius)})',
             ))
 
-    # Nearest ≥110kV substation — pink circle (drawn on top of grey layer)
+    # 2. Peer facilities — orange, sized proportionally
+    if peers:
+        peer_sizes = [_dot_size(f['total_ghg']) for f in peers]
+        fig.add_trace(go.Scattermapbox(
+            lat=[f['lat'] for f in peers],
+            lon=[f['lon'] for f in peers],
+            mode='markers',
+            marker=dict(size=peer_sizes, color='#FF8C00', opacity=0.8),
+            text=[
+                f"<b>{f['facility']}</b><br>"
+                f"{f['primary_sector']}<br>"
+                f"{f['city']}, {f['county']} Co.<br>"
+                f"GHG: {f['total_ghg']:,.0f} MT CO₂e<br>"
+                f"Distance: {f['dist_mi']:.1f} mi ({f['dist_km']:.1f} km)"
+                for f in peers
+            ],
+            hovertemplate='%{text}<extra></extra>',
+            name=f'Nearby facilities (within {radius_miles} mi)',
+        ))
+
+    # 3a. Nearest ≥110kV substation — pink circle
     if nearest_substation and nearest_substation.get('lat') is not None:
         ns = nearest_substation
         ns_dist = _fmt_dist_r(ns['dist_km']) if ns.get('dist_km') is not None else '—'
@@ -792,8 +768,8 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
         fig.add_trace(go.Scattermapbox(
             lat=[ns['lat']], lon=[ns['lon']],
             mode='markers',
-            marker=dict(size=14, color='#e377c2'),
-            text=[f"<b>◉ Substation: {ns['substation_name']}</b><br>"
+            marker=dict(size=16, color='#e377c2'),
+            text=[f"<b>◉ Nearest ≥110kV Substation: {ns['substation_name']}</b><br>"
                   f"Owner: {ns.get('owner') or '—'}<br>"
                   f"Voltage: {ns.get('highest_kv') or '—'} kV<br>"
                   f"Distance: {ns_dist}{ns_status}"],
@@ -801,7 +777,7 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
             name=f"≥110kV Substation ({ns['substation_name']})",
         ))
 
-    # Closer lower-voltage substation — orange circle
+    # 3b. Closer lower-voltage substation — purple circle
     if nearest_lv_substation and nearest_lv_substation.get('lat') is not None:
         lv = nearest_lv_substation
         lv_dist = _fmt_dist_r(lv['dist_km']) if lv.get('dist_km') is not None else '—'
@@ -809,14 +785,46 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
         fig.add_trace(go.Scattermapbox(
             lat=[lv['lat']], lon=[lv['lon']],
             mode='markers',
-            marker=dict(size=12, color='#ff7f0e'),
-            text=[f"<b>◉ Substation (lower-kV): {lv['substation_name']}</b><br>"
+            marker=dict(size=13, color='#9467bd'),
+            text=[f"<b>◉ Closer lower-voltage Substation: {lv['substation_name']}</b><br>"
                   f"Owner: {lv.get('owner') or '—'}<br>"
                   f"Voltage: {lv.get('highest_kv') or '—'} kV<br>"
                   f"Distance: {lv_dist}{lv_status}"],
             hovertemplate='%{text}<extra></extra>',
-            name=f"Lower-voltage Substation ({lv['substation_name']})",
+            name=f"Lower-kV Substation ({lv['substation_name']})",
         ))
+
+    # 4. PNODE — solid cyan circle, drawn after substations so it's visible
+    if node_to_analyze:
+        n_lat = node_to_analyze.get('lat')
+        n_lon = node_to_analyze.get('lon')
+        pnode_id = node_to_analyze.get('pnode_id', '')
+        if n_lat and n_lon:
+            price_str_node = f"${node_price:.2f}/MWh" if node_price is not None else "N/A"
+            fig.add_trace(go.Scattermapbox(
+                lat=[n_lat], lon=[n_lon],
+                mode='markers',
+                marker=dict(size=16, color='#00c8ff'),
+                text=[f"<b>Nearest CAISO pricing node (PNODE): {pnode_id}</b><br>"
+                      f"Zone: {node_to_analyze.get('zone', '—')}<br>"
+                      f"{bx_label} avg ({period_label}): {price_str_node}"],
+                hovertemplate='%{text}<extra></extra>',
+                name=f'PNODE: {pnode_id}',
+            ))
+
+    # 5. Selected facility — red, on top of everything
+    sel_size = max(18, _dot_size(sel_facility['total_ghg']))
+    fig.add_trace(go.Scattermapbox(
+        lat=[fac_lat], lon=[fac_lon],
+        mode='markers',
+        marker=dict(size=sel_size, color='#e8000d'),
+        text=[f"<b>▶ {sel_facility['facility']}</b><br>"
+              f"{sel_facility['primary_sector']}<br>"
+              f"{sel_facility['city']}, {sel_facility['county']} Co.<br>"
+              f"GHG: {sel_facility['total_ghg']:,.0f} MT CO₂e"],
+        hovertemplate='%{text}<extra></extra>',
+        name='⬤ Selected facility',
+    ))
 
     fig.update_layout(
         mapbox_style='carto-positron',
