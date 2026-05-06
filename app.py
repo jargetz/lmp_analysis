@@ -638,11 +638,18 @@ conn.close()
 
 def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
                                    node_price, dlap_name, dlap_bx_avg, dlap_allhours,
-                                   bx_label, period_label, radius_miles=50):
+                                   bx_label, period_label, radius_miles=50,
+                                   nearest_substation=None, nearest_lv_substation=None):
     """Build a self-contained interactive HTML report for a facility and its nearby peers."""
     import plotly.io as pio
     import math
     from datetime import date as _date
+
+    def _fmt_dist_r(dist_km):
+        dist_mi = dist_km * 0.621371
+        if dist_km < 0.05:
+            return f"< 0.1 mi ({dist_km * 1000:.0f} m)"
+        return f"{dist_mi:.1f} mi ({dist_km:.1f} km)"
 
     R = 6371.0
     fac_lat = sel_facility['lat']
@@ -706,23 +713,57 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
         name='Selected facility',
     ))
 
-    # Nearest CAISO node — cyan diamond
+    # Nearest CAISO pricing node (PNODE) — cyan diamond
     if node_to_analyze:
         n_lat = node_to_analyze.get('lat')
         n_lon = node_to_analyze.get('lon')
         pnode_id = node_to_analyze.get('pnode_id', '')
         if n_lat and n_lon:
-            price_str = f"${node_price:.2f}/MWh" if node_price is not None else "N/A"
+            price_str_node = f"${node_price:.2f}/MWh" if node_price is not None else "N/A"
             fig.add_trace(go.Scattermapbox(
                 lat=[n_lat], lon=[n_lon],
                 mode='markers',
                 marker=dict(size=14, color='cyan', symbol='diamond'),
-                text=[f"<b>⬥ CAISO Node: {pnode_id}</b><br>"
+                text=[f"<b>⬥ Pricing node (PNODE): {pnode_id}</b><br>"
                       f"Zone: {node_to_analyze.get('zone', '—')}<br>"
-                      f"{bx_label} ({period_label}): {price_str}"],
+                      f"{bx_label} ({period_label}): {price_str_node}"],
                 hovertemplate='%{text}<extra></extra>',
-                name=f'Nearest CAISO node ({pnode_id})',
+                name=f'Nearest PNODE ({pnode_id})',
             ))
+
+    # Nearest ≥110kV substation — pink circle
+    if nearest_substation and nearest_substation.get('lat') is not None:
+        ns = nearest_substation
+        ns_dist = _fmt_dist_r(ns['dist_km']) if ns.get('dist_km') is not None else '—'
+        ns_status = f' ⚠ {ns["status"]}' if ns.get('status') and ns['status'] != 'Operational' else ''
+        fig.add_trace(go.Scattermapbox(
+            lat=[ns['lat']], lon=[ns['lon']],
+            mode='markers',
+            marker=dict(size=14, color='#e377c2'),
+            text=[f"<b>◉ Substation: {ns['substation_name']}</b><br>"
+                  f"Owner: {ns.get('owner') or '—'}<br>"
+                  f"Voltage: {ns.get('highest_kv') or '—'} kV<br>"
+                  f"Distance: {ns_dist}{ns_status}"],
+            hovertemplate='%{text}<extra></extra>',
+            name=f"≥110kV Substation ({ns['substation_name']})",
+        ))
+
+    # Closer lower-voltage substation — orange circle
+    if nearest_lv_substation and nearest_lv_substation.get('lat') is not None:
+        lv = nearest_lv_substation
+        lv_dist = _fmt_dist_r(lv['dist_km']) if lv.get('dist_km') is not None else '—'
+        lv_status = f' ⚠ {lv["status"]}' if lv.get('status') and lv['status'] != 'Operational' else ''
+        fig.add_trace(go.Scattermapbox(
+            lat=[lv['lat']], lon=[lv['lon']],
+            mode='markers',
+            marker=dict(size=12, color='#ff7f0e'),
+            text=[f"<b>◉ Substation (lower-kV): {lv['substation_name']}</b><br>"
+                  f"Owner: {lv.get('owner') or '—'}<br>"
+                  f"Voltage: {lv.get('highest_kv') or '—'} kV<br>"
+                  f"Distance: {lv_dist}{lv_status}"],
+            hovertemplate='%{text}<extra></extra>',
+            name=f"Lower-voltage Substation ({lv['substation_name']})",
+        ))
 
     fig.update_layout(
         mapbox_style='carto-positron',
@@ -743,6 +784,31 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
     today = _date.today().strftime("%B %d, %Y")
     ct_badge = ('<span class="badge">Cap-and-Trade</span>'
                 if sel_facility.get('cap_and_trade') == 'Yes' else '')
+
+    # ── Substation HTML block ─────────────────────────────────────────────────
+    sub_html = ''
+    if nearest_substation:
+        ns = nearest_substation
+        ns_dist = _fmt_dist_r(ns['dist_km']) if ns.get('dist_km') is not None else '—'
+        ns_status = f' &nbsp;<span style="color:#c0392b">⚠ {ns["status"]}</span>' if ns.get('status') and ns['status'] != 'Operational' else ''
+        sub_html = (
+            f'<div class="sub-box">'
+            f'<b>Nearest ≥110kV Substation:</b> {ns["substation_name"]} &nbsp;·&nbsp; '
+            f'Owner: {ns.get("owner") or "—"} &nbsp;·&nbsp; '
+            f'Voltage: {ns.get("highest_kv") or "—"} kV &nbsp;·&nbsp; '
+            f'Distance: {ns_dist}{ns_status}'
+        )
+        if nearest_lv_substation and nearest_lv_substation.get('substation_name') != ns['substation_name']:
+            lv = nearest_lv_substation
+            lv_dist = _fmt_dist_r(lv['dist_km']) if lv.get('dist_km') is not None else '—'
+            lv_status = f' &nbsp;<span style="color:#c0392b">⚠ {lv["status"]}</span>' if lv.get('status') and lv['status'] != 'Operational' else ''
+            sub_html += (
+                f'<br><span style="color:#888">⚠ Closer lower-voltage: {lv["substation_name"]} &nbsp;·&nbsp; '
+                f'{lv.get("owner") or "—"} &nbsp;·&nbsp; '
+                f'{lv.get("highest_kv") or "—"} kV &nbsp;·&nbsp; '
+                f'{lv_dist}{lv_status}</span>'
+            )
+        sub_html += '</div>'
 
     # ── Build peer table rows ─────────────────────────────────────────────────
     table_rows = ""
@@ -779,7 +845,8 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
   .card{{background:#f5f7fa;border-radius:8px;padding:12px 18px;min-width:120px}}
   .card-label{{font-size:.72em;color:#888;text-transform:uppercase;letter-spacing:.05em}}
   .card-value{{font-size:1.25em;font-weight:600}}
-  .node-box{{background:#e8f4fd;border-left:3px solid #2196F3;padding:10px 16px;border-radius:4px;margin-bottom:20px;font-size:.9em;line-height:1.6}}
+  .node-box{{background:#e8f4fd;border-left:3px solid #2196F3;padding:10px 16px;border-radius:4px;margin-bottom:12px;font-size:.9em;line-height:1.6}}
+  .sub-box{{background:#fce4f5;border-left:3px solid #e377c2;padding:10px 16px;border-radius:4px;margin-bottom:20px;font-size:.9em;line-height:1.6}}
   table{{width:100%;border-collapse:collapse;font-size:.83em}}
   thead tr{{background:#f0f2f5}}
   th{{text-align:left;padding:8px 10px;font-weight:600;color:#555}}
@@ -827,13 +894,13 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
 </div>
 
 <div class="node-box">
-  <b>Nearest CAISO Node:</b> {pnode_id} &nbsp;·&nbsp; Zone: {node_zone}<br>
+  <b>Nearest CAISO pricing node (PNODE):</b> {pnode_id} &nbsp;·&nbsp; Zone: {node_zone}<br>
   {bx_label} Avg ({period_label}): <b>{price_str}</b> &nbsp;·&nbsp;
-  {dlap_name or 'DLAP'} B8: <b>{dlap_str}</b> &nbsp;·&nbsp;
-  All-Hours Avg: <b>{dlap_all_str}</b>
+  {dlap_name or 'DLAP'} {bx_label} Avg: <b>{dlap_str}</b> &nbsp;·&nbsp;
+  {dlap_name or 'DLAP'} All-Hours Avg: <b>{dlap_all_str}</b>
 </div>
-
-<h2>Map — {sel_facility['facility']} and Nearby Facilities ({radius_miles}-mile radius)</h2>
+{sub_html}
+<h2>Map — {sel_facility['facility']}, Nearby Facilities, PNODE &amp; Substation ({radius_miles}-mile radius)</h2>
 {map_html}
 
 <h2>Nearby Facilities — {len(peers)} within {radius_miles} miles</h2>
@@ -1340,6 +1407,8 @@ def render_node_map_tab():
                         bx_label=bx_label_str,
                         period_label=period_label,
                         radius_miles=report_radius,
+                        nearest_substation=nearest_substation,
+                        nearest_lv_substation=nearest_lv_sub,
                     ).encode('utf-8')
                 except Exception as _exc:
                     _report_bytes = None
