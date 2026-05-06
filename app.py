@@ -760,41 +760,7 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
             name=f'Nearby facilities (within {radius_miles} mi)',
         ))
 
-    # 3a. Nearest ≥110kV substation — pink circle
-    if nearest_substation and nearest_substation.get('lat') is not None:
-        ns = nearest_substation
-        ns_dist = _fmt_dist_r(ns['dist_km']) if ns.get('dist_km') is not None else '—'
-        ns_status = f' ⚠ {ns["status"]}' if ns.get('status') and ns['status'] != 'Operational' else ''
-        fig.add_trace(go.Scattermapbox(
-            lat=[ns['lat']], lon=[ns['lon']],
-            mode='markers',
-            marker=dict(size=16, color='#e377c2'),
-            text=[f"<b>◉ Nearest ≥110kV Substation: {ns['substation_name']}</b><br>"
-                  f"Owner: {ns.get('owner') or '—'}<br>"
-                  f"Voltage: {ns.get('highest_kv') or '—'} kV<br>"
-                  f"Distance: {ns_dist}{ns_status}"],
-            hovertemplate='%{text}<extra></extra>',
-            name=f"≥110kV Substation ({ns['substation_name']})",
-        ))
-
-    # 3b. Closer lower-voltage substation — purple circle
-    if nearest_lv_substation and nearest_lv_substation.get('lat') is not None:
-        lv = nearest_lv_substation
-        lv_dist = _fmt_dist_r(lv['dist_km']) if lv.get('dist_km') is not None else '—'
-        lv_status = f' ⚠ {lv["status"]}' if lv.get('status') and lv['status'] != 'Operational' else ''
-        fig.add_trace(go.Scattermapbox(
-            lat=[lv['lat']], lon=[lv['lon']],
-            mode='markers',
-            marker=dict(size=13, color='#9467bd'),
-            text=[f"<b>◉ Closer lower-voltage Substation: {lv['substation_name']}</b><br>"
-                  f"Owner: {lv.get('owner') or '—'}<br>"
-                  f"Voltage: {lv.get('highest_kv') or '—'} kV<br>"
-                  f"Distance: {lv_dist}{lv_status}"],
-            hovertemplate='%{text}<extra></extra>',
-            name=f"Lower-kV Substation ({lv['substation_name']})",
-        ))
-
-    # 4. PNODE — solid cyan circle, drawn after substations so it's visible
+    # 3. PNODE — solid cyan circle
     if node_to_analyze:
         n_lat = node_to_analyze.get('lat')
         n_lon = node_to_analyze.get('lon')
@@ -812,7 +778,7 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
                 name=f'PNODE: {pnode_id}',
             ))
 
-    # 5. Selected facility — red, on top of everything
+    # 4. Selected facility — red
     sel_size = max(18, _dot_size(sel_facility['total_ghg']))
     fig.add_trace(go.Scattermapbox(
         lat=[fac_lat], lon=[fac_lon],
@@ -825,6 +791,39 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
         hovertemplate='%{text}<extra></extra>',
         name='⬤ Selected facility',
     ))
+
+    # 5. Highlighted nearest substations — drawn last so they're always on top
+    if nearest_substation and nearest_substation.get('lat') is not None:
+        ns = nearest_substation
+        ns_dist = _fmt_dist_r(ns['dist_km']) if ns.get('dist_km') is not None else '—'
+        ns_status = f' ⚠ {ns["status"]}' if ns.get('status') and ns['status'] != 'Operational' else ''
+        fig.add_trace(go.Scattermapbox(
+            lat=[ns['lat']], lon=[ns['lon']],
+            mode='markers',
+            marker=dict(size=16, color='#e377c2'),
+            text=[f"<b>◉ Nearest ≥110kV Substation: {ns['substation_name']}</b><br>"
+                  f"Owner: {ns.get('owner') or '—'}<br>"
+                  f"Voltage: {ns.get('highest_kv') or '—'} kV<br>"
+                  f"Distance: {ns_dist}{ns_status}"],
+            hovertemplate='%{text}<extra></extra>',
+            name=f"≥110kV Substation ({ns['substation_name']})",
+        ))
+
+    if nearest_lv_substation and nearest_lv_substation.get('lat') is not None:
+        lv = nearest_lv_substation
+        lv_dist = _fmt_dist_r(lv['dist_km']) if lv.get('dist_km') is not None else '—'
+        lv_status = f' ⚠ {lv["status"]}' if lv.get('status') and lv['status'] != 'Operational' else ''
+        fig.add_trace(go.Scattermapbox(
+            lat=[lv['lat']], lon=[lv['lon']],
+            mode='markers',
+            marker=dict(size=13, color='#9467bd'),
+            text=[f"<b>◉ Closer lower-voltage Substation: {lv['substation_name']}</b><br>"
+                  f"Owner: {lv.get('owner') or '—'}<br>"
+                  f"Voltage: {lv.get('highest_kv') or '—'} kV<br>"
+                  f"Distance: {lv_dist}{lv_status}"],
+            hovertemplate='%{text}<extra></extra>',
+            name=f"Lower-kV Substation ({lv['substation_name']})",
+        ))
 
     fig.update_layout(
         mapbox_style='carto-positron',
