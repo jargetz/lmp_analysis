@@ -1033,6 +1033,13 @@ def render_node_map_tab():
         i = int(dists.argmin())
         return valid[i], float(dists[i])
 
+    def _fmt_dist(dist_km):
+        """Format a distance nicely — avoids showing '0.0 mi' for very short distances."""
+        dist_mi = dist_km * 0.621371
+        if dist_km < 0.05:
+            return f"< 0.1 mi ({dist_km * 1000:.0f} m)"
+        return f"{dist_mi:.1f} mi ({dist_km:.1f} km)"
+
     def _nearest_sub(sdf, flat, flon):
         if sdf.empty:
             return None
@@ -1288,8 +1295,7 @@ def render_node_map_tab():
                     )
                     ns_line = (
                         f'  \n**≥110kV Substation:** {ns["substation_name"]} '
-                        f'({ns["owner"]}{kv_s}, {ns["dist_km"]*0.621371:.1f} mi '
-                        f'({ns["dist_km"]:.1f} km)){status_warn}'
+                        f'({ns["owner"]}{kv_s}, {_fmt_dist(ns["dist_km"])}){status_warn}'
                     )
                     if (nearest_any_sub
                             and nearest_any_sub['substation_name'] != ns['substation_name']
@@ -1298,8 +1304,7 @@ def render_node_map_tab():
                         lv_kv = f', {lv["highest_kv"]}' if lv.get('highest_kv') else ''
                         closer_lv_line = (
                             f'  \n⚠ Closer lower-voltage: {lv["substation_name"]} '
-                            f'({lv["owner"]}{lv_kv}, {lv["dist_km"]*0.621371:.1f} mi '
-                            f'({lv["dist_km"]:.1f} km))'
+                            f'({lv["owner"]}{lv_kv}, {_fmt_dist(lv["dist_km"])})'
                         )
                 with st.expander("Facility Details"):
                     st.markdown(
@@ -1320,39 +1325,31 @@ def render_node_map_tab():
                     "Report radius (miles)", min_value=10, max_value=100,
                     value=50, step=5, key="report_radius_slider"
                 )
-                if st.button("Generate Shareable Report", key="gen_report_btn",
-                             use_container_width=True):
-                    with st.spinner("Building report…"):
-                        try:
-                            html_report = generate_facility_report_html(
-                                sel_facility=sel_facility,
-                                all_facilities=facilities_all,
-                                node_to_analyze=node_to_analyze,
-                                node_price=node_price,
-                                dlap_name=dlap_name,
-                                dlap_bx_avg=dlap_bx_avg,
-                                dlap_allhours=dlap_allhours if dlap_bx_avg else None,
-                                bx_label=bx_label_str,
-                                period_label=period_label,
-                                radius_miles=report_radius,
-                            )
-                            safe_name = (sel_facility['facility']
-                                         .replace(' ', '_')
-                                         .replace('/', '-')[:50])
-                            st.session_state['_report_html'] = html_report
-                            st.session_state['_report_filename'] = f"{safe_name}_report.html"
-                        except Exception as exc:
-                            st.error(f"Could not generate report: {exc}")
+                safe_name = (sel_facility['facility']
+                             .replace(' ', '_').replace('/', '-')[:50])
 
-                if st.session_state.get('_report_html'):
-                    st.download_button(
-                        label="⬇ Download Report (.html)",
-                        data=st.session_state['_report_html'].encode('utf-8'),
-                        file_name=st.session_state.get('_report_filename', 'facility_report.html'),
-                        mime='text/html',
-                        use_container_width=True,
-                        key="download_report_btn",
-                    )
+                def _build_report():
+                    return generate_facility_report_html(
+                        sel_facility=sel_facility,
+                        all_facilities=facilities_all,
+                        node_to_analyze=node_to_analyze,
+                        node_price=node_price,
+                        dlap_name=dlap_name,
+                        dlap_bx_avg=dlap_bx_avg,
+                        dlap_allhours=dlap_allhours,
+                        bx_label=bx_label_str,
+                        period_label=period_label,
+                        radius_miles=report_radius,
+                    ).encode('utf-8')
+
+                st.download_button(
+                    label="⬇ Download Shareable Report (.html)",
+                    data=_build_report,
+                    file_name=f"{safe_name}_report.html",
+                    mime='text/html',
+                    use_container_width=True,
+                    key="download_report_btn",
+                )
 
 
 def render_methodology_tab():
