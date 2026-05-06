@@ -639,7 +639,8 @@ conn.close()
 def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
                                    node_price, dlap_name, dlap_bx_avg, dlap_allhours,
                                    bx_label, period_label, radius_miles=50,
-                                   nearest_substation=None, nearest_lv_substation=None):
+                                   nearest_substation=None, nearest_lv_substation=None,
+                                   substations_df=None):
     """Build a self-contained interactive HTML report for a facility and its nearby peers."""
     import plotly.io as pio
     import math
@@ -680,14 +681,18 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
     # ── Build Plotly map ──────────────────────────────────────────────────────
     fig = go.Figure()
 
+    # Size all facilities on the same scale (selected + peers together)
+    max_ghg = max((f['total_ghg'] for f in nearby), default=1) or 1
+    def _dot_size(ghg):
+        return max(8, min(44, 8 + 36 * (ghg / max_ghg)))
+
     if peers:
-        max_ghg = max(f['total_ghg'] for f in peers) or 1
-        sizes = [max(8, min(40, 8 + 32 * (f['total_ghg'] / max_ghg))) for f in peers]
+        peer_sizes = [_dot_size(f['total_ghg']) for f in peers]
         fig.add_trace(go.Scattermapbox(
             lat=[f['lat'] for f in peers],
             lon=[f['lon'] for f in peers],
             mode='markers',
-            marker=dict(size=sizes, color='#FF8C00', opacity=0.8),
+            marker=dict(size=peer_sizes, color='#FF8C00', opacity=0.8),
             text=[
                 f"<b>{f['facility']}</b><br>"
                 f"{f['primary_sector']}<br>"
@@ -700,11 +705,12 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
             name=f'Nearby facilities (within {radius_miles} mi)',
         ))
 
-    # Selected facility — large red marker, drawn last so it sits on top
+    # Selected facility — red, sized on same scale as peers
+    sel_size = max(18, _dot_size(sel_facility['total_ghg']))
     fig.add_trace(go.Scattermapbox(
         lat=[fac_lat], lon=[fac_lon],
         mode='markers',
-        marker=dict(size=26, color='#e8000d'),
+        marker=dict(size=sel_size, color='#e8000d'),
         text=[f"<b>▶ {sel_facility['facility']}</b><br>"
               f"{sel_facility['primary_sector']}<br>"
               f"{sel_facility['city']}, {sel_facility['county']} Co.<br>"
@@ -731,7 +737,54 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
                 name=f'Nearest PNODE ({pnode_id})',
             ))
 
-    # Nearest ≥110kV substation — pink circle
+    # All substations within radius — small grey dots drawn first (underneath)
+    if substations_df is not None and not substations_df.empty:
+        radius_km = radius_miles * 1.60934
+        ns_name = nearest_substation.get('substation_name') if nearest_substation else None
+        lv_name = nearest_lv_substation.get('substation_name') if nearest_lv_substation else None
+        sub_in_radius = []
+        for _, row in substations_df.iterrows():
+            rlat, rlon = row.get('lat'), row.get('lon')
+            if rlat is None or rlon is None:
+                continue
+            dphi = math.radians(float(rlat) - fac_lat)
+            dlam = math.radians(float(rlon) - fac_lon)
+            a = (math.sin(dphi / 2) ** 2
+                 + math.cos(math.radians(fac_lat)) * math.cos(math.radians(float(rlat)))
+                 * math.sin(dlam / 2) ** 2)
+            d = 2 * R * math.asin(math.sqrt(min(a, 1.0)))
+            if d <= radius_km:
+                sname = str(row.get('Substation_Name') or '')
+                # skip the highlighted nearest ones — they'll be drawn on top
+                if sname == ns_name or sname == lv_name:
+                    continue
+                sub_in_radius.append({
+                    'lat': float(rlat), 'lon': float(rlon),
+                    'name': sname,
+                    'owner': str(row.get('Owner') or '—'),
+                    'kv': str(row.get('Highest_kV') or '—'),
+                    'status': str(row.get('Status') or ''),
+                    'dist_mi': d * 0.621371,
+                })
+        if sub_in_radius:
+            fig.add_trace(go.Scattermapbox(
+                lat=[s['lat'] for s in sub_in_radius],
+                lon=[s['lon'] for s in sub_in_radius],
+                mode='markers',
+                marker=dict(size=8, color='#a0a0a0', opacity=0.7),
+                text=[
+                    f"<b>{s['name']}</b><br>"
+                    f"Owner: {s['owner']}<br>"
+                    f"Voltage: {s['kv']} kV<br>"
+                    f"Distance: {s['dist_mi']:.1f} mi"
+                    + (f"<br>⚠ {s['status']}" if s['status'] and s['status'] != 'Operational' else '')
+                    for s in sub_in_radius
+                ],
+                hovertemplate='%{text}<extra></extra>',
+                name=f'Substations within {radius_miles} mi ({len(sub_in_radius)})',
+            ))
+
+    # Nearest ≥110kV substation — pink circle (drawn on top of grey layer)
     if nearest_substation and nearest_substation.get('lat') is not None:
         ns = nearest_substation
         ns_dist = _fmt_dist_r(ns['dist_km']) if ns.get('dist_km') is not None else '—'
@@ -1409,6 +1462,7 @@ def render_node_map_tab():
                         radius_miles=report_radius,
                         nearest_substation=nearest_substation,
                         nearest_lv_substation=nearest_lv_sub,
+                        substations_df=sub_df if not sub_df.empty else None,
                     ).encode('utf-8')
                 except Exception as _exc:
                     _report_bytes = None
