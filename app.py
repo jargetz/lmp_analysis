@@ -700,17 +700,17 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
             name=f'Nearby facilities (within {radius_miles} mi)',
         ))
 
-    # Selected facility — gold star
+    # Selected facility — large red marker, drawn last so it sits on top
     fig.add_trace(go.Scattermapbox(
         lat=[fac_lat], lon=[fac_lon],
         mode='markers',
-        marker=dict(size=22, color='gold', symbol='star'),
-        text=[f"<b>★ {sel_facility['facility']}</b><br>"
+        marker=dict(size=26, color='#e8000d'),
+        text=[f"<b>▶ {sel_facility['facility']}</b><br>"
               f"{sel_facility['primary_sector']}<br>"
               f"{sel_facility['city']}, {sel_facility['county']} Co.<br>"
               f"GHG: {sel_facility['total_ghg']:,.0f} MT CO₂e"],
         hovertemplate='%{text}<extra></extra>',
-        name='Selected facility',
+        name='⬤ Selected facility',
     ))
 
     # Nearest CAISO pricing node (PNODE) — cyan diamond
@@ -1390,7 +1390,7 @@ def render_node_map_tab():
                 st.divider()
                 report_radius = st.slider(
                     "Report radius (miles)", min_value=10, max_value=100,
-                    value=50, step=5, key="report_radius_slider"
+                    value=25, step=5, key="report_radius_slider"
                 )
                 safe_name = (sel_facility['facility']
                              .replace(' ', '_').replace('/', '-')[:50])
