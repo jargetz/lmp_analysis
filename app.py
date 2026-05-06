@@ -1328,8 +1328,8 @@ def render_node_map_tab():
                 safe_name = (sel_facility['facility']
                              .replace(' ', '_').replace('/', '-')[:50])
 
-                def _build_report():
-                    return generate_facility_report_html(
+                try:
+                    _report_bytes = generate_facility_report_html(
                         sel_facility=sel_facility,
                         all_facilities=facilities_all,
                         node_to_analyze=node_to_analyze,
@@ -1341,15 +1341,19 @@ def render_node_map_tab():
                         period_label=period_label,
                         radius_miles=report_radius,
                     ).encode('utf-8')
+                except Exception as _exc:
+                    _report_bytes = None
+                    st.error(f"Could not build report: {_exc}")
 
-                st.download_button(
-                    label="⬇ Download Shareable Report (.html)",
-                    data=_build_report,
-                    file_name=f"{safe_name}_report.html",
-                    mime='text/html',
-                    use_container_width=True,
-                    key="download_report_btn",
-                )
+                if _report_bytes:
+                    st.download_button(
+                        label="⬇ Download Shareable Report (.html)",
+                        data=_report_bytes,
+                        file_name=f"{safe_name}_report.html",
+                        mime='text/html',
+                        use_container_width=True,
+                        key="download_report_btn",
+                    )
 
 
 def render_methodology_tab():
