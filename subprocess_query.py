@@ -101,7 +101,7 @@ def run_query():
             result = run_multi_sql(conn, queries)
         elif query_type == 'node_map':
             bx = int(sys.argv[2])
-            year = int(sys.argv[3])
+            year = sys.argv[3]  # may be 'last12' or an int string
             time_period = sys.argv[4]
             month = int(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5] else None
             result = get_node_map_data(conn, bx, year, time_period, month)
@@ -117,12 +117,12 @@ def run_query():
         elif query_type == 'node_bx_single':
             node_name = sys.argv[2]
             bx = int(sys.argv[3])
-            year = int(sys.argv[4])
+            year = sys.argv[4]  # may be 'last12' or an int string
             result = get_node_bx_single(conn, node_name, bx, year)
         elif query_type == 'dlap_zone_bx':
             zone = sys.argv[2]
             bx = int(sys.argv[3])
-            year = int(sys.argv[4])
+            year = sys.argv[4]  # may be 'last12' or an int string
             time_period = sys.argv[5] if len(sys.argv) > 5 else 'Full Year'
             month = int(sys.argv[6]) if len(sys.argv) > 6 and sys.argv[6] else None
             result = get_dlap_zone_bx(conn, zone, bx, year, time_period, month)
@@ -739,22 +739,69 @@ def get_facility_emissions(conn):
     ]
 
 
+def _get_last12_months():
+    """Return list of (year, month) for the 12 complete calendar months ending last month."""
+    from datetime import date
+    today = date.today()
+    pairs = []
+    for i in range(12, 0, -1):
+        m = today.month - i
+        y = today.year
+        while m <= 0:
+            m += 12
+            y -= 1
+        pairs.append((y, m))
+    return pairs
+
+
 def get_node_bx_single(conn, node_name, bx, year):
-    """Get monthly B-hour averages for a single node from node_bx_monthly_summary."""
+    """Get monthly B-hour averages for a single node from node_bx_monthly_summary.
+
+    year: int-string (e.g. '2026') or 'last12' for a rolling 12-month window.
+    Always returns rolling_3yr: prior-3-year average per calendar month (empty for last12).
+    """
     import re
     if not re.match(r'^[A-Za-z0-9_\-\.]+$', str(node_name)):
         return {'success': False, 'error': 'Invalid node name'}
 
     col = f'b{bx}_avg'
+    MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
+    if str(year) == 'last12':
+        pairs = _get_last12_months()
+        conditions = ' OR '.join([f'(year = {y} AND month = {m})' for y, m in pairs])
+        query = f"""
+            SELECT year, month, {col} AS avg_price, days_count
+            FROM node_bx_monthly_summary
+            WHERE node = ?
+              AND ({conditions})
+            ORDER BY year, month
+        """
+        result = conn.execute(query, [node_name]).fetchdf()
+        if result.empty:
+            return {'success': False, 'error': f'No last-12-month data for {node_name}'}
+        rows = [
+            {
+                'month': int(r['month']),
+                'year': int(r['year']),
+                'label': f"{MONTH_SHORT[int(r['month'])-1]} '{str(int(r['year']))[2:]}",
+                'avg_price': float(r['avg_price']) if pd.notna(r['avg_price']) else None,
+                'days_count': int(r['days_count'])
+            }
+            for _, r in result.iterrows()
+        ]
+        return {'success': True, 'node': node_name, 'bx': bx, 'year': 'last12',
+                'monthly': rows, 'rolling_3yr': []}
+
+    int_year = int(year)
     query = f"""
         SELECT month, {col} AS avg_price, days_count
         FROM node_bx_monthly_summary
         WHERE node = ?
-          AND year = {int(year)}
+          AND year = {int_year}
         ORDER BY month
     """
     result = conn.execute(query, [node_name]).fetchdf()
-
     if result.empty:
         return {'success': False, 'error': f'No monthly summary data for {node_name} in {year}'}
 
@@ -766,7 +813,28 @@ def get_node_bx_single(conn, node_name, bx, year):
         }
         for _, r in result.iterrows()
     ]
-    return {'success': True, 'node': node_name, 'bx': bx, 'year': year, 'monthly': rows}
+
+    prior_years = [int_year - 1, int_year - 2, int_year - 3]
+    rolling_query = f"""
+        SELECT month,
+               SUM({col} * days_count) / SUM(days_count) AS avg_price
+        FROM node_bx_monthly_summary
+        WHERE node = ?
+          AND year IN ({','.join(str(y) for y in prior_years)})
+        GROUP BY month
+        ORDER BY month
+    """
+    rolling_result = conn.execute(rolling_query, [node_name]).fetchdf()
+    rolling_3yr = [
+        {
+            'month': int(r['month']),
+            'avg_price': float(r['avg_price']) if pd.notna(r['avg_price']) else None,
+        }
+        for _, r in rolling_result.iterrows()
+    ] if not rolling_result.empty else []
+
+    return {'success': True, 'node': node_name, 'bx': bx, 'year': year,
+            'monthly': rows, 'rolling_3yr': rolling_3yr}
 
 
 def get_dlap_zone_bx(conn, zone, bx, year, time_period='Full Year', month=None):
@@ -789,9 +857,16 @@ def get_dlap_zone_bx(conn, zone, bx, year, time_period='Full Year', month=None):
 
     dlap_node = zone_to_dlap[zone]
 
-    period_filter = f"EXTRACT(YEAR FROM opr_dt) = {int(year)}"
-    if time_period == 'Monthly' and month:
-        period_filter += f" AND EXTRACT(MONTH FROM opr_dt) = {int(month)}"
+    if str(year) == 'last12':
+        pairs = _get_last12_months()
+        period_filter = '(' + ' OR '.join(
+            [f"(EXTRACT(YEAR FROM opr_dt) = {y} AND EXTRACT(MONTH FROM opr_dt) = {m})"
+             for y, m in pairs]
+        ) + ')'
+    else:
+        period_filter = f"EXTRACT(YEAR FROM opr_dt) = {int(year)}"
+        if time_period == 'Monthly' and month:
+            period_filter += f" AND EXTRACT(MONTH FROM opr_dt) = {int(month)}"
 
     bx_query = f"""
         WITH ranked AS (
@@ -837,7 +912,18 @@ def get_node_map_data(conn, bx, year, time_period, month=None):
     """Get node BX prices with coordinates for the geographic map."""
     col = f'b{bx}_avg'
 
-    if time_period == 'Monthly' and month:
+    if str(year) == 'last12':
+        pairs = _get_last12_months()
+        conditions = ' OR '.join([f'(year = {y} AND month = {m})' for y, m in pairs])
+        price_sql = f"""
+            SELECT node,
+                   SUM({col} * days_count) / SUM(days_count) AS avg_price,
+                   SUM(days_count) AS days_count
+            FROM node_bx_monthly_summary
+            WHERE ({conditions})
+            GROUP BY node
+        """
+    elif time_period == 'Monthly' and month:
         price_sql = f"""
             SELECT node,
                    {col} AS avg_price,

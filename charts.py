@@ -1439,20 +1439,27 @@ def create_node_analysis_chart(
     node_name: str,
     bx_label: str,
     zone: str,
-    zone_avg_price: float = None
+    zone_avg_price: float = None,
+    rolling_3yr: list = None,
+    missing_months: list = None,
 ) -> go.Figure:
     """
     Compact monthly bar chart for the right-panel node analysis.
 
     Bars are green when avg_price <= zone_avg_price, red when above.
     A dashed horizontal line marks the zone average if provided.
+    An orange dashed line shows the 3-year prior average when rolling_3yr is provided.
+    Grey placeholder bars appear for months listed in missing_months (partial-year mode).
+    Last-12-month mode is detected when items in monthly_data contain a 'label' key.
 
     Args:
-        monthly_data: List of {month, avg_price, days_count} dicts
+        monthly_data: List of {month, avg_price, days_count} dicts; last12 items also have 'label' and 'year'
         node_name: Node identifier shown in title
         bx_label: e.g. "B8"
         zone: Zone name (for reference line label)
         zone_avg_price: Optional zone-wide average to draw as baseline
+        rolling_3yr: Optional list of {month, avg_price} for the prior-3-year average line
+        missing_months: Optional list of month ints (1-12) to render as grey placeholders
 
     Returns:
         Plotly Figure
@@ -1460,29 +1467,59 @@ def create_node_analysis_chart(
     if not monthly_data:
         return create_empty_chart("No monthly data available")
 
-    month_names_short = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-    months = [d['month'] for d in monthly_data]
-    prices = [d['avg_price'] for d in monthly_data]
-    labels = [month_names_short[m - 1] if 1 <= m <= 12 else str(m) for m in months]
+    is_last12 = any('label' in d for d in monthly_data)
+
+    if is_last12:
+        labels = [d.get('label', MONTH_SHORT[d['month'] - 1]) for d in monthly_data]
+        prices = [d['avg_price'] for d in monthly_data]
+        months = [d['month'] for d in monthly_data]
+        missing_bar_x, missing_bar_y = [], []
+    else:
+        data_by_month = {d['month']: d['avg_price'] for d in monthly_data}
+        missing_set = set(missing_months or [])
+        labels = MONTH_SHORT.copy()
+        months = list(range(1, 13))
+        prices = [data_by_month.get(m) for m in months]
+        valid_prices = [p for p in prices if p is not None]
+        token_h = max(valid_prices) * 0.04 if valid_prices else 1.0
+        missing_bar_x = [MONTH_SHORT[m - 1] for m in sorted(missing_set) if 1 <= m <= 12]
+        missing_bar_y = [token_h] * len(missing_bar_x)
 
     if zone_avg_price is not None:
         bar_colors = [
-            '#2ca02c' if (p is not None and p <= zone_avg_price) else '#d62728'
+            '#2ca02c' if (p is not None and p <= zone_avg_price) else
+            '#d62728' if p is not None else
+            'rgba(0,0,0,0)'
             for p in prices
         ]
     else:
-        bar_colors = ['#1f77b4'] * len(prices)
+        bar_colors = ['#1f77b4' if p is not None else 'rgba(0,0,0,0)' for p in prices]
 
     fig = go.Figure()
+
     fig.add_trace(go.Bar(
         x=labels,
         y=prices,
         marker_color=bar_colors,
         hovertemplate='%{x}: $%{y:.2f}/MWh<extra></extra>',
         name=bx_label,
+        showlegend=False,
     ))
+
+    if missing_bar_x:
+        fig.add_trace(go.Bar(
+            x=missing_bar_x,
+            y=missing_bar_y,
+            marker_color='rgba(180,180,180,0.35)',
+            marker_line_color='rgba(140,140,140,0.5)',
+            marker_line_width=1,
+            hovertemplate='%{x}: No data yet<extra></extra>',
+            name='No data',
+            showlegend=False,
+        ))
 
     if zone_avg_price is not None:
         fig.add_hline(
@@ -1495,15 +1532,42 @@ def create_node_analysis_chart(
             annotation_font_size=10,
         )
 
+    show_legend = False
+    if rolling_3yr:
+        rolling_by_month = {d['month']: d['avg_price'] for d in rolling_3yr
+                            if d['avg_price'] is not None}
+        if is_last12:
+            roll_pts = [(d.get('label', MONTH_SHORT[d['month'] - 1]), rolling_by_month[d['month']])
+                        for d in monthly_data if d['month'] in rolling_by_month]
+        else:
+            roll_pts = [(MONTH_SHORT[m - 1], rolling_by_month[m])
+                        for m in range(1, 13) if m in rolling_by_month]
+
+        if roll_pts:
+            roll_x, roll_y = zip(*roll_pts)
+            fig.add_trace(go.Scatter(
+                x=list(roll_x),
+                y=list(roll_y),
+                mode='lines+markers',
+                line=dict(color='#ff7f0e', dash='dot', width=2),
+                marker=dict(size=5, color='#ff7f0e'),
+                hovertemplate='%{x} 3yr avg: $%{y:.2f}/MWh<extra></extra>',
+                name='3yr avg',
+            ))
+            show_legend = True
+
     short_name = node_name[:32] + '…' if len(node_name) > 32 else node_name
+    period_suffix = ' · Last 12 Months' if is_last12 else ''
     fig.update_layout(
-        title=dict(text=f'{bx_label} Monthly — {short_name}', font=dict(size=12)),
+        title=dict(text=f'{bx_label} Monthly — {short_name}{period_suffix}', font=dict(size=12)),
         xaxis_title='',
         yaxis_title='$/MWh',
         margin=dict(l=45, r=15, t=45, b=35),
         height=280,
-        showlegend=False,
+        showlegend=show_legend,
+        legend=dict(orientation='h', y=1.18, x=1, xanchor='right', font=dict(size=9)),
         hovermode='x unified',
+        barmode='overlay',
     )
     return fig
 

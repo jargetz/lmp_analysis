@@ -1017,10 +1017,16 @@ def render_node_map_tab():
 
     available_years = st.session_state.get('node_years',
                         st.session_state.get('parquet_years', [2024, 2025]))
-    map_years = [y for y in available_years]
-    if not map_years:
-        map_years = [2024]
-    default_year_idx = map_years.index(2025) if 2025 in map_years else 0
+    map_years_int = [y for y in available_years]
+    if not map_years_int:
+        map_years_int = [2024]
+    map_years = ["Last 12 months"] + map_years_int
+    if 2025 in map_years_int:
+        default_year_idx = map_years.index(2025)
+    elif map_years_int:
+        default_year_idx = 1
+    else:
+        default_year_idx = 0
 
     with map_col3:
         map_year = st.selectbox(
@@ -1030,14 +1036,43 @@ def render_node_map_tab():
             key="map_year",
         )
 
+    # Resolve sentinel: subprocess queries use 'last12', not the display string
+    _map_year_param = 'last12' if map_year == 'Last 12 months' else str(map_year)
+    # Last 12 months mode is always Annual (no per-month breakdown across two years)
+    if map_year == 'Last 12 months' and map_time_period == 'Monthly':
+        map_time_period = 'Annual'
+
     map_month = None
-    if map_time_period == "Monthly":
+    if map_time_period == "Monthly" and map_year != "Last 12 months":
         with map_col4:
             map_month_name = st.selectbox("Month", options=month_options, key="map_month")
             map_month = month_options.index(map_month_name) + 1
 
     with map_col5:
         color_by = st.radio("Color by", options=["Zone", "Price"], key="map_color_by", horizontal=True)
+
+    # ── Partial-year / Last-12 callouts ───────────────────────────────────────
+    from datetime import date as _date
+    _today = _date.today()
+    if map_year == 'Last 12 months':
+        _l12_start = _today.replace(year=_today.year - 1).strftime('%b %Y')
+        _l12_end_m = _today.month - 1 if _today.month > 1 else 12
+        _l12_end_y = _today.year if _today.month > 1 else _today.year - 1
+        _l12_end = _date(_l12_end_y, _l12_end_m, 1).strftime('%b %Y')
+        st.info(
+            f"📅 **Last 12 months** — rolling window {_l12_start} → {_l12_end}. "
+            "Smooths year-to-year swings; good for baseline comparison."
+        )
+    elif isinstance(map_year, int) and map_year == _today.year:
+        _missing = [m for m in range(_today.month + 1, 13)]
+        _missing_names = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+        _missing_str = ", ".join(_missing_names[m - 1] for m in _missing)
+        st.warning(
+            f"⚠️ **Partial year** — data through {_today.strftime('%B %d, %Y')}. "
+            + (f"Missing: {_missing_str}. " if _missing_str else "")
+            + "Late summer and fall (Aug–Oct) typically have **higher** prices in CA due to heat and hydro scarcity — "
+            "annual averages will read lower than a full year."
+        )
 
     # ── Facility show/filter controls (full width) ────────────────────────────
     fac_col1, fac_col2 = st.columns([1, 2])
@@ -1080,14 +1115,16 @@ def render_node_map_tab():
         facilities_to_show = [f for f in facilities_to_show if f.get('cap_and_trade') == 'Yes']
 
     # ── PNODE price data fetch ────────────────────────────────────────────────
-    period_label = str(map_year) if map_time_period == "Annual" else f"{month_options[map_month - 1]} {map_year}"
-    cache_key = f"node_map_{map_bx}_{map_year}_{map_time_period}_{map_month}"
+    period_label = map_year if map_year == 'Last 12 months' else (
+        str(map_year) if map_time_period == "Annual" else f"{month_options[map_month - 1]} {map_year}"
+    )
+    cache_key = f"node_map_{map_bx}_{_map_year_param}_{map_time_period}_{map_month}"
 
     if cache_key not in st.session_state:
         with st.spinner(f"Loading B{map_bx} node map for {period_label}…"):
             cmd = [
                 'python3', 'subprocess_query.py', 'node_map',
-                str(map_bx), str(map_year), map_time_period,
+                str(map_bx), _map_year_param, map_time_period,
                 str(map_month) if map_month else '',
             ]
             try:
@@ -1310,10 +1347,10 @@ def render_node_map_tab():
             dlap_allhours = None
             dlap_name = None
             if node_zone in ('NP15', 'SP15', 'ZP26'):
-                dlap_cache_key = f"dlap_{node_zone}_8_{map_year}_{map_time_period}_{map_month}"
+                dlap_cache_key = f"dlap_{node_zone}_8_{_map_year_param}_{map_time_period}_{map_month}"
                 if dlap_cache_key not in st.session_state:
                     cmd = ['python3', 'subprocess_query.py', 'dlap_zone_bx',
-                           node_zone, '8', str(map_year),
+                           node_zone, '8', _map_year_param,
                            map_time_period,
                            str(map_month) if map_month else '']
                     try:
@@ -1335,10 +1372,10 @@ def render_node_map_tab():
 
                     node_b8_price = node_price if map_bx == 8 else None
                     if map_bx != 8:
-                        node_b8_key = f"node_b8_{pnode_id}_{map_year}_{map_time_period}_{map_month}"
+                        node_b8_key = f"node_b8_{pnode_id}_{_map_year_param}_{map_time_period}_{map_month}"
                         if node_b8_key not in st.session_state:
                             cmd_b8 = ['python3', 'subprocess_query.py', 'node_bx_single',
-                                      pnode_id, '8', str(map_year)]
+                                      pnode_id, '8', _map_year_param]
                             try:
                                 proc_b8 = subprocess.run(cmd_b8, capture_output=True, text=True, timeout=30)
                                 if proc_b8.returncode == 0 and proc_b8.stdout.strip():
@@ -1379,11 +1416,11 @@ def render_node_map_tab():
                         )
 
             # Monthly BX trend chart
-            monthly_cache_key = f"node_monthly_{pnode_id}_{map_bx}_{map_year}"
+            monthly_cache_key = f"node_monthly_{pnode_id}_{map_bx}_{_map_year_param}"
             if monthly_cache_key not in st.session_state:
                 with st.spinner("Loading monthly data…"):
                     cmd = ['python3', 'subprocess_query.py', 'node_bx_single',
-                           pnode_id, str(map_bx), str(map_year)]
+                           pnode_id, str(map_bx), _map_year_param]
                     try:
                         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
                         if proc.returncode == 0 and proc.stdout.strip():
@@ -1397,12 +1434,20 @@ def render_node_map_tab():
 
             monthly_result = st.session_state.get(monthly_cache_key, {})
             if monthly_result.get('success') and monthly_result.get('monthly'):
+                # Compute missing months for partial-year warning (grey placeholders)
+                _chart_missing = None
+                if isinstance(map_year, int) and map_year == _today.year:
+                    _data_months = {d['month'] for d in monthly_result['monthly']}
+                    _chart_missing = [m for m in range(1, 13) if m not in _data_months]
+
                 analysis_fig = create_node_analysis_chart(
                     monthly_data=monthly_result['monthly'],
                     node_name=pnode_id,
                     bx_label=bx_label_str,
                     zone=dlap_name if dlap_name else node_zone,
                     zone_avg_price=dlap_bx_avg,
+                    rolling_3yr=monthly_result.get('rolling_3yr') or None,
+                    missing_months=_chart_missing,
                 )
                 st.plotly_chart(analysis_fig, use_container_width=True)
             else:
