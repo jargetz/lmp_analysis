@@ -35,7 +35,7 @@ def step1_convert_zips_to_parquet():
     from s3_data_loader import S3DataLoader
     loader = S3DataLoader()
 
-    files = loader.list_caiso_files(prefix='2026_raw/')
+    files = loader.list_caiso_files(prefix='2026_july5_raw/')
     if not files:
         logger.error("No DAM_LMP ZIP files found in s3://[bucket]/2026_raw/")
         logger.error("Make sure you uploaded the bulk ZIPs to that folder.")

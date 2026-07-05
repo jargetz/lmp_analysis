@@ -26,6 +26,10 @@ args = "Streamlit App"
 task = "workflow.run"
 args = "Node Data Migration"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "2026 Data Migration"
+
 [[workflows.workflow]]
 name = "Streamlit App"
 author = "agent"
@@ -45,6 +49,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python3 -u migrate_2021_23_direct.py 2021 2022 2023 && python3 -u rebuild_node_bx_summary.py 2021 2022 2023"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "2026 Data Migration"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python3 -u process_2026_raw.py"
 
 [workflows.workflow.metadata]
 outputType = "console"
