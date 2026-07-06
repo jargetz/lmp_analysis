@@ -599,48 +599,105 @@ def create_node_month_hour_heatmap(
 def create_zone_bx_trend_chart(
     zone_data: dict,
     bx_type: int,
-    title: str = None
+    title: str = None,
+    rolling_3yr: dict = None,
+    year: int = None,
 ) -> go.Figure:
     """
     Create a multi-line chart showing BX price trend for all zones.
-    
+
     Args:
         zone_data: Dict with zone names as keys, each containing list of
                    {'date': date, 'avg_price': float} dicts
         bx_type: BX value (4-10) for title
         title: Custom title (default: "B{X} Price Trend by Zone")
-        
+        rolling_3yr: Optional dict {zone: {month_int: avg_price}} for overlay
+        year: Year being displayed (used to reconstruct dates for overlay)
+
     Returns:
         Plotly Figure object
     """
+    import datetime as _dt
     fig = go.Figure()
     title = title or f'B{bx_type} Price Trend by Zone'
-    
+
     colors = {
         'NP15': '#1f77b4',
         'SP15': '#ff7f0e',
         'ZP26': '#2ca02c',
         'Overall': '#7f7f7f'
     }
-    
+
     zone_order = ['NP15', 'SP15', 'ZP26', 'Overall']
-    
+
     for zone in zone_order:
         data = zone_data.get(zone, [])
         if data:
             dates = [d['date'] for d in data]
             prices = [d['avg_price'] for d in data]
-            
+
             fig.add_trace(go.Scatter(
                 x=dates,
                 y=prices,
                 mode='lines+markers',
                 name=zone,
+                legendgroup=zone,
                 line=dict(color=colors.get(zone, '#000000'), width=2),
                 marker=dict(size=6),
                 hovertemplate=f'{zone}: $%{{y:.2f}}/MWh<extra></extra>'
             ))
-    
+
+    # 3-year rolling average overlay (dashed, same colour per zone)
+    if rolling_3yr:
+        # Derive display year from existing data if not passed explicitly
+        _year = year
+        if not _year:
+            for zone in zone_order:
+                data = zone_data.get(zone, [])
+                if data:
+                    try:
+                        _year = pd.to_datetime(data[0]['date']).year
+                        break
+                    except Exception:
+                        pass
+
+        for zone in zone_order:
+            r3 = rolling_3yr.get(zone, {})
+            if not r3:
+                continue
+            # Build month→date mapping from existing zone data first
+            month_to_date = {}
+            for d in zone_data.get(zone, []):
+                try:
+                    dt = pd.to_datetime(d['date'])
+                    month_to_date[dt.month] = d['date']
+                except Exception:
+                    pass
+            # Fall back: construct dates from year for months not in existing data
+            if _year:
+                for m in r3:
+                    if m not in month_to_date:
+                        month_to_date[m] = _dt.date(_year, m, 1)
+
+            x_vals = []
+            y_vals = []
+            for m in sorted(r3):
+                if m in month_to_date:
+                    x_vals.append(month_to_date[m])
+                    y_vals.append(r3[m])
+
+            if x_vals:
+                fig.add_trace(go.Scatter(
+                    x=x_vals,
+                    y=y_vals,
+                    mode='lines',
+                    name=f'{zone} 3yr avg',
+                    legendgroup=f'{zone}_r3yr',
+                    line=dict(color=colors.get(zone, '#000000'), width=1.5, dash='dot'),
+                    opacity=0.55,
+                    hovertemplate=f'{zone} 3yr avg: $%{{y:.2f}}/MWh<extra></extra>',
+                ))
+
     fig.update_layout(
         title=title,
         xaxis_title='Date',
@@ -649,7 +706,7 @@ def create_zone_bx_trend_chart(
         margin=dict(l=40, r=40, t=50, b=40),
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
     )
-    
+
     return fig
 
 

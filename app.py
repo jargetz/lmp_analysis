@@ -458,9 +458,26 @@ def render_dashboard_tab():
                     aggregation='monthly'
                 )
             zone_trend_data = st.session_state[bx_trend_cache_key]
-            
+
+            # Rolling 3yr average overlay
+            rolling3yr_cache_key = f"bx_trend_zone_r3yr_{selected_bx}_{selected_year}"
+            if rolling3yr_cache_key not in st.session_state:
+                try:
+                    st.session_state[rolling3yr_cache_key] = bx_calc.get_bx_trend_rolling3yr_by_zone(
+                        bx=selected_bx,
+                        year=selected_year
+                    )
+                except Exception:
+                    st.session_state[rolling3yr_cache_key] = {}
+            rolling3yr_data = st.session_state.get(rolling3yr_cache_key) or {}
+
             if any(zone_trend_data.get(z) for z in ['NP15', 'SP15', 'ZP26', 'Overall']):
-                fig = create_zone_bx_trend_chart(zone_trend_data, bx_type=selected_bx)
+                fig = create_zone_bx_trend_chart(
+                    zone_trend_data,
+                    bx_type=selected_bx,
+                    rolling_3yr=rolling3yr_data or None,
+                    year=selected_year,
+                )
                 st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'zone_B{selected_bx}_trend_{selected_year}'}})
         
         elif analysis_mode == "By Node Selection":

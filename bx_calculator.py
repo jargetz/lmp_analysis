@@ -587,6 +587,49 @@ class BXCalculator:
         
         return results
 
+    def get_bx_trend_rolling3yr_by_zone(
+        self,
+        bx: int,
+        year: int
+    ) -> Dict[str, Dict[int, float]]:
+        """
+        Return the 3-year monthly average for each zone, based on the 3 prior
+        complete calendar years.
+
+        Returns: {zone: {month_int: avg_price}}  e.g. {'NP15': {1: 45.2, 2: 38.1, ...}}
+        """
+        bx = int(bx)
+        year = int(year)
+        prior_years = [year - 3, year - 2, year - 1]
+        year_list = ', '.join(str(y) for y in prior_years if y >= 2021)
+        if not year_list:
+            return {}
+        query = f"""
+            SELECT
+                node as zone,
+                EXTRACT(MONTH FROM opr_dt)::INTEGER as month,
+                AVG(avg_price) as avg_price
+            FROM bx_daily_summary
+            WHERE bx_type = {bx}
+              AND node IN ('NP15', 'SP15', 'ZP26', 'Overall')
+              AND EXTRACT(YEAR FROM opr_dt) IN ({year_list})
+            GROUP BY node, EXTRACT(MONTH FROM opr_dt)
+            ORDER BY node, month
+        """
+        try:
+            data = self._md_query(query)
+            results = {}
+            for row in data:
+                z = row.get('zone')
+                m = int(row.get('month', 0))
+                p = row.get('avg_price')
+                if z and m and p is not None:
+                    results.setdefault(z, {})[m] = float(p)
+            return results
+        except Exception as e:
+            self.logger.error(f"Error getting rolling 3yr BX trend: {e}")
+            return {}
+
     def get_available_years(self) -> List[int]:
         """Get list of years with zone data available from MotherDuck."""
         try:
