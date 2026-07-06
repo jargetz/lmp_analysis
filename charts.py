@@ -415,43 +415,60 @@ def apply_dark_theme(fig: go.Figure) -> go.Figure:
 
 def create_node_hourly_chart(
     hourly_data: list,
-    title: str = 'Hourly Price (Selected Nodes)'
+    title: str = 'Hourly Price (Selected Nodes)',
+    rolling_3yr: list = None,
 ) -> go.Figure:
     """
     Create a line chart showing hourly prices for selected nodes.
-    
+
     Args:
         hourly_data: List of {'hour': int, 'avg_price': float} dicts
         title: Chart title
-        
+        rolling_3yr: Optional list of {'hour': int, 'avg_price': float} for the
+                     3-year average overlay
+
     Returns:
         Plotly Figure object
     """
     if not hourly_data:
         return create_empty_chart("No hourly data available")
-    
+
     hours = [d['hour'] for d in hourly_data]
     prices = [d['avg_price'] for d in hourly_data]
-    
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=hours,
         y=prices,
         mode='lines',
-        name='Average',
+        name='Selected year',
         line=dict(color='#1f77b4', width=2),
         hovertemplate='Hour %{x}: $%{y:.2f}/MWh<extra></extra>'
     ))
-    
+
+    if rolling_3yr:
+        r3_hours = [d['hour'] for d in rolling_3yr]
+        r3_prices = [d['avg_price'] for d in rolling_3yr]
+        fig.add_trace(go.Scatter(
+            x=r3_hours,
+            y=r3_prices,
+            mode='lines',
+            name='3yr avg',
+            line=dict(color='#1f77b4', width=1.5, dash='dot'),
+            opacity=0.55,
+            hovertemplate='Hour %{x} 3yr avg: $%{y:.2f}/MWh<extra></extra>'
+        ))
+
     fig.update_layout(
         title=title,
         xaxis_title='Hour of Day',
         yaxis_title='Price ($/MWh)',
         hovermode='x unified',
         xaxis=dict(tickmode='linear', dtick=2, range=[-0.5, 23.5]),
-        margin=dict(l=40, r=40, t=50, b=40)
+        margin=dict(l=40, r=40, t=50, b=40),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
     )
-    
+
     return fig
 
 

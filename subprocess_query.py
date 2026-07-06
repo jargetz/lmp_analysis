@@ -131,6 +131,10 @@ def run_query():
             nodes = json.loads(sys.argv[3])
             year = int(sys.argv[4])
             result = get_node_bx_rolling3yr(conn, bx, nodes, year)
+        elif query_type == 'hourly_rolling3yr':
+            nodes = json.loads(sys.argv[2])
+            year = int(sys.argv[3])
+            result = get_hourly_rolling3yr(conn, nodes, year)
         else:
             result = {'error': f'Unknown query type: {query_type}'}
         
@@ -239,6 +243,29 @@ def get_hourly_averages(conn, nodes, year):
     
     result = conn.execute(query).fetchdf()
     return [{'hour': int(r['hour']), 'avg_price': float(r['avg_price'])} for _, r in result.iterrows()]
+
+def get_hourly_rolling3yr(conn, nodes, year):
+    """Get 3-year rolling average hourly prices (prior 3 complete years combined)."""
+    import re
+    nodes = [n for n in nodes if re.match(r'^[A-Za-z0-9_\-\.]+$', n)]
+    if not nodes:
+        return []
+    year = int(year)
+    prior_years = [y for y in [year - 3, year - 2, year - 1] if y >= 2021]
+    if not prior_years:
+        return []
+    node_list = ', '.join(f"'{n}'" for n in nodes)
+    year_list = ', '.join(str(y) for y in prior_years)
+    query = f"""
+        SELECT opr_hr as hour, AVG(mw) as avg_price
+        FROM node_hourly_lmp
+        WHERE node IN ({node_list}) AND opr_hr <= 24
+          AND EXTRACT(YEAR FROM opr_dt) IN ({year_list})
+        GROUP BY opr_hr ORDER BY opr_hr
+    """
+    result = conn.execute(query).fetchdf()
+    return [{'hour': int(r['hour']), 'avg_price': float(r['avg_price'])} for _, r in result.iterrows()]
+
 
 def get_heatmap_data(conn, nodes, year):
     """Get month x hour heatmap data"""

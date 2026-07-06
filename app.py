@@ -584,8 +584,11 @@ conn.close()
                     with st.spinner("Loading average hourly prices..."):
                         hourly_result = run_subprocess_query('hourly_avg', selected_nodes, selected_year, timeout=90)
                     
+                    hourly_r3yr_result = run_subprocess_query('hourly_rolling3yr', selected_nodes, selected_year, timeout=60)
+                    _hourly_r3yr = hourly_r3yr_result if isinstance(hourly_r3yr_result, list) and hourly_r3yr_result else None
+
                     if isinstance(hourly_result, list) and hourly_result:
-                        fig = create_node_hourly_chart(hourly_result, title=f'Hourly Price Average ({len(selected_nodes)} nodes, {selected_year})')
+                        fig = create_node_hourly_chart(hourly_result, title=f'Hourly Price Average ({len(selected_nodes)} nodes, {selected_year})', rolling_3yr=_hourly_r3yr)
                         st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_hourly_avg_{selected_year}'}})
                     elif isinstance(hourly_result, dict) and hourly_result.get('error'):
                         st.warning(f"Hourly chart unavailable: {hourly_result.get('error')}")
