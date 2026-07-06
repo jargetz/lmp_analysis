@@ -135,6 +135,10 @@ def run_query():
             nodes = json.loads(sys.argv[2])
             year = int(sys.argv[3])
             result = get_hourly_rolling3yr(conn, nodes, year)
+        elif query_type == 'hourly_avg_combined':
+            nodes = json.loads(sys.argv[2])
+            year = sys.argv[3]  # may be 'last12' or int string
+            result = get_hourly_avg_combined(conn, nodes, year)
         else:
             result = {'error': f'Unknown query type: {query_type}'}
         
@@ -142,6 +146,94 @@ def run_query():
         print(json.dumps(result))
     except Exception as e:
         print(json.dumps({'error': str(e)}))
+
+def _build_date_filter(year):
+    """Return a SQL WHERE fragment for opr_dt filtering.
+
+    For an integer year:  EXTRACT(YEAR FROM opr_dt) = {year}
+    For 'last12':         (year, month) IN ((y1,m1), ...) using _get_last12_months()
+    """
+    if str(year) == 'last12':
+        pairs = _get_last12_months()
+        pairs_sql = ', '.join(f'({y}, {m})' for y, m in pairs)
+        return (f'(EXTRACT(YEAR FROM opr_dt)::INT, '
+                f'EXTRACT(MONTH FROM opr_dt)::INT) IN ({pairs_sql})')
+    return f'EXTRACT(YEAR FROM opr_dt) = {int(year)}'
+
+
+def get_hourly_avg_combined(conn, nodes, year):
+    """Single-scan query: current-year hourly avg + 3-year rolling avg with per-year breakdown.
+
+    Returns {'current': [...], 'rolling3yr': [...]} where each list has the standard
+    {'hour', 'avg_price'} format (rolling3yr also has y1/y2/y3 breakdown fields).
+    """
+    import re
+    nodes = [n for n in nodes if re.match(r'^[A-Za-z0-9_\-\.]+$', n)]
+    if not nodes:
+        return {'current': [], 'rolling3yr': []}
+
+    node_list = ', '.join(f"'{n}'" for n in nodes)
+
+    if str(year) == 'last12':
+        # For last12 we only fetch current window; skip rolling3yr (no natural baseline)
+        pairs = _get_last12_months()
+        pairs_sql = ', '.join(f'({y}, {m})' for y, m in pairs)
+        date_filter = (f'(EXTRACT(YEAR FROM opr_dt)::INT, '
+                       f'EXTRACT(MONTH FROM opr_dt)::INT) IN ({pairs_sql})')
+        query = f"""
+            SELECT opr_hr as hour, AVG(mw) as avg_price
+            FROM node_hourly_lmp
+            WHERE node IN ({node_list}) AND opr_hr <= 24 AND {date_filter}
+            GROUP BY opr_hr ORDER BY opr_hr
+        """
+        result = conn.execute(query).fetchdf()
+        current = [{'hour': int(r['hour']), 'avg_price': float(r['avg_price'])} for _, r in result.iterrows()]
+        return {'current': current, 'rolling3yr': []}
+
+    year = int(year)
+    prior_years = [y for y in [year - 3, year - 2, year - 1] if y >= 2021]
+    while len(prior_years) < 3:
+        prior_years.insert(0, None)
+    y1, y2, y3 = prior_years
+    all_years = [y for y in [y1, y2, y3, year] if y is not None]
+    all_years_sql = ', '.join(str(y) for y in all_years)
+
+    def _case(y):
+        return f"AVG(CASE WHEN EXTRACT(YEAR FROM opr_dt) = {y} THEN mw END)" if y else "NULL"
+
+    query = f"""
+        SELECT opr_hr as hour,
+               AVG(CASE WHEN EXTRACT(YEAR FROM opr_dt) = {year} THEN mw END) as current_avg,
+               AVG(CASE WHEN EXTRACT(YEAR FROM opr_dt) IN ({', '.join(str(y) for y in [y for y in [y1,y2,y3] if y])}) THEN mw END) as rolling_avg,
+               {_case(y1)} as y1,
+               {_case(y2)} as y2,
+               {_case(y3)} as y3
+        FROM node_hourly_lmp
+        WHERE node IN ({node_list}) AND opr_hr <= 24
+          AND EXTRACT(YEAR FROM opr_dt) IN ({all_years_sql})
+        GROUP BY opr_hr ORDER BY opr_hr
+    """
+    result = conn.execute(query).fetchdf()
+
+    def _fv(v):
+        return float(v) if v is not None and v == v else None
+
+    current, rolling3yr = [], []
+    for _, r in result.iterrows():
+        h = int(r['hour'])
+        cur = _fv(r.get('current_avg'))
+        rol = _fv(r.get('rolling_avg'))
+        if cur is not None:
+            current.append({'hour': h, 'avg_price': cur})
+        if rol is not None:
+            rolling3yr.append({
+                'hour': h, 'avg_price': rol,
+                'y1_label': str(y1) if y1 else None, 'y1': _fv(r.get('y1')),
+                'y2_label': str(y2) if y2 else None, 'y2': _fv(r.get('y2')),
+                'y3_label': str(y3) if y3 else None, 'y3': _fv(r.get('y3')),
+            })
+    return {'current': current, 'rolling3yr': rolling3yr}
+
 
 def get_node_bx(conn, bx, nodes, year):
     """Compute BX average for nodes. Uses pre-computed monthly summary when available,
@@ -154,13 +246,23 @@ def get_node_bx(conn, bx, nodes, year):
     col = f'b{bx}_avg'
     node_list = ', '.join(f"'{n}'" for n in nodes)
 
+    if str(year) == 'last12':
+        pairs = _get_last12_months()
+        pairs_sql = ', '.join(f"({y}, {m})" for y, m in pairs)
+        month_filter = f"(year, month) IN ({pairs_sql})"
+        dt_filter = (f"(EXTRACT(YEAR FROM opr_dt)::INT, "
+                     f"EXTRACT(MONTH FROM opr_dt)::INT) IN ({pairs_sql})")
+    else:
+        month_filter = f"year = {int(year)}"
+        dt_filter = f"EXTRACT(YEAR FROM opr_dt) = {int(year)}"
+
     summary_query = f"""
         SELECT node,
                SUM({col} * days_count) / SUM(days_count) AS avg_price,
                SUM(days_count) AS day_count
         FROM node_bx_monthly_summary
         WHERE node IN ({node_list})
-          AND year = {int(year)}
+          AND {month_filter}
         GROUP BY node
     """
     result = conn.execute(summary_query).fetchdf()
@@ -172,7 +274,7 @@ def get_node_bx(conn, bx, nodes, year):
                     ROW_NUMBER() OVER (PARTITION BY opr_dt, node ORDER BY mw ASC) AS rn
                 FROM node_hourly_lmp
                 WHERE node IN ({node_list})
-                  AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
+                  AND {dt_filter}
                   AND opr_hr BETWEEN 1 AND 24
             ),
             daily_bx AS (
@@ -198,7 +300,7 @@ def get_node_bx(conn, bx, nodes, year):
                 ROW_NUMBER() OVER (PARTITION BY opr_dt, node ORDER BY mw ASC) as rn
             FROM node_hourly_lmp
             WHERE node IN ({node_list})
-              AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
+              AND {dt_filter}
               AND opr_hr <= 24
         )
         SELECT node, opr_hr, COUNT(*) as cnt
@@ -237,7 +339,7 @@ def get_hourly_averages(conn, nodes, year):
         SELECT opr_hr as hour, AVG(mw) as avg_price
         FROM node_hourly_lmp
         WHERE node IN ({node_list}) AND opr_hr <= 24
-          AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
+          AND {_build_date_filter(year)}
         GROUP BY opr_hr ORDER BY opr_hr
     """
     
@@ -306,7 +408,7 @@ def get_heatmap_data(conn, nodes, year):
         SELECT EXTRACT(MONTH FROM opr_dt)::INT as month, opr_hr as hour, AVG(mw) as avg_price
         FROM node_hourly_lmp
         WHERE node IN ({node_list}) AND opr_hr <= 24
-          AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
+          AND {_build_date_filter(year)}
         GROUP BY 1, opr_hr ORDER BY 1, opr_hr
     """
     
@@ -329,7 +431,7 @@ def get_bx_trend(conn, bx, nodes, year):
                 ROW_NUMBER() OVER (PARTITION BY opr_dt, node ORDER BY mw ASC) as rn
             FROM node_hourly_lmp
             WHERE node IN ({node_list})
-              AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
+              AND {_build_date_filter(year)}
               AND opr_hr <= 24
         ),
         daily_bx AS (
@@ -354,6 +456,8 @@ def get_node_bx_rolling3yr(conn, bx, nodes, year):
     import re
     nodes = [n for n in nodes if re.match(r'^[A-Za-z0-9_\-\.]+$', n)]
     if not nodes:
+        return {}
+    if str(year) == 'last12':
         return {}
     bx = int(bx)
     year = int(year)
@@ -399,7 +503,7 @@ def get_box_stats(conn, bx, nodes, year):
                 ROW_NUMBER() OVER (PARTITION BY opr_dt, node ORDER BY mw ASC) as rn
             FROM node_hourly_lmp
             WHERE node IN ({node_list})
-              AND EXTRACT(YEAR FROM opr_dt) = {int(year)}
+              AND {_build_date_filter(year)}
               AND opr_hr <= 24
         ),
         daily_bx AS (

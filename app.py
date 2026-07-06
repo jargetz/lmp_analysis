@@ -331,13 +331,14 @@ def render_dashboard_tab():
             
             if time_period == "Annual":
                 # Preserve year selection when nodes change
+                year_options = ["Last 12 months"] + parquet_years
                 default_year_idx = 0
-                if 'last_node_year' in st.session_state and st.session_state.last_node_year in parquet_years:
-                    default_year_idx = parquet_years.index(st.session_state.last_node_year)
+                if 'last_node_year' in st.session_state and st.session_state.last_node_year in year_options:
+                    default_year_idx = year_options.index(st.session_state.last_node_year)
                 
                 selected_year = st.selectbox(
                     "Year",
-                    options=parquet_years,
+                    options=year_options,
                     index=default_year_idx,
                     key="node_annual_year",
                     help="Select year (only years with node data)"
@@ -531,9 +532,15 @@ conn.close()
                     except Exception as e:
                         return {'success': False, 'error': str(e)}
                 
+                # Map display year to query param ('last12' or integer string)
+                _node_year_param = 'last12' if selected_year == 'Last 12 months' else str(selected_year)
+                
+                if _node_year_param == 'last12':
+                    st.info("Showing data for the last 12 complete calendar months.")
+
                 # Fetch BX stats using subprocess
                 with st.spinner(f"Computing B{selected_bx} for {len(selected_nodes)} node(s)... (this may take 10-30 seconds)"):
-                    bx_stats = run_subprocess_query('node_bx', selected_bx, selected_nodes, selected_year, timeout=90)
+                    bx_stats = run_subprocess_query('node_bx', selected_bx, selected_nodes, _node_year_param, timeout=90)
                 
                 if bx_stats.get('error'):
                     st.error(f"Query error: {bx_stats.get('error')}")
@@ -565,10 +572,10 @@ conn.close()
                     
                     # Node price heatmap (month x hour) - using subprocess
                     with st.spinner("Loading price heatmap..."):
-                        heatmap_result = run_subprocess_query('heatmap', selected_nodes, selected_year, timeout=90)
+                        heatmap_result = run_subprocess_query('heatmap', selected_nodes, _node_year_param, timeout=90)
                     
                     if isinstance(heatmap_result, list) and heatmap_result:
-                        fig, clipping_info = create_node_month_hour_heatmap(heatmap_result, title=f'Price Heatmap ({len(selected_nodes)} nodes, {selected_year})')
+                        fig, clipping_info = create_node_month_hour_heatmap(heatmap_result, title=f'Price Heatmap ({len(selected_nodes)} nodes, {period_label})')
                         st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_heatmap_{selected_year}'}})
                         if clipping_info:
                             parts = []
@@ -580,17 +587,18 @@ conn.close()
                     elif isinstance(heatmap_result, dict) and heatmap_result.get('error'):
                         st.warning(f"Heatmap unavailable: {heatmap_result.get('error')}")
                     
-                    # Hourly price chart - AVERAGE across all nodes - using subprocess
+                    # Hourly price chart - single combined query for current avg + 3yr overlay
                     with st.spinner("Loading average hourly prices..."):
-                        hourly_result = run_subprocess_query('hourly_avg', selected_nodes, selected_year, timeout=90)
+                        _hourly_combined = run_subprocess_query('hourly_avg_combined', selected_nodes, _node_year_param, timeout=90)
                     
-                    hourly_r3yr_result = run_subprocess_query('hourly_rolling3yr', selected_nodes, selected_year, timeout=60)
-                    _hourly_r3yr = hourly_r3yr_result if isinstance(hourly_r3yr_result, list) and hourly_r3yr_result else None
+                    hourly_result = _hourly_combined.get('current', []) if isinstance(_hourly_combined, dict) else []
+                    _hourly_r3yr_raw = _hourly_combined.get('rolling3yr', []) if isinstance(_hourly_combined, dict) else []
+                    _hourly_r3yr = _hourly_r3yr_raw if _hourly_r3yr_raw else None
 
                     if isinstance(hourly_result, list) and hourly_result:
-                        show_hourly_r3yr = st.checkbox("Show 3-year average", value=True, key="show_hourly_r3yr")
-                        fig = create_node_hourly_chart(hourly_result, title=f'Hourly Price Average ({len(selected_nodes)} nodes, {selected_year})', rolling_3yr=_hourly_r3yr if show_hourly_r3yr else None)
-                        st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_hourly_avg_{selected_year}'}})
+                        show_hourly_r3yr = st.checkbox("Show 3-year average", value=True, key="show_hourly_r3yr", disabled=(_hourly_r3yr is None))
+                        fig = create_node_hourly_chart(hourly_result, title=f'Hourly Price Average ({len(selected_nodes)} nodes, {period_label})', rolling_3yr=_hourly_r3yr if show_hourly_r3yr else None)
+                        st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_hourly_avg_{period_label}'}})
                     elif isinstance(hourly_result, dict) and hourly_result.get('error'):
                         st.warning(f"Hourly chart unavailable: {hourly_result.get('error')}")
                     else:
@@ -599,14 +607,17 @@ conn.close()
                     # BX trend chart - using subprocess (limit to 10 nodes for performance)
                     if len(selected_nodes) <= 10:
                         with st.spinner("Loading BX trend per node... (this may take 30-60 seconds)"):
-                            trend_result = run_subprocess_query('bx_trend', selected_bx, selected_nodes, selected_year, timeout=120)
-                            rolling3yr_result = run_subprocess_query('node_bx_rolling3yr', selected_bx, selected_nodes, selected_year, timeout=30)
+                            trend_result = run_subprocess_query('bx_trend', selected_bx, selected_nodes, _node_year_param, timeout=120)
+                            if _node_year_param != 'last12':
+                                rolling3yr_result = run_subprocess_query('node_bx_rolling3yr', selected_bx, selected_nodes, _node_year_param, timeout=30)
+                            else:
+                                rolling3yr_result = {}
 
                         if isinstance(trend_result, list) and trend_result:
                             _r3yr = rolling3yr_result if isinstance(rolling3yr_result, dict) and not rolling3yr_result.get('error') else None
-                            show_trend_r3yr = st.checkbox("Show 3-year average", value=True, key="show_trend_r3yr")
+                            show_trend_r3yr = st.checkbox("Show 3-year average", value=True, key="show_trend_r3yr", disabled=(_r3yr is None))
                             fig, trend_clipping = create_node_bx_trend_chart(trend_result, bx_type=selected_bx, rolling_3yr=_r3yr if show_trend_r3yr else None, year=selected_year)
-                            st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_B{selected_bx}_trend_{selected_year}'}})
+                            st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_B{selected_bx}_trend_{period_label}'}})
                             if trend_clipping:
                                 parts = []
                                 if trend_clipping['clipped_below']:
@@ -622,10 +633,10 @@ conn.close()
                     # Box plot for node comparison (outlier detection)
                     if len(selected_nodes) > 1:
                         with st.spinner("Loading price distribution..."):
-                            box_result = run_subprocess_query('box_stats', selected_bx, selected_nodes, selected_year, timeout=90)
+                            box_result = run_subprocess_query('box_stats', selected_bx, selected_nodes, _node_year_param, timeout=90)
                         
                         if isinstance(box_result, list) and box_result:
-                            fig, box_clipping = create_node_box_plot(box_result, title=f'B{selected_bx} Price Distribution by Node ({selected_year})')
+                            fig, box_clipping = create_node_box_plot(box_result, title=f'B{selected_bx} Price Distribution by Node ({period_label})')
                             st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_B{selected_bx}_distribution_{selected_year}'}})
                             if box_clipping:
                                 st.caption(f"Minimum values capped at ${box_clipping['floor']:.0f}/MWh for {box_clipping['clipped_count']} node(s) — actual worst min: ${box_clipping['worst_original_min']:.0f}/MWh.")
