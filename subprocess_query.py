@@ -126,6 +126,11 @@ def run_query():
             time_period = sys.argv[5] if len(sys.argv) > 5 else 'Full Year'
             month = int(sys.argv[6]) if len(sys.argv) > 6 and sys.argv[6] else None
             result = get_dlap_zone_bx(conn, zone, bx, year, time_period, month)
+        elif query_type == 'node_bx_rolling3yr':
+            bx = int(sys.argv[2])
+            nodes = json.loads(sys.argv[3])
+            year = int(sys.argv[4])
+            result = get_node_bx_rolling3yr(conn, bx, nodes, year)
         else:
             result = {'error': f'Unknown query type: {query_type}'}
         
@@ -286,6 +291,45 @@ def get_bx_trend(conn, bx, nodes, year):
     result = conn.execute(query).fetchdf()
     return [{'date': str(r['date']), 'node': r['node'], 'avg_price': float(r['avg_price'])} 
             for _, r in result.iterrows()]
+
+def get_node_bx_rolling3yr(conn, bx, nodes, year):
+    """Get days-weighted 3-year rolling average monthly BX price per node.
+
+    Queries node_bx_monthly_summary for the 3 prior complete years and
+    returns {node: {month_int: avg_price}}.
+    """
+    import re
+    nodes = [n for n in nodes if re.match(r'^[A-Za-z0-9_\-\.]+$', n)]
+    if not nodes:
+        return {}
+    bx = int(bx)
+    year = int(year)
+    col = f'b{bx}_avg'
+    node_list = ', '.join(f"'{n}'" for n in nodes)
+    prior_years = [y for y in [year - 3, year - 2, year - 1] if y >= 2021]
+    if not prior_years:
+        return {}
+    year_list = ', '.join(str(y) for y in prior_years)
+    query = f"""
+        SELECT node, month,
+               SUM({col} * days_count) / NULLIF(SUM(days_count), 0) AS avg_price
+        FROM node_bx_monthly_summary
+        WHERE node IN ({node_list})
+          AND year IN ({year_list})
+          AND {col} IS NOT NULL
+        GROUP BY node, month
+        ORDER BY node, month
+    """
+    result = conn.execute(query).fetchdf()
+    out = {}
+    for _, r in result.iterrows():
+        n = str(r['node'])
+        m = int(r['month'])
+        p = r['avg_price']
+        if p is not None and not (p != p):  # skip NaN
+            out.setdefault(n, {})[m] = float(p)
+    return out
+
 
 def get_box_stats(conn, bx, nodes, year):
     """Get summary statistics for box plot"""

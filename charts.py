@@ -713,7 +713,9 @@ def create_zone_bx_trend_chart(
 def create_node_bx_trend_chart(
     node_data,
     bx_type: int,
-    title: str = None
+    title: str = None,
+    rolling_3yr: dict = None,
+    year: int = None,
 ) -> go.Figure:
     """
     Create a multi-line chart showing BX price trend for each node.
@@ -756,6 +758,55 @@ def create_node_bx_trend_chart(
                 hovertemplate=f'{node}: $%{{y:.2f}}/MWh<extra></extra>'
             ))
     
+    # 3-year rolling average overlay — one dashed monthly point per node
+    if rolling_3yr:
+        import datetime as _dt
+        # Derive display year from data if not passed
+        _year = year
+        if not _year:
+            for _nd, _nd_data in node_data.items():
+                if _nd_data:
+                    try:
+                        _year = pd.to_datetime(_nd_data[0]['date']).year
+                        break
+                    except Exception:
+                        pass
+
+        # Collect node colours so overlay matches the main trace colour
+        _palette = [
+            '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+            '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+        ]
+        _node_colour = {n: _palette[i % len(_palette)] for i, n in enumerate(node_data.keys())}
+
+        for node, r3 in rolling_3yr.items():
+            if not r3:
+                continue
+            x_vals, y_vals = [], []
+            for m in sorted(r3):
+                if _year:
+                    try:
+                        x_vals.append(_dt.date(_year, m, 1))
+                        y_vals.append(r3[m])
+                    except Exception:
+                        pass
+            if x_vals:
+                colour = _node_colour.get(node, '#888888')
+                fig.add_trace(go.Scatter(
+                    x=x_vals,
+                    y=y_vals,
+                    mode='lines+markers',
+                    name=f'{node} 3yr avg',
+                    line=dict(color=colour, width=1.5, dash='dot'),
+                    marker=dict(size=5, symbol='circle-open'),
+                    opacity=0.6,
+                    hovertemplate=f'{node} 3yr avg: $%{{y:.2f}}/MWh<extra></extra>',
+                    legendgroup=f'{node}_r3yr',
+                ))
+        all_prices.extend(
+            v for r3 in rolling_3yr.values() for v in r3.values()
+        )
+
     import numpy as np
     clipping_info = None
     yaxis_range = None
@@ -772,7 +823,7 @@ def create_node_bx_trend_chart(
                 'actual_min': round(actual_min, 2), 'actual_max': round(actual_max, 2),
                 'clipped_below': actual_min < p2, 'clipped_above': actual_max > p98
             }
-    
+
     layout_kwargs = dict(
         title=title,
         xaxis_title='Date',
@@ -785,7 +836,7 @@ def create_node_bx_trend_chart(
     if yaxis_range:
         layout_kwargs['yaxis'] = dict(range=yaxis_range)
     fig.update_layout(**layout_kwargs)
-    
+
     return fig, clipping_info
 
 

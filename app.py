@@ -596,9 +596,11 @@ conn.close()
                     if len(selected_nodes) <= 10:
                         with st.spinner("Loading BX trend per node... (this may take 30-60 seconds)"):
                             trend_result = run_subprocess_query('bx_trend', selected_bx, selected_nodes, selected_year, timeout=120)
-                        
+                            rolling3yr_result = run_subprocess_query('node_bx_rolling3yr', selected_bx, selected_nodes, selected_year, timeout=30)
+
                         if isinstance(trend_result, list) and trend_result:
-                            fig, trend_clipping = create_node_bx_trend_chart(trend_result, bx_type=selected_bx)
+                            _r3yr = rolling3yr_result if isinstance(rolling3yr_result, dict) and not rolling3yr_result.get('error') else None
+                            fig, trend_clipping = create_node_bx_trend_chart(trend_result, bx_type=selected_bx, rolling_3yr=_r3yr, year=selected_year)
                             st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_B{selected_bx}_trend_{selected_year}'}})
                             if trend_clipping:
                                 parts = []
