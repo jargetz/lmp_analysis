@@ -485,6 +485,7 @@ def create_node_hourly_chart(
         yaxis_title='Price ($/MWh)',
         hovermode='x unified',
         xaxis=dict(tickmode='linear', dtick=2, range=[-0.5, 23.5]),
+        yaxis=dict(rangemode='tozero'),
         margin=dict(l=40, r=40, t=50, b=40),
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
     )
