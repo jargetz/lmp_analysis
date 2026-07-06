@@ -245,7 +245,11 @@ def get_hourly_averages(conn, nodes, year):
     return [{'hour': int(r['hour']), 'avg_price': float(r['avg_price'])} for _, r in result.iterrows()]
 
 def get_hourly_rolling3yr(conn, nodes, year):
-    """Get 3-year rolling average hourly prices (prior 3 complete years combined)."""
+    """Get 3-year rolling average hourly prices with per-year breakdown.
+
+    Returns list of {'hour', 'avg_price', 'y1_label', 'y1', 'y2_label', 'y2', 'y3_label', 'y3'}.
+    Fields y1/y2/y3 may be None if a year has no data.
+    """
     import re
     nodes = [n for n in nodes if re.match(r'^[A-Za-z0-9_\-\.]+$', n)]
     if not nodes:
@@ -254,17 +258,39 @@ def get_hourly_rolling3yr(conn, nodes, year):
     prior_years = [y for y in [year - 3, year - 2, year - 1] if y >= 2021]
     if not prior_years:
         return []
+    # Pad to always have 3 slots (use None sentinel for missing)
+    while len(prior_years) < 3:
+        prior_years.insert(0, None)
+    y1, y2, y3 = prior_years
     node_list = ', '.join(f"'{n}'" for n in nodes)
-    year_list = ', '.join(str(y) for y in prior_years)
+    year_list = ', '.join(str(y) for y in prior_years if y is not None)
+    y1_case = f"AVG(CASE WHEN EXTRACT(YEAR FROM opr_dt) = {y1} THEN mw END)" if y1 else "NULL"
+    y2_case = f"AVG(CASE WHEN EXTRACT(YEAR FROM opr_dt) = {y2} THEN mw END)" if y2 else "NULL"
+    y3_case = f"AVG(CASE WHEN EXTRACT(YEAR FROM opr_dt) = {y3} THEN mw END)" if y3 else "NULL"
     query = f"""
-        SELECT opr_hr as hour, AVG(mw) as avg_price
+        SELECT opr_hr as hour,
+               AVG(mw) as avg_price,
+               {y1_case} as y1,
+               {y2_case} as y2,
+               {y3_case} as y3
         FROM node_hourly_lmp
         WHERE node IN ({node_list}) AND opr_hr <= 24
           AND EXTRACT(YEAR FROM opr_dt) IN ({year_list})
         GROUP BY opr_hr ORDER BY opr_hr
     """
     result = conn.execute(query).fetchdf()
-    return [{'hour': int(r['hour']), 'avg_price': float(r['avg_price'])} for _, r in result.iterrows()]
+    rows = []
+    for _, r in result.iterrows():
+        def _f(v):
+            return float(v) if v is not None and v == v else None  # skip NaN
+        rows.append({
+            'hour': int(r['hour']),
+            'avg_price': float(r['avg_price']),
+            'y1_label': str(y1) if y1 else None, 'y1': _f(r.get('y1')),
+            'y2_label': str(y2) if y2 else None, 'y2': _f(r.get('y2')),
+            'y3_label': str(y3) if y3 else None, 'y3': _f(r.get('y3')),
+        })
+    return rows
 
 
 def get_heatmap_data(conn, nodes, year):

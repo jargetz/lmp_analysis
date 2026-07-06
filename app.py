@@ -588,7 +588,8 @@ conn.close()
                     _hourly_r3yr = hourly_r3yr_result if isinstance(hourly_r3yr_result, list) and hourly_r3yr_result else None
 
                     if isinstance(hourly_result, list) and hourly_result:
-                        fig = create_node_hourly_chart(hourly_result, title=f'Hourly Price Average ({len(selected_nodes)} nodes, {selected_year})', rolling_3yr=_hourly_r3yr)
+                        show_hourly_r3yr = st.checkbox("Show 3-year average", value=True, key="show_hourly_r3yr")
+                        fig = create_node_hourly_chart(hourly_result, title=f'Hourly Price Average ({len(selected_nodes)} nodes, {selected_year})', rolling_3yr=_hourly_r3yr if show_hourly_r3yr else None)
                         st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_hourly_avg_{selected_year}'}})
                     elif isinstance(hourly_result, dict) and hourly_result.get('error'):
                         st.warning(f"Hourly chart unavailable: {hourly_result.get('error')}")
@@ -603,7 +604,8 @@ conn.close()
 
                         if isinstance(trend_result, list) and trend_result:
                             _r3yr = rolling3yr_result if isinstance(rolling3yr_result, dict) and not rolling3yr_result.get('error') else None
-                            fig, trend_clipping = create_node_bx_trend_chart(trend_result, bx_type=selected_bx, rolling_3yr=_r3yr, year=selected_year)
+                            show_trend_r3yr = st.checkbox("Show 3-year average", value=True, key="show_trend_r3yr")
+                            fig, trend_clipping = create_node_bx_trend_chart(trend_result, bx_type=selected_bx, rolling_3yr=_r3yr if show_trend_r3yr else None, year=selected_year)
                             st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_B{selected_bx}_trend_{selected_year}'}})
                             if trend_clipping:
                                 parts = []

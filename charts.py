@@ -449,6 +449,25 @@ def create_node_hourly_chart(
     if rolling_3yr:
         r3_hours = [d['hour'] for d in rolling_3yr]
         r3_prices = [d['avg_price'] for d in rolling_3yr]
+        # Build customdata rows: [y1_label, y1, y2_label, y2, y3_label, y3]
+        customdata = []
+        for d in rolling_3yr:
+            customdata.append([
+                d.get('y1_label') or '', d.get('y1'),
+                d.get('y2_label') or '', d.get('y2'),
+                d.get('y3_label') or '', d.get('y3'),
+            ])
+        has_breakdown = any(d.get('y1_label') for d in rolling_3yr)
+        if has_breakdown:
+            hover = (
+                'Hour %{x} — 3yr avg: <b>$%{y:.2f}/MWh</b><br>'
+                '%{customdata[0]}: $%{customdata[1]:.2f}/MWh<br>'
+                '%{customdata[2]}: $%{customdata[3]:.2f}/MWh<br>'
+                '%{customdata[4]}: $%{customdata[5]:.2f}/MWh'
+                '<extra></extra>'
+            )
+        else:
+            hover = 'Hour %{x} 3yr avg: $%{y:.2f}/MWh<extra></extra>'
         fig.add_trace(go.Scatter(
             x=r3_hours,
             y=r3_prices,
@@ -456,7 +475,8 @@ def create_node_hourly_chart(
             name='3yr avg',
             line=dict(color='#1f77b4', width=1.5, dash='dot'),
             opacity=0.55,
-            hovertemplate='Hour %{x} 3yr avg: $%{y:.2f}/MWh<extra></extra>'
+            customdata=customdata if has_breakdown else None,
+            hovertemplate=hover,
         ))
 
     fig.update_layout(
