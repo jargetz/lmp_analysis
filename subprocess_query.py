@@ -41,20 +41,20 @@ def run_query():
         if query_type == 'node_bx':
             bx = int(sys.argv[2])
             nodes = json.loads(sys.argv[3])
-            year = int(sys.argv[4])
+            year = sys.argv[4]  # may be 'last12' or int string
             result = get_node_bx(conn, bx, nodes, year)
         elif query_type == 'hourly_avg':
             nodes = json.loads(sys.argv[2])
-            year = int(sys.argv[3])
+            year = sys.argv[3]  # may be 'last12' or int string
             result = get_hourly_averages(conn, nodes, year)
         elif query_type == 'heatmap':
             nodes = json.loads(sys.argv[2])
-            year = int(sys.argv[3])
+            year = sys.argv[3]  # may be 'last12' or int string
             result = get_heatmap_data(conn, nodes, year)
         elif query_type == 'bx_trend':
             bx = int(sys.argv[2])
             nodes = json.loads(sys.argv[3])
-            year = int(sys.argv[4])
+            year = sys.argv[4]  # may be 'last12' or int string
             result = get_bx_trend(conn, bx, nodes, year)
         elif query_type == 'full_year_8760':
             nodes = json.loads(sys.argv[2])
@@ -63,7 +63,7 @@ def run_query():
         elif query_type == 'box_stats':
             bx = int(sys.argv[2])
             nodes = json.loads(sys.argv[3])
-            year = int(sys.argv[4])
+            year = sys.argv[4]  # may be 'last12' or int string
             result = get_box_stats(conn, bx, nodes, year)
         elif query_type == 'data_summary':
             result = get_data_summary(conn)
@@ -129,7 +129,7 @@ def run_query():
         elif query_type == 'node_bx_rolling3yr':
             bx = int(sys.argv[2])
             nodes = json.loads(sys.argv[3])
-            year = int(sys.argv[4])
+            year = sys.argv[4]  # may be 'last12' or int string
             result = get_node_bx_rolling3yr(conn, bx, nodes, year)
         elif query_type == 'hourly_rolling3yr':
             nodes = json.loads(sys.argv[2])
