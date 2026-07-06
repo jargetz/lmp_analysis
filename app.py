@@ -1087,7 +1087,7 @@ def render_node_map_tab():
         st.warning(
             f"⚠️ **Partial year** — data through {_today.strftime('%B %d, %Y')}. "
             + (f"Missing: {_missing_str}. " if _missing_str else "")
-            + "Late summer and fall (Aug–Oct) typically have **higher** prices in CA due to heat and hydro scarcity — "
+            + "Late summer and fall (Aug–Oct) typically have **higher** prices in CA — "
             "annual averages will read lower than a full year."
         )
 
