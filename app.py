@@ -596,7 +596,10 @@ conn.close()
                     _hourly_r3yr = _hourly_r3yr_raw if _hourly_r3yr_raw else None
 
                     if isinstance(hourly_result, list) and hourly_result:
-                        show_hourly_r3yr = st.checkbox("Show 3-year average", value=True, key="show_hourly_r3yr", disabled=(_hourly_r3yr is None))
+                        if _hourly_r3yr is not None:
+                            show_hourly_r3yr = st.checkbox("Show 3-year average", value=True, key="show_hourly_r3yr")
+                        else:
+                            show_hourly_r3yr = False
                         fig = create_node_hourly_chart(hourly_result, title=f'Hourly Price Average ({len(selected_nodes)} nodes, {period_label})', rolling_3yr=_hourly_r3yr if show_hourly_r3yr else None)
                         st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_hourly_avg_{period_label}'}})
                     elif isinstance(hourly_result, dict) and hourly_result.get('error'):
@@ -614,8 +617,11 @@ conn.close()
                                 rolling3yr_result = {}
 
                         if isinstance(trend_result, list) and trend_result:
-                            _r3yr = rolling3yr_result if isinstance(rolling3yr_result, dict) and not rolling3yr_result.get('error') else None
-                            show_trend_r3yr = st.checkbox("Show 3-year average", value=True, key="show_trend_r3yr", disabled=(_r3yr is None))
+                            _r3yr = rolling3yr_result if isinstance(rolling3yr_result, dict) and rolling3yr_result and not rolling3yr_result.get('error') else None
+                            if _r3yr is not None:
+                                show_trend_r3yr = st.checkbox("Show 3-year average", value=True, key="show_trend_r3yr")
+                            else:
+                                show_trend_r3yr = False
                             fig, trend_clipping = create_node_bx_trend_chart(trend_result, bx_type=selected_bx, rolling_3yr=_r3yr if show_trend_r3yr else None, year=selected_year)
                             st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_B{selected_bx}_trend_{period_label}'}})
                             if trend_clipping:
@@ -643,14 +649,14 @@ conn.close()
                         elif isinstance(box_result, dict) and box_result.get('error'):
                             st.warning(f"Distribution chart unavailable: {box_result.get('error')}")
                     
-                    # Full year 8760-hour heatmap (daily granularity) - only for Annual time period
-                    if time_period == "Annual":
+                    # Full year 8760-hour heatmap (daily granularity) - only for Annual time period, not last12
+                    if time_period == "Annual" and _node_year_param != 'last12':
                         st.subheader("8760 Full Year Price Heatmap (All Hours)")
                         with st.spinner("Loading 8760 heatmap... (this may take 30-60 seconds)"):
-                            full_year_result = run_subprocess_query('full_year_8760', selected_nodes, selected_year, timeout=120)
+                            full_year_result = run_subprocess_query('full_year_8760', selected_nodes, _node_year_param, timeout=120)
                         
                         if isinstance(full_year_result, list) and full_year_result:
-                            fig, clipping_info_8760 = create_8760_heatmap(full_year_result, title=f'All Hourly Prices ({len(selected_nodes)} nodes, {selected_year})', year=selected_year)
+                            fig, clipping_info_8760 = create_8760_heatmap(full_year_result, title=f'All Hourly Prices ({len(selected_nodes)} nodes, {period_label})', year=int(_node_year_param))
                             st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'node_8760_heatmap_{selected_year}'}})
                             if clipping_info_8760:
                                 parts = []
