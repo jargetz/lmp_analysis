@@ -1156,7 +1156,8 @@ def add_chp_facility_traces(fig: go.Figure, chp_data: list, non_biomass_only: bo
         return
     df = pd.DataFrame(chp_data)
     if non_biomass_only:
-        df = df[df['biomass_co2'] == 0].reset_index(drop=True)
+        # Include rows where biomass_co2 is 0 or NULL (unknown — no evidence of biomass)
+        df = df[(df['biomass_co2'].isna()) | (df['biomass_co2'] == 0)].reset_index(drop=True)
     if df.empty:
         return
     for covered, label, color, size in [
@@ -1166,14 +1167,21 @@ def add_chp_facility_traces(fig: go.Figure, chp_data: list, non_biomass_only: bo
         sub = df[df['cap_and_trade'] == covered]
         if sub.empty:
             continue
-        bm_text = sub['biomass_co2'].apply(lambda x: f'  ·  Biomass CO₂: {x:,.0f} MT' if x > 0 else '')
+
+        def _fmt_ghg(v):
+            return f'{v:,.0f}' if v is not None and v == v else 'n/a'
+
+        bm_text = sub['biomass_co2'].apply(
+            lambda x: f'  ·  Biomass CO₂: {x:,.0f} MT' if x is not None and x == x and x > 0 else ''
+        )
+        nonbio_col = sub['non_biomass_ghg'].apply(_fmt_ghg)
         hover = (
             '<b>' + sub['facility'].astype(str) + '</b><br>'
             'CHP Cogeneration · ' + sub['city'].astype(str)
             + ', ' + sub['county'].astype(str) + ' Co.<br>'
             'Cap-and-Trade: ' + sub['cap_and_trade'].astype(str) + '<br>'
-            'Total GHG: ' + sub['total_ghg'].apply(lambda x: f'{x:,.0f}') + ' MT CO₂e<br>'
-            'Non-Biomass GHG: ' + sub['non_biomass_ghg'].apply(lambda x: f'{x:,.0f}') + ' MT'
+            'Total GHG: ' + sub['total_ghg'].apply(_fmt_ghg) + ' MT CO₂e<br>'
+            'Non-Biomass GHG: ' + nonbio_col + ' MT'
             + bm_text
         )
         fig.add_trace(go.Scattermapbox(

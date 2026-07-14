@@ -910,31 +910,38 @@ def get_unique_nodes(conn, limit=5):
 
 
 def get_facility_emissions(conn):
-    """Return all CARB facility emissions rows (2023 data)."""
+    """Return all CARB facility emissions rows (2023 data), including biomass columns."""
     result = conn.execute('''
         SELECT facility, primary_sector, city, county, district,
                lat, lon, cap_and_trade,
-               total_ghg, co2, nox, sox, pm10, pm25, diesel_pm
+               total_ghg, co2, nox, sox, pm10, pm25, diesel_pm,
+               biomass_co2, non_biomass_ghg
         FROM facility_emissions
         ORDER BY facility
     ''').fetchdf()
+
+    def _f(v, default=0.0):
+        return float(v) if v is not None and v == v else default
+
     return [
         {
-            'facility':       str(r['facility']),
-            'primary_sector': str(r['primary_sector']),
-            'city':           str(r['city']),
-            'county':         str(r['county']),
-            'district':       str(r['district']),
-            'lat':            float(r['lat']),
-            'lon':            float(r['lon']),
-            'cap_and_trade':  str(r['cap_and_trade']),
-            'total_ghg':      float(r['total_ghg']) if r['total_ghg'] is not None else 0.0,
-            'co2':            float(r['co2']) if r['co2'] is not None else 0.0,
-            'nox':            float(r['nox']) if r['nox'] is not None else 0.0,
-            'sox':            float(r['sox']) if r['sox'] is not None else 0.0,
-            'pm10':           float(r['pm10']) if r['pm10'] is not None else 0.0,
-            'pm25':           float(r['pm25']) if r['pm25'] is not None else 0.0,
-            'diesel_pm':      float(r['diesel_pm']) if r['diesel_pm'] is not None else 0.0,
+            'facility':        str(r['facility']),
+            'primary_sector':  str(r['primary_sector']),
+            'city':            str(r['city']),
+            'county':          str(r['county']),
+            'district':        str(r['district']),
+            'lat':             float(r['lat']),
+            'lon':             float(r['lon']),
+            'cap_and_trade':   str(r['cap_and_trade']),
+            'total_ghg':       _f(r['total_ghg']),
+            'co2':             _f(r['co2']),
+            'nox':             _f(r['nox']),
+            'sox':             _f(r['sox']),
+            'pm10':            _f(r['pm10']),
+            'pm25':            _f(r['pm25']),
+            'diesel_pm':       _f(r['diesel_pm']),
+            'biomass_co2':     _f(r['biomass_co2'], default=None),
+            'non_biomass_ghg': _f(r['non_biomass_ghg'], default=None),
         }
         for _, r in result.iterrows()
     ]

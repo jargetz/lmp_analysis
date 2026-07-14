@@ -42,45 +42,6 @@ from charts import (
     add_chp_facility_traces,
 )
 
-@st.cache_data
-def _load_chp_csv():
-    """Load CHP cogeneration facility list from the attached CARB CSV (cached)."""
-    import os
-    path = 'attached_assets/Combined_heat_and_power_list_CA_1784061039546.csv'
-    if not os.path.exists(path):
-        return []
-    try:
-        df = pd.read_csv(path, skipfooter=2, engine='python')
-        df.columns = [c.strip() for c in df.columns]
-        def _n(v):
-            try:
-                return float(str(v).replace(',', '').strip())
-            except Exception:
-                return 0.0
-        records = []
-        for _, r in df.iterrows():
-            try:
-                lat = float(r['Latitude'])
-                lon = float(r['Longitude'])
-                if lat != lat or lon != lon:  # NaN guard
-                    continue
-            except Exception:
-                continue
-            records.append({
-                'facility':        str(r.get('Facility', '')).strip(),
-                'city':            str(r.get('City', '')).strip(),
-                'county':          str(r.get('County', '')).strip(),
-                'cap_and_trade':   str(r.get('Cap-and-Trade', 'No')).strip(),
-                'lat':             lat,
-                'lon':             lon,
-                'total_ghg':       _n(r.get('Total GHG', 0)),
-                'non_biomass_ghg': _n(r.get('Non-Biomass GHG', 0)),
-                'biomass_co2':     _n(r.get('Biomass CO2', 0)),
-            })
-        return records
-    except Exception:
-        return []
-
 
 def main():
     st.set_page_config(
@@ -1156,32 +1117,31 @@ def render_node_map_tab():
             "annual averages will read lower than a full year."
         )
 
-    # ── Facility show/filter controls (full width) ────────────────────────────
-    fac_col1, fac_col2 = st.columns([1, 2])
-    with fac_col1:
-        show_facilities = st.checkbox("Show CARB facilities (2023 data)", value=True, key="map_show_facilities")
-    with fac_col2:
-        if show_facilities:
-            fac_filter = st.radio(
-                "Filter",
-                options=["All facilities", "Covered entities only"],
-                key="map_facility_filter",
-                horizontal=True,
-            )
-        else:
-            fac_filter = "All facilities"
-
-    chp_col1, chp_col2 = st.columns([1, 3])
-    with chp_col1:
-        show_chp = st.checkbox("Show CHP generators", value=False, key="map_show_chp")
-    with chp_col2:
-        if show_chp:
-            chp_nonbiomass = st.checkbox(
-                "Non-biomass only (exclude facilities where Biomass CO₂ > 0)",
-                value=True, key="map_chp_nonbiomass",
-            )
-        else:
-            chp_nonbiomass = True
+    # ── Map layer controls ────────────────────────────────────────────────────
+    with st.expander("🗺️ Map layers", expanded=False):
+        lay_col1, lay_col2 = st.columns(2)
+        with lay_col1:
+            st.markdown("**CARB Facilities** — 2023 GHG reporting (all sectors)")
+            show_facilities = st.checkbox("Show on map", value=True, key="map_show_facilities")
+            if show_facilities:
+                fac_filter = st.radio(
+                    "Filter by Cap-and-Trade",
+                    options=["All facilities", "Covered entities only"],
+                    key="map_facility_filter",
+                    horizontal=True,
+                )
+            else:
+                fac_filter = "All facilities"
+        with lay_col2:
+            st.markdown("**CHP Cogeneration** — Fossil-fuel power generators (NAICS 221112)")
+            show_chp = st.checkbox("Show on map", value=False, key="map_show_chp")
+            if show_chp:
+                chp_nonbiomass = st.checkbox(
+                    "Non-biomass only (exclude facilities where Biomass CO₂ > 0)",
+                    value=True, key="map_chp_nonbiomass",
+                )
+            else:
+                chp_nonbiomass = True
 
     st.divider()
 
@@ -1384,7 +1344,8 @@ def render_node_map_tab():
         )
 
         if show_chp:
-            add_chp_facility_traces(fig, _load_chp_csv(), non_biomass_only=chp_nonbiomass)
+            chp_data = [f for f in facilities_all if f.get('primary_sector') == 'Cogeneration']
+            add_chp_facility_traces(fig, chp_data, non_biomass_only=chp_nonbiomass)
 
         map_event = st.plotly_chart(
             fig,
