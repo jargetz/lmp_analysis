@@ -26,9 +26,7 @@ from charts import (
     create_zone_comparison_bar,
     create_top_nodes_bar,
     create_empty_chart,
-    create_zone_hourly_chart,
     create_node_hourly_chart,
-    create_zone_bx_trend_chart,
     create_node_bx_trend_chart,
     create_node_box_plot,
     create_month_hour_heatmap,
@@ -300,11 +298,7 @@ def main():
 
 
 def render_dashboard_tab():
-    """
-    Render the main dashboard with BX analysis and zone filtering.
-    
-    This is the primary interface for exploring LMP data.
-    """
+    """Render the Price Analysis tab with node BX analysis."""
     if 'dashboard_initialized' not in st.session_state:
         bx_calc_init = BXCalculator()
         st.session_state.bx_calc = bx_calc_init
@@ -312,185 +306,107 @@ def render_dashboard_tab():
         st.session_state.parquet_years = st.session_state.get('init_years', [2024])
         st.session_state.all_nodes = st.session_state.get('individual_nodes', [])
         st.session_state.dashboard_initialized = True
-    
+
     st.header("LMP Dashboard")
-    st.markdown("Analyze electricity pricing by zone or specific nodes")
-    
-    # Filter Panel
-    st.subheader("Filters")
-    
-    # Analysis mode toggle
-    analysis_mode = st.radio(
-        "Analysis Mode",
-        options=["By Zone", "By Node Selection"],
-        horizontal=True,
-        help="Choose to analyze by zone or select specific nodes"
-    )
-    
-    # Initialize filter variables
-    selected_zone = None
+
     selected_nodes = []
-    
-    if analysis_mode == "By Zone":
-        filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
+    node_col, options_col = st.columns([3, 1])
         
-        with filter_col1:
-            st.markdown("**Zone Comparison**")
-            st.caption("Showing NP15, SP15, ZP26, and Overall averages")
-    else:
-        # Node mode: wider layout for node selection
-        node_col, options_col = st.columns([3, 1])
-        
-        with node_col:
-            # Initialize selected nodes from session state
-            if 'selected_nodes_list' not in st.session_state:
-                st.session_state.selected_nodes_list = []
-            
-            # Quick add by prefix
-            prefix_col, add_col = st.columns([4, 1])
-            with prefix_col:
-                prefix = st.text_input(
-                    "Add nodes by prefix",
-                    placeholder="e.g., PGE, SCE, SLAP",
-                    help="Type a prefix and click Add to select all matching nodes",
-                    key="node_prefix"
-                )
-            with add_col:
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("Add All", key="add_prefix"):
-                    if prefix and len(prefix) >= 2:
-                        matching = [n for n in st.session_state.all_nodes if n.upper().startswith(prefix.upper())]
-                        if matching:
-                            current = st.session_state.get('selected_nodes_list', [])
-                            updated = list(set(current + matching))
-                            st.session_state.selected_nodes_list = updated
-                            st.rerun()
-            
-            # Multiselect with wider display
-            selected_nodes = st.multiselect(
-                "Selected Nodes",
-                options=st.session_state.all_nodes,
-                default=st.session_state.selected_nodes_list,
-                placeholder="Type to search nodes...",
-                help="Select individual nodes or use prefix above to add many at once",
-                key="node_multiselect"
-            )
-            
-            # Sync selection back to session state (ensure unique)
-            st.session_state.selected_nodes_list = list(dict.fromkeys(selected_nodes))
-            
-            # Show count and clear button
-            if selected_nodes:
-                st.caption(f"{len(selected_nodes)} nodes selected")
-                if st.button("Clear All", key="clear_nodes"):
-                    st.session_state.selected_nodes_list = []
+    with node_col:
+        if 'selected_nodes_list' not in st.session_state:
+            st.session_state.selected_nodes_list = []
+
+        # DLAP utility quick-select
+        st.caption("**Quick add** — utility DLAP nodes")
+        _dlap_col1, _dlap_col2, _dlap_col3, _ = st.columns(4)
+        _dlap_nodes = [
+            ("PG&E (DLAP_PGAE-APND)", "DLAP_PGAE-APND"),
+            ("SCE (DLAP_SCE-APND)",   "DLAP_SCE-APND"),
+            ("SDG&E (DLAP_SDGE-APND)", "DLAP_SDGE-APND"),
+        ]
+        for _btn_col, (_label, _nid) in zip([_dlap_col1, _dlap_col2, _dlap_col3], _dlap_nodes):
+            with _btn_col:
+                if st.button(_label, key=f"dlap_{_nid}"):
+                    _cur = st.session_state.get('selected_nodes_list', [])
+                    if _nid not in _cur:
+                        st.session_state.selected_nodes_list = _cur + [_nid]
                     st.rerun()
-        
-        # Smaller options column for BX/Year selectors
-        filter_col1, filter_col2, filter_col3, filter_col4 = options_col, options_col, options_col, options_col
-    
-    # Common filters (BX, Time Period, Year)
-    if analysis_mode == "By Zone":
-        with filter_col2:
-            selected_bx = st.selectbox(
-                "BX Hours",
-                options=SUPPORTED_BX_VALUES,
-                index=4,
-                format_func=lambda x: f"B{x} (Cheapest {x} hours)",
-                key="zone_bx",
-                help="Number of cheapest hours to analyze"
+
+        prefix_col, add_col = st.columns([4, 1])
+        with prefix_col:
+            prefix = st.text_input(
+                "Add nodes by prefix",
+                placeholder="e.g., PGE, SCE, SLAP",
+                key="node_prefix"
             )
-        
-        with filter_col3:
-            time_period = st.selectbox(
-                "Time Period",
-                options=["Annual", "Monthly"],
-                key="zone_time_period",
-                help="Choose annual or monthly view"
+        with add_col:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("Add All", key="add_prefix"):
+                if prefix and len(prefix) >= 2:
+                    matching = [n for n in st.session_state.all_nodes
+                                if n.upper().startswith(prefix.upper())]
+                    if matching:
+                        cur = st.session_state.get('selected_nodes_list', [])
+                        st.session_state.selected_nodes_list = list(
+                            dict.fromkeys(cur + matching))
+                        st.rerun()
+
+        selected_nodes = st.multiselect(
+            "Selected Nodes",
+            options=st.session_state.all_nodes,
+            default=st.session_state.selected_nodes_list,
+            placeholder="Type to search nodes...",
+            key="node_multiselect"
+        )
+        st.session_state.selected_nodes_list = list(dict.fromkeys(selected_nodes))
+
+        if selected_nodes:
+            st.caption(f"{len(selected_nodes)} nodes selected")
+            if st.button("Clear All", key="clear_nodes"):
+                st.session_state.selected_nodes_list = []
+                st.rerun()
+
+    parquet_years = st.session_state.get('node_years', st.session_state.get('parquet_years', [2024]))
+    with options_col:
+        selected_bx = st.selectbox(
+            "BX Hours",
+            options=SUPPORTED_BX_VALUES,
+            index=4,
+            format_func=lambda x: f"B{x}",
+            key="node_bx",
+        )
+        time_period = st.selectbox(
+            "Time Period",
+            options=["Annual", "Monthly"],
+            key="node_time_period",
+        )
+        if time_period == "Annual":
+            year_options = ["Last 12 months"] + parquet_years
+            default_year_idx = 0
+            if 'last_node_year' in st.session_state and st.session_state.last_node_year in year_options:
+                default_year_idx = year_options.index(st.session_state.last_node_year)
+            selected_year = st.selectbox(
+                "Year",
+                options=year_options,
+                index=default_year_idx,
+                key="node_annual_year",
             )
-        
-        with filter_col4:
-            zone_years = [y for y in st.session_state.get('zone_years', [2024]) if y <= 2024]
-            if not zone_years:
-                zone_years = [2024]
-            
-            if time_period == "Annual":
-                selected_year = st.selectbox(
-                    "Year",
-                    options=zone_years,
-                    key="zone_annual_year",
-                    help="Select year"
-                )
-                selected_month = None
-            else:
-                selected_year = st.selectbox(
-                    "Year",
-                    options=zone_years,
-                    key="monthly_year",
-                    help="Select year"
-                )
-                month_options = ["January", "February", "March", "April", "May", "June", 
-                               "July", "August", "September", "October", "November", "December"]
-                selected_month_name = st.selectbox(
-                    "Month",
-                    options=month_options,
-                    help="Select month"
-                )
-                selected_month = month_options.index(selected_month_name) + 1
-    else:
-        # Node mode: options in the side column
-        # Use node_years (only years present in node_hourly_lmp)
-        parquet_years = st.session_state.get('node_years', st.session_state.get('parquet_years', [2024]))
-        
-        with options_col:
-            selected_bx = st.selectbox(
-                "BX Hours",
-                options=SUPPORTED_BX_VALUES,
-                index=4,
-                format_func=lambda x: f"B{x}",
-                key="node_bx",
-                help="Number of cheapest hours to analyze"
+            st.session_state.last_node_year = selected_year
+            selected_month = None
+        else:
+            selected_year = st.selectbox(
+                "Year",
+                options=parquet_years,
+                key="monthly_year_node",
             )
-            
-            time_period = st.selectbox(
-                "Time Period",
-                options=["Annual", "Monthly"],
-                key="node_time_period",
-                help="Choose annual or monthly view"
+            month_options = ["January", "February", "March", "April", "May", "June",
+                             "July", "August", "September", "October", "November", "December"]
+            selected_month_name = st.selectbox(
+                "Month",
+                options=month_options,
+                key="monthly_month_node",
             )
-            
-            if time_period == "Annual":
-                # Preserve year selection when nodes change
-                year_options = ["Last 12 months"] + parquet_years
-                default_year_idx = 0
-                if 'last_node_year' in st.session_state and st.session_state.last_node_year in year_options:
-                    default_year_idx = year_options.index(st.session_state.last_node_year)
-                
-                selected_year = st.selectbox(
-                    "Year",
-                    options=year_options,
-                    index=default_year_idx,
-                    key="node_annual_year",
-                    help="Select year (only years with node data)"
-                )
-                st.session_state.last_node_year = selected_year
-                selected_month = None
-            else:
-                selected_year = st.selectbox(
-                    "Year",
-                    options=parquet_years,
-                    key="monthly_year_node",
-                    help="Select year"
-                )
-                month_options = ["January", "February", "March", "April", "May", "June", 
-                               "July", "August", "September", "October", "November", "December"]
-                selected_month_name = st.selectbox(
-                    "Month",
-                    options=month_options,
-                    key="monthly_month_node",
-                    help="Select month"
-                )
-                selected_month = month_options.index(selected_month_name) + 1
+            selected_month = month_options.index(selected_month_name) + 1
     
     st.divider()
     
@@ -504,115 +420,9 @@ def render_dashboard_tab():
     st.subheader(f"B{selected_bx} Price Summary ({period_label})")
     
     try:
-        # Use cached BXCalculator (preloaded at startup)
         bx_calc = st.session_state.bx_calc
-        
-        if analysis_mode == "By Zone":
-            load_cache_key = f"load_stats_{selected_bx}_{selected_year}_{time_period}_{selected_month}"
-            if load_cache_key not in st.session_state:
-                st.session_state[load_cache_key] = bx_calc.get_all_zones_load_weighted_bx(
-                    bx=selected_bx,
-                    year=selected_year,
-                    time_period=time_period,
-                    month=selected_month
-                )
-            load_stats = st.session_state[load_cache_key]
-            
-            st.markdown("**EIA Load-Weighted Zone Average**")
-            zone_cols = st.columns(4)
-            zone_order = ['NP15', 'SP15', 'ZP26', 'Overall']
-            
-            for col, zone_name in zip(zone_cols, zone_order):
-                with col:
-                    stats = load_stats.get(zone_name, {})
-                    if stats.get('success') and stats.get('avg_price') is not None:
-                        st.metric(
-                            f"{zone_name}",
-                            f"${stats['avg_price']:.2f}/MWh",
-                            help=f"BX of CAISO EIA zone price, monthly weighted. Days with data: {stats.get('day_count', 0)}"
-                        )
-                    else:
-                        st.metric(zone_name, "N/A")
-            
-            gen_cache_key = f"gen_stats_{selected_bx}_{selected_year}_{time_period}_{selected_month}"
-            if gen_cache_key not in st.session_state:
-                st.session_state[gen_cache_key] = bx_calc.get_generator_bx_average(
-                    bx=selected_bx,
-                    year=selected_year,
-                    time_period=time_period,
-                    month=selected_month
-                )
-            gen_stats = st.session_state[gen_cache_key]
-            
-            if gen_stats.get('success') and gen_stats.get('zones'):
-                st.markdown("**Generator Settlement Prices** (gen-weighted by CAISO)")
-                gen_cols = st.columns(3)
-                gen_zone_order = ['NP15', 'SP15', 'ZP26']
-                
-                for col, zone_name in zip(gen_cols, gen_zone_order):
-                    with col:
-                        zone_data = gen_stats['zones'].get(zone_name, {})
-                        if zone_data.get('avg_price') is not None:
-                            st.metric(
-                                f"{zone_name}",
-                                f"${zone_data['avg_price']:.2f}/MWh",
-                                help=f"TH_{zone_name}_GEN-APND (gen-weighted by CAISO). Days: {zone_data.get('day_count', 0)}"
-                            )
-                        else:
-                            st.metric(f"{zone_name}", "N/A")
-            
-            st.subheader("Averages - Day Ahead LMP")
-            heatmap_tab_labels = ['Overall (not weighted by zone)', 'NP15', 'SP15', 'ZP26']
-            heatmap_data_keys = ['Overall', 'NP15', 'SP15', 'ZP26']
-            heatmap_tabs = st.tabs(heatmap_tab_labels)
-            
-            all_heatmap_key = f"all_heatmaps_{selected_year}"
-            if all_heatmap_key not in st.session_state:
-                st.session_state[all_heatmap_key] = bx_calc.get_all_zones_month_hour(year=selected_year)
-            all_heatmaps = st.session_state[all_heatmap_key]
-            
-            for tab, data_key, tab_label in zip(heatmap_tabs, heatmap_data_keys, heatmap_tab_labels):
-                with tab:
-                    heatmap_data = all_heatmaps.get(data_key, [])
-                    if heatmap_data:
-                        fig = create_month_hour_heatmap(heatmap_data, zone=tab_label)
-                        st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'zone_heatmap_{data_key}_{selected_year}'}})
-                    else:
-                        st.info("No heatmap data available yet.")
-            
-            # BX trend chart by zone (cached)
-            bx_trend_cache_key = f"bx_trend_zone_{selected_bx}_{selected_year}"
-            if bx_trend_cache_key not in st.session_state:
-                st.session_state[bx_trend_cache_key] = bx_calc.get_bx_trend_by_zone(
-                    bx=selected_bx,
-                    year=selected_year,
-                    aggregation='monthly'
-                )
-            zone_trend_data = st.session_state[bx_trend_cache_key]
 
-            # Rolling 3yr average overlay
-            rolling3yr_cache_key = f"bx_trend_zone_r3yr_{selected_bx}_{selected_year}"
-            if rolling3yr_cache_key not in st.session_state:
-                try:
-                    st.session_state[rolling3yr_cache_key] = bx_calc.get_bx_trend_rolling3yr_by_zone(
-                        bx=selected_bx,
-                        year=selected_year
-                    )
-                except Exception:
-                    st.session_state[rolling3yr_cache_key] = {}
-            rolling3yr_data = st.session_state.get(rolling3yr_cache_key) or {}
-
-            if any(zone_trend_data.get(z) for z in ['NP15', 'SP15', 'ZP26', 'Overall']):
-                fig = create_zone_bx_trend_chart(
-                    zone_trend_data,
-                    bx_type=selected_bx,
-                    rolling_3yr=rolling3yr_data or None,
-                    year=selected_year,
-                )
-                st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'filename': f'zone_B{selected_bx}_trend_{selected_year}'}})
-        
-        elif analysis_mode == "By Node Selection":
-            # Node selection mode - show stats for selected nodes from parquet
+        if True:  # node analysis
             
             # Simple diagnostic test using subprocess to avoid Streamlit threading issues
             with st.expander("Database Diagnostic", expanded=False):
@@ -1750,27 +1560,6 @@ For each operating day, the BX value is computed as follows:
 the B8 price for that day = ($5 + $8 + $10 + $12 + $15 + $18 + $20 + $22) / 8 = $13.75/MWh
 """)
 
-    st.subheader("EIA Zone Averaging")
-    st.markdown("""
-**Zone Price Source**
-
-The zone-level hourly prices (NP15, SP15, ZP26) come from CAISO's published **EIA zone aggregate** files 
-(PRC_LMP dataset, `LMP_TYPE = LMP`). These are CAISO's own load-weighted average prices for each zone, 
-not computed by this tool.
-
-- **NP15**: Northern California (Pacific Gas & Electric territory)
-- **SP15**: Southern California (Southern California Edison territory)  
-- **ZP26**: Central California (Zone P26, between NP15 and SP15)
-
-**Generator Settlement Nodes** (TH_NP15_GEN-APND, TH_SP15_GEN-APND, TH_ZP26_GEN-APND) are separate 
-CAISO-published aggregate prices representing generation-weighted averages for each zone. These may 
-differ from the EIA zone averages because they weight by generation output rather than load.
-
-**Missing Data Handling**: When EIA data is missing for certain days, each month's average is computed 
-using only the days that have data. The annual average then weights each month by its share of the 
-year's calendar days (e.g., January = 31/366 in a leap year), matching the BX methodology above.
-This tool does **not** interpolate or fill in missing days.
-""")
 
     st.subheader("Data Sources & Storage")
     st.markdown("""
@@ -1781,9 +1570,8 @@ This tool does **not** interpolate or fill in missing days.
 - **Analytics Database**: MotherDuck (DuckDB cloud) — all queries run here, including node-level and zone-level data
 
 **MotherDuck Tables**
-- `zone_hourly_lmp`: Hourly LMP by zone (NP15, SP15, ZP26) with congestion/energy/loss components
-- `node_hourly_lmp`: Raw node-level hourly LMP data (~296M rows, ~17,500 nodes, 2020–2025)
-- `bx_daily_summary`: Pre-computed daily BX values by zone (from zone_hourly_lmp)
+- `node_hourly_lmp`: Raw node-level hourly LMP data (~880M rows, ~17,500 nodes, 2021–2026)
+- `node_bx_monthly_summary`: Pre-computed monthly BX averages per node (~1M rows)
 - `generator_bx_summary`: BX values for generator settlement nodes (TH_*_GEN-APND)
 - `node_zone_mapping`: EIA mapping of individual pricing nodes to zones
 """)
@@ -1887,193 +1675,36 @@ the PDF and the API exist (CARB's own data) but do not affect geographic proximi
     available_years = st.session_state.get('init_years', [2024])
     selected_year = st.selectbox("Select Year", available_years, key="methodology_year")
 
-    zone_tab, node_tab = st.tabs(["Zone Data (zone_hourly_lmp)", "Node Data (node_hourly_lmp)"])
-
-    with zone_tab:
-        try:
-            r = subprocess.run(
-                ['python3', 'subprocess_query.py', 'missing_days', str(selected_year)],
-                capture_output=True, text=True, timeout=30
-            )
-            if r.returncode == 0 and r.stdout.strip():
-                missing_data = json_mod.loads(r.stdout.strip())
-                col1, col2, col3 = st.columns(3)
+    try:
+        r = subprocess.run(
+            ['python3', 'subprocess_query.py', 'node_coverage', str(selected_year)],
+            capture_output=True, text=True, timeout=60
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            node_cov = json_mod.loads(r.stdout.strip())
+            if node_cov.get('has_data'):
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("Days Expected", missing_data['total_expected'])
+                    st.metric("Days Loaded", node_cov['days_loaded'])
                 with col2:
-                    st.metric("Days Loaded", missing_data['total_loaded'])
+                    st.metric("Days Expected", node_cov['total_expected'])
                 with col3:
-                    st.metric("Days Missing", missing_data['missing_count'])
-
-                if missing_data['missing_count'] > 0:
-                    st.warning(f"{missing_data['missing_count']} days missing from zone hourly data for {selected_year}")
-                    missing_df = pd.DataFrame({'Missing Date': missing_data['missing_dates']})
-                    missing_df['Month'] = pd.to_datetime(missing_df['Missing Date']).dt.strftime('%B')
-                    month_counts = missing_df['Month'].value_counts().sort_index()
-                    st.markdown("**Missing days by month:**")
-                    for month, count in month_counts.items():
-                        dates_in_month = missing_df[missing_df['Month'] == month]['Missing Date'].tolist()
-                        st.markdown(f"- **{month}**: {count} days ({', '.join(dates_in_month)})")
+                    st.metric("Unique Nodes", f"{node_cov['node_count']:,}")
+                with col4:
+                    st.metric("Total Rows", f"{node_cov['total_rows']:,}")
+                st.markdown(f"**Date range**: {node_cov['earliest_date']} to {node_cov['latest_date']}")
+                missing_node_days = node_cov['total_expected'] - node_cov['days_loaded']
+                if missing_node_days > 0:
+                    st.warning(f"{missing_node_days} days missing from node data for {selected_year}")
                 else:
-                    st.success(f"All {missing_data['total_expected']} days loaded for {selected_year}")
-            else:
-                st.info(f"No zone data available for {selected_year}")
-        except Exception as e:
-            st.error(f"Error checking zone data coverage: {str(e)}")
-
-    with node_tab:
-        try:
-            r = subprocess.run(
-                ['python3', 'subprocess_query.py', 'node_coverage', str(selected_year)],
-                capture_output=True, text=True, timeout=60
-            )
-            if r.returncode == 0 and r.stdout.strip():
-                node_cov = json_mod.loads(r.stdout.strip())
-                if node_cov.get('has_data'):
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Days Loaded", node_cov['days_loaded'])
-                    with col2:
-                        st.metric("Days Expected", node_cov['total_expected'])
-                    with col3:
-                        st.metric("Unique Nodes", f"{node_cov['node_count']:,}")
-                    with col4:
-                        st.metric("Total Rows", f"{node_cov['total_rows']:,}")
-                    st.markdown(f"**Date range**: {node_cov['earliest_date']} to {node_cov['latest_date']}")
-                    missing_node_days = node_cov['total_expected'] - node_cov['days_loaded']
-                    if missing_node_days > 0:
-                        st.warning(f"{missing_node_days} days missing from node data for {selected_year}")
-                    else:
-                        st.success(f"All {node_cov['total_expected']} days loaded for {selected_year}")
-                else:
-                    st.info(f"No node data available for {selected_year}")
+                    st.success(f"All {node_cov['total_expected']} days loaded for {selected_year}")
             else:
                 st.info(f"No node data available for {selected_year}")
-        except Exception as e:
-            st.error(f"Error checking node data coverage: {str(e)}")
+        else:
+            st.info(f"No node data available for {selected_year}")
+    except Exception as e:
+        st.error(f"Error checking node data coverage: {str(e)}")
 
-    st.divider()
-
-    st.header("Daily BX Values by Zone")
-    st.markdown("Daily BX prices for EIA zones, computed from `zone_hourly_lmp`. Download as CSV to compare with your own calculations.")
-
-    bx_select = st.selectbox("BX Type", [4, 5, 6, 7, 8, 9, 10], index=4, key="methodology_bx",
-                             format_func=lambda x: f"B{x} (Cheapest {x} Hours)")
-
-    if st.button("Load Daily BX Data", type="primary"):
-        with st.spinner(f"Computing daily B{bx_select} for all zones in {selected_year}..."):
-            try:
-                r = subprocess.run(
-                    ['python3', 'subprocess_query.py', 'zone_daily_bx', str(bx_select), str(selected_year)],
-                    capture_output=True, text=True, timeout=60
-                )
-                if r.returncode == 0 and r.stdout.strip():
-                    rows = json_mod.loads(r.stdout.strip())
-                    if isinstance(rows, list) and len(rows) > 0:
-                        df = pd.DataFrame(rows)
-                        pivot = df.pivot(index='opr_dt', columns='zone', values='bx_price')
-                        pivot = pivot.sort_index()
-                        pivot.index.name = 'Date'
-
-                        st.subheader(f"B{bx_select} Annual Averages — Monthly Weighted ({selected_year})")
-                        from calendar import monthrange, isleap
-                        total_cal_days = 366 if isleap(selected_year) else 365
-                        df['opr_dt_parsed'] = pd.to_datetime(df['opr_dt'])
-                        df['month'] = df['opr_dt_parsed'].dt.month
-                        avg_cols = st.columns(len(pivot.columns))
-                        for i, zone in enumerate(sorted(pivot.columns)):
-                            with avg_cols[i]:
-                                zone_df = df[df['zone'] == zone]
-                                monthly_avgs = zone_df.groupby('month')['bx_price'].mean()
-                                weighted_sum = 0
-                                for m, avg in monthly_avgs.items():
-                                    _, cal_days = monthrange(selected_year, int(m))
-                                    weighted_sum += avg * cal_days
-                                monthly_weighted = weighted_sum / total_cal_days
-                                simple_avg = zone_df['bx_price'].mean()
-                                st.metric(zone, f"${monthly_weighted:.2f}/MWh",
-                                          help=f"Monthly weighted (by calendar days). Simple avg: ${simple_avg:.2f}/MWh. Days with data: {len(zone_df)}")
-
-                        st.subheader(f"Daily B{bx_select} Values")
-                        display_df = pivot.copy()
-                        for col in display_df.columns:
-                            display_df[col] = display_df[col].apply(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
-                        st.dataframe(display_df, use_container_width=True, height=400)
-
-                        csv = pivot.to_csv()
-                        st.download_button(
-                            label=f"Download B{bx_select} Daily Data as CSV",
-                            data=csv,
-                            file_name=f"B{bx_select}_daily_{selected_year}.csv",
-                            mime="text/csv"
-                        )
-                    else:
-                        st.warning(f"No B{bx_select} data found for {selected_year}")
-                else:
-                    error_msg = r.stderr if r.stderr else "Unknown error"
-                    st.error(f"Error computing BX data: {error_msg}")
-            except Exception as e:
-                st.error(f"Error: {str(e)}")
-
-
-    st.divider()
-
-    st.header("Monthly BX Spot-Check")
-    st.markdown("Monthly breakdown comparing all three averaging methods. Use this to verify annual averages and spot-check individual months.")
-
-    sc_col1, sc_col2, sc_col3 = st.columns(3)
-    with sc_col1:
-        sc_bx = st.selectbox("BX Type", [4, 5, 6, 7, 8, 9, 10], index=4, key="spotcheck_bx",
-                              format_func=lambda x: f"B{x}")
-    with sc_col2:
-        sc_zone = st.selectbox("Zone", ['SP15', 'NP15', 'ZP26'], key="spotcheck_zone")
-    with sc_col3:
-        sc_year = st.selectbox("Year", available_years, key="spotcheck_year")
-
-    if st.button("Load Monthly Spot-Check", type="primary", key="load_spotcheck"):
-        with st.spinner(f"Loading monthly B{sc_bx} for {sc_zone} ({sc_year})..."):
-            try:
-                r = subprocess.run(
-                    ['python3', 'subprocess_query.py', 'monthly_bx_spotcheck',
-                     str(sc_bx), str(sc_year), sc_zone],
-                    capture_output=True, text=True, timeout=60
-                )
-                if r.returncode == 0 and r.stdout.strip():
-                    sc_data = json_mod.loads(r.stdout.strip())
-                    st.session_state['spotcheck_data'] = sc_data
-                else:
-                    st.error("Could not load spot-check data")
-            except Exception as e:
-                st.error(f"Error: {str(e)}")
-
-    if 'spotcheck_data' in st.session_state:
-        sc_data = st.session_state['spotcheck_data']
-        rows = []
-        for m in sc_data['months']:
-            rows.append({
-                'Month': m['month'],
-                'Cal Days': m['cal_days'],
-                'Load-Weighted ($/MWh)': f"${m['load_weighted']:.2f}" if m['load_weighted'] is not None else "N/A",
-                'LW Days': m['load_weighted_days'],
-                'Generator ($/MWh)': f"${m['generator']:.2f}" if m['generator'] is not None else "N/A",
-                'Gen Days': m['generator_days'],
-                'Node Avg ($/MWh)': f"${m['node_avg']:.2f}" if m['node_avg'] is not None else "N/A",
-                'Node Days': m['node_avg_days'],
-            })
-        ann = sc_data['annual']
-        rows.append({
-            'Month': 'Annual',
-            'Cal Days': '',
-            'Load-Weighted ($/MWh)': f"${ann['load_weighted']:.2f}" if ann['load_weighted'] else "N/A",
-            'LW Days': '',
-            'Generator ($/MWh)': f"${ann['generator']:.2f}" if ann['generator'] else "N/A",
-            'Gen Days': '',
-            'Node Avg ($/MWh)': f"${ann['node_avg']:.2f}" if ann['node_avg'] else "N/A",
-            'Node Days': '',
-        })
-        sc_df = pd.DataFrame(rows)
-        st.dataframe(sc_df, use_container_width=True, hide_index=True)
-        st.caption("Annual = sum(month_avg × calendar_days_in_month) / total_days_in_year (365 or 366 for leap years)")
 
 
 def render_node_finder_tab():
