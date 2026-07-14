@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>California CHP Facilities</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><circle cx=%2216%22 cy=%2216%22 r=%2213%22 fill=%22%231e5c44%22/></svg>">
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <style>
+    :root { --ink:#17221b; --muted:#69736c; --paper:#f4f1e8; --panel:#fffdf7; --green:#1e5c44; --lime:#bdd969; --line:#d9d7cb; --orange:#d66a36; }
+    * { box-sizing:border-box; }
+    html, body { height:100%; margin:0; }
+    body { font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color:var(--ink); background:var(--paper); }
+    .shell { height:100%; display:grid; grid-template-columns:minmax(0, 2fr) minmax(330px, 1fr); overflow:hidden; }
+    .map-wrap { position:relative; min-width:0; }
+    #map { height:100%; width:100%; background:#dfe7dd; }
+    .title-card { position:absolute; z-index:500; top:22px; left:22px; max-width:410px; padding:18px 20px; background:rgba(255,253,247,.94); border:1px solid rgba(23,34,27,.12); box-shadow:0 12px 40px rgba(30,50,38,.14); backdrop-filter:blur(8px); }
+    .eyebrow { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; }
+    h1 { margin:0; font-family:Georgia, serif; font-size:31px; line-height:1.02; font-weight:500; letter-spacing:-.03em; }
+    .subtitle { margin:9px 0 0; color:var(--muted); font-size:13px; line-height:1.45; }
+    .legend { position:absolute; z-index:500; left:22px; bottom:24px; padding:10px 12px; background:rgba(255,253,247,.94); border:1px solid rgba(23,34,27,.12); font-size:11px; box-shadow:0 8px 24px rgba(30,50,38,.12); }
+    .legend-row { display:flex; gap:10px; align-items:center; margin-top:6px; color:var(--muted); }
+    .dots { display:flex; align-items:center; gap:5px; height:18px; }
+    .dot { display:inline-block; border-radius:50%; background:rgba(30,92,68,.78); border:1.5px solid #fff; box-shadow:0 0 0 1px rgba(30,92,68,.3); }
+    .dot.s { width:8px; height:8px; } .dot.m { width:13px; height:13px; } .dot.l { width:18px; height:18px; }
+    aside { min-width:0; overflow-y:auto; background:var(--panel); border-left:1px solid var(--line); }
+    .panel { padding:24px 26px 34px; }
+    .panel-top { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+    .year { padding:5px 8px; border:1px solid var(--line); color:var(--muted); font-size:11px; font-weight:700; }
+    h2 { margin:4px 0 0; font-family:Georgia, serif; font-size:23px; font-weight:500; }
+    .stats { display:grid; grid-template-columns:1fr 1fr; gap:1px; margin:22px 0; background:var(--line); border:1px solid var(--line); }
+    .stat { min-height:98px; padding:15px; background:var(--panel); }
+    .stat .value { font-family:Georgia, serif; font-size:27px; line-height:1; color:var(--green); }
+    .stat .label { margin-top:8px; color:var(--muted); font-size:11px; line-height:1.3; }
+    .section { padding-top:20px; margin-top:20px; border-top:1px solid var(--line); }
+    .section-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:13px; }
+    h3 { margin:0; font-size:12px; letter-spacing:.08em; text-transform:uppercase; }
+    .hint { color:var(--muted); font-size:10px; }
+    .bar-row { display:grid; grid-template-columns:minmax(0, 1fr) 52px; gap:10px; align-items:center; margin:10px 0; }
+    .bar-label { display:flex; justify-content:space-between; gap:8px; margin-bottom:4px; font-size:11px; }
+    .bar-label span:first-child { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    .track { height:6px; background:#e7e5da; }
+    .fill { height:100%; background:var(--green); }
+    .bar-value { color:var(--muted); font-size:10px; text-align:right; }
+    .coverage { height:10px; display:flex; margin-top:7px; overflow:hidden; background:#e7e5da; }
+    .coverage .covered { background:var(--green); } .coverage .other { background:var(--lime); }
+    .coverage-key { display:flex; gap:15px; margin-top:9px; color:var(--muted); font-size:10px; }
+    .swatch { width:8px; height:8px; display:inline-block; margin-right:5px; }
+    .selection { display:none; }
+    .selection.active { display:block; }
+    .selected-name { margin:5px 0 7px; font-family:Georgia, serif; font-size:21px; line-height:1.15; }
+    .selected-address { color:var(--muted); font-size:11px; line-height:1.45; }
+    .pill { display:inline-block; margin:11px 5px 0 0; padding:5px 8px; border-radius:99px; background:#edf2e8; color:var(--green); font-size:10px; font-weight:700; }
+    .metrics { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:15px; }
+    .metric { padding:10px; border:1px solid var(--line); }
+    .metric b { display:block; font-family:Georgia, serif; font-size:18px; font-weight:500; }
+    .metric span { color:var(--muted); font-size:9px; text-transform:uppercase; letter-spacing:.05em; }
+    .detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:9px 14px; margin-top:14px; }
+    .detail-grid div { font-size:10px; color:var(--muted); }
+    .detail-grid b { display:block; margin-top:2px; color:var(--ink); font-size:11px; font-weight:600; }
+    .empty { padding:17px; border:1px dashed #c9c8bd; color:var(--muted); font-size:12px; line-height:1.5; }
+    .leaflet-popup-content-wrapper { border-radius:2px; box-shadow:0 8px 30px rgba(16,30,20,.2); }
+    .leaflet-popup-content { margin:13px 15px; min-width:190px; }
+    .popup-name { font-family:Georgia, serif; font-size:16px; line-height:1.15; margin-bottom:5px; }
+    .popup-meta { color:#69736c; font-size:10px; }
+    .popup-value { margin-top:9px; color:#1e5c44; font-size:12px; font-weight:700; }
+    .leaflet-control-attribution { font-size:9px; }
+    @media (max-width:780px) { .shell { height:auto; min-height:100%; grid-template-columns:1fr; grid-template-rows:62vh auto; overflow:visible; } aside { border-left:0; border-top:1px solid var(--line); overflow:visible; } .title-card { top:12px; left:12px; right:12px; max-width:none; padding:13px 15px; } h1 { font-size:24px; } .subtitle { display:none; } .legend { left:12px; bottom:18px; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="map-wrap" aria-label="Facility map">
+      <div id="map"></div>
+      <div class="title-card">
+        <p class="eyebrow">California emissions inventory</p>
+        <h1>Combined Heat &amp; Power Facilities</h1>
+        <p class="subtitle">Explore reported 2023 greenhouse gas, criteria pollutant, and toxic emissions. Select a facility for details.</p>
+      </div>
+      <div class="legend"><b>Marker size</b><div class="legend-row"><span>Total GHG</span><span class="dots"><i class="dot s"></i><i class="dot m"></i><i class="dot l"></i></span><span>higher</span></div></div>
+    </section>
+    <aside><div class="panel">
+      <div class="panel-top"><div><p class="eyebrow">Portfolio snapshot</p><h2>At a glance</h2></div><span class="year">2023</span></div>
+      <div class="stats">
+        <div class="stat"><div class="value" id="facility-count">—</div><div class="label">mapped facilities</div></div>
+        <div class="stat"><div class="value" id="ghg-total">—</div><div class="label">metric tons total GHG</div></div>
+        <div class="stat"><div class="value" id="county-count">—</div><div class="label">California counties</div></div>
+        <div class="stat"><div class="value" id="covered-share">—</div><div class="label">of GHG emissions covered</div></div>
+      </div>
+      <div class="section"><div class="section-head"><h3>Cap-and-trade coverage</h3><span class="hint">metric tons CO₂e</span></div><div class="coverage"><div class="covered" id="covered-bar"></div><div class="other" id="other-bar"></div></div><div class="coverage-key"><span><i class="swatch" style="background:var(--green)"></i>Covered</span><span><i class="swatch" style="background:var(--lime)"></i>Not covered</span></div></div>
+      <div class="section"><div class="section-head"><h3>Largest emitters</h3><span class="hint">total GHG</span></div><div id="rankings"></div></div>
+      <div class="section"><div class="section-head"><h3>Facility details</h3><span class="hint">select on map</span></div><div class="empty" id="empty-state">Click any map marker to inspect its emissions profile and reporting identifiers.</div><div class="selection" id="selection"></div></div>
+    </div></aside>
+  </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script>
+  const facilities = [
+    {name:'SMUD — Carson Power Plant',address:'8580 Laguna Station Road, Elk Grove, CA 95758',city:'Elk Grove',county:'Sacramento',district:'Sacramento Metropolitan AQMD',basin:'Sacramento Valley',lat:38.443,lng:-121.464,arbid:'100130',facid:'193',cap:'Yes',ghg:84543,covered:77331,biomass:7211,nox:5.5,pm25:1.8,formaldehyde:631},
+    {name:'Goal Line LP, 92025',address:'555 North Tulip Street, Escondido, CA 92025',city:'Escondido',county:'San Diego',district:'San Diego County APCD',basin:'San Diego',lat:33.119,lng:-117.099,arbid:'100180',facid:'8469',cap:'No',ghg:6432,covered:0,biomass:0,nox:1,pm25:1.3,formaldehyde:85.4},
+    {name:'OLS Energy Chino',address:'5601 Eucalyptus Ave., Chino, CA 91710',city:'Chino',county:'San Bernardino',district:'South Coast AQMD',basin:'South Coast',lat:33.99,lng:-117.681,arbid:'100236',facid:'47781',cap:'No',ghg:12370,covered:0,biomass:0,nox:1.4,pm25:1,formaldehyde:22.9},
+    {name:'SMUD — Procter & Gamble Power Plant',address:'5000 83rd Street, Sacramento, CA 95826',city:'Sacramento',county:'Sacramento',district:'Sacramento Metropolitan AQMD',basin:'Sacramento Valley',lat:38.53,lng:-121.399,arbid:'100252',facid:'195',cap:'Yes',ghg:316920,covered:316920,biomass:0,nox:20.8,pm25:6.4,formaldehyde:103},
+    {name:'SRI International Cogen Project',address:'333 Ravenswood Avenue, Building U, Menlo Park, CA 94025',city:'Menlo Park',county:'San Mateo',district:'Bay Area AQMD',basin:'San Francisco Bay Area',lat:37.458,lng:-122.176,arbid:'100263',facid:'3011',cap:'No',ghg:22625,covered:0,biomass:0,nox:18.3,pm25:2.8,formaldehyde:2717},
+    {name:'McKittrick Limited',address:'4905 Reward Road, McKittrick, CA 93251',city:'McKittrick',county:'Kern',district:'San Joaquin Valley APCD',basin:'San Joaquin Valley',lat:35.319,lng:-119.662,arbid:'100296',facid:'1251',cap:'No',ghg:19132,covered:0,biomass:0,nox:2.3,pm25:.3,formaldehyde:6.61},
+    {name:'Yuba City Cogeneration Partners LP',address:'873 N. Walton Ave., Yuba City, CA 95993',city:'Yuba City',county:'Sutter',district:'Feather River AQMD',basin:'Sacramento Valley',lat:39.14,lng:-121.643,arbid:'100322',facid:'13001',cap:'Yes',ghg:9539,covered:9539,biomass:0,nox:6.6,pm25:.6,formaldehyde:16.8},
+    {name:'Calpine — Los Medanos Energy Center',address:'750 E. 3rd St, Pittsburg, CA 94565',city:'Pittsburg',county:'Contra Costa',district:'Bay Area AQMD',basin:'San Francisco Bay Area',lat:38.029,lng:-121.873,arbid:'100338',facid:'11866',cap:'Yes',ghg:1208819,covered:1208819,biomass:0,nox:86,pm25:20.7,formaldehyde:9708},
+    {name:'Sycamore Cogeneration Facility',address:'SW China Grade Loop, Bakersfield, CA 93308',city:'Bakersfield',county:'Kern',district:'San Joaquin Valley APCD',basin:'San Joaquin Valley',lat:35.455,lng:-119.002,arbid:'100886',facid:'511',cap:'Yes',ghg:374323,covered:374323,biomass:0,nox:39.6,pm25:11,formaldehyde:4338},
+    {name:'Crockett Cogeneration Project, LP',address:'550 Loring Avenue, Crockett, CA 94525',city:'Crockett',county:'Contra Costa',district:'Bay Area AQMD',basin:'San Francisco Bay Area',lat:38.057,lng:-122.214,arbid:'101263',facid:'8664',cap:'Yes',ghg:694734,covered:694734,biomass:0,nox:90.7,pm25:11.3,formaldehyde:360},
+    {name:'Silicon Valley Power — Cogen',address:'524 Robert Avenue, Santa Clara, CA 95050',city:'Santa Clara',county:'Santa Clara',district:'Bay Area AQMD',basin:'San Francisco Bay Area',lat:37.365,lng:-121.944,arbid:'101438',facid:'—',cap:'Yes',ghg:15006,covered:15006,biomass:0,nox:0,pm25:0,formaldehyde:0},
+    {name:'Kern River Cogeneration Facility',address:'SW China Grade Loop, Bakersfield, CA 93308',city:'Bakersfield',county:'Kern',district:'San Joaquin Valley APCD',basin:'San Joaquin Valley',lat:35.452,lng:-118.984,arbid:'101514',facid:'88',cap:'Yes',ghg:128288,covered:128288,biomass:0,nox:15,pm25:4.5,formaldehyde:303},
+    {name:'Salinas River Cogeneration Facility',address:'Star Route 42, Sargents Canyon Road, San Ardo, CA 93450',city:'San Ardo',county:'Monterey',district:'Monterey Bay ARD',basin:'North Central Coast',lat:35.953,lng:-120.868,arbid:'101518',facid:'1222',cap:'Yes',ghg:154020,covered:154020,biomass:0,nox:20.8,pm25:5.4,formaldehyde:null},
+    {name:'Pixley Cogeneration / Calgren Renewable Fuels',address:'11518 Road 120, Pixley, CA 93256',city:'Pixley',county:'Tulare',district:'San Joaquin Valley APCD',basin:'San Joaquin Valley',lat:35.995,lng:-119.302,arbid:'101685',facid:'6534',cap:'Yes',ghg:127373,covered:12389,biomass:114984,nox:4.8,pm25:8.1,formaldehyde:22},
+    {name:'High Sierra Cogeneration',address:'711-045 Center Rd., Susanville, CA 96130',city:'Susanville',county:'Lassen',district:'Lassen County APCD',basin:'Northeast Plateau',lat:40.404,lng:-120.482,arbid:'104009',facid:'11',cap:'No',ghg:18732,covered:0,biomass:0,nox:27,pm25:7.6,formaldehyde:null}
+  ];
+  const fmt = n => new Intl.NumberFormat('en-US',{maximumFractionDigits:1}).format(n);
+  const compact = n => n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? Math.round(n/1e3)+'K' : fmt(n);
+  const safe = v => v === null || v === undefined || v === '' ? 'Not reported' : fmt(v);
+  const total = key => facilities.reduce((s,d)=>s+(d[key]||0),0);
+  const totalGHG=total('ghg'), totalCovered=total('covered'), coveredPct=totalCovered/totalGHG*100;
+  document.getElementById('facility-count').textContent=facilities.length;
+  document.getElementById('ghg-total').textContent=compact(totalGHG);
+  document.getElementById('county-count').textContent=new Set(facilities.map(d=>d.county)).size;
+  document.getElementById('covered-share').textContent=coveredPct.toFixed(1)+'%';
+  document.getElementById('covered-bar').style.width=coveredPct+'%';
+  document.getElementById('other-bar').style.width=(100-coveredPct)+'%';
+  const topEmitters=facilities.slice().sort((a,b)=>b.ghg-a.ghg).slice(0,5), maxGHG=topEmitters[0].ghg;
+  document.getElementById('rankings').innerHTML=topEmitters.map((d,i)=>`<div class="bar-row"><div><div class="bar-label"><span>${i+1}. ${d.name}</span></div><div class="track"><div class="fill" style="width:${d.ghg/maxGHG*100}%"></div></div></div><div class="bar-value">${compact(d.ghg)}</div></div>`).join('');
+
+  const map=L.map('map',{zoomControl:false}).setView([37.15,-119.7],6);
+  L.control.zoom({position:'bottomright'}).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+  function radius(ghg){ return 6 + Math.sqrt(ghg/1208819)*18; }
+  function select(d){
+    document.getElementById('empty-state').style.display='none';
+    const el=document.getElementById('selection'); el.classList.add('active');
+    el.innerHTML=`<div class="selected-name">${d.name}</div><div class="selected-address">${d.address}</div><span class="pill">${d.cap==='Yes'?'Cap-and-trade':'Not cap-and-trade'}</span><span class="pill">${d.basin}</span><div class="metrics"><div class="metric"><b>${fmt(d.ghg)}</b><span>Total GHG · metric tons</span></div><div class="metric"><b>${fmt(d.covered)}</b><span>Covered GHG · metric tons</span></div><div class="metric"><b>${safe(d.nox)}</b><span>NOx · tons</span></div><div class="metric"><b>${safe(d.pm25)}</b><span>PM2.5 · tons</span></div><div class="metric"><b>${safe(d.formaldehyde)}</b><span>Formaldehyde · lbs</span></div><div class="metric"><b>${safe(d.biomass)}</b><span>Biomass CO₂ · metric tons</span></div></div><div class="detail-grid"><div>County<b>${d.county}</b></div><div>Air district<b>${d.district}</b></div><div>ARB ID<b>${d.arbid}</b></div><div>Facility ID<b>${d.facid}</b></div></div>`;
+  }
+  facilities.forEach(d=>{
+    const marker=L.circleMarker([d.lat,d.lng],{radius:radius(d.ghg),fillColor:d.cap==='Yes'?'#1e5c44':'#d66a36',fillOpacity:.78,color:'#fffdf7',weight:2});
+    marker.bindPopup(`<div class="popup-name">${d.name}</div><div class="popup-meta">${d.city} · ${d.county} County</div><div class="popup-value">${fmt(d.ghg)} metric tons GHG</div>`);
+    marker.on('click',()=>select(d)).addTo(map);
+  });
+  </script>
+</body>
+</html>
