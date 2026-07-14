@@ -1265,8 +1265,8 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
         df.loc[dup_mask, 'lat'] = df.loc[dup_mask, 'lat'] + RADIUS * np.sin(angles)
         df.loc[dup_mask, 'lon'] = df.loc[dup_mask, 'lon'] + RADIUS * np.cos(angles)
 
-    zone_colors = {'NP15': '#1f77b4', 'SP15': '#ff7f0e', 'ZP26': '#2ca02c'}
-    default_color = '#aec7e8'
+    zone_colors = {'NP15': '#2563a8', 'SP15': '#d66a36', 'ZP26': '#1e5c44'}
+    default_color = '#b0c4de'
 
     def _substation_hover_lines(row):
         lines = []
@@ -1798,9 +1798,9 @@ def create_pnode_price_histogram(data: list, bx_label: str) -> go.Figure:
     df_clip['bin_mid'] = df_clip['bin'].apply(lambda x: (x.left + x.right) / 2 if pd.notna(x) else None)
 
     zone_color_map = {
-        'NP15': '#1f77b4',
-        'SP15': '#ff7f0e',
-        'ZP26': '#2ca02c',
+        'NP15': '#2563a8',
+        'SP15': '#d66a36',
+        'ZP26': '#1e5c44',
     }
     zone_order = ['NP15', 'SP15', 'ZP26']
 

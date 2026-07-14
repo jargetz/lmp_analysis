@@ -43,15 +43,158 @@ from charts import (
 )
 
 
+def _inject_css() -> None:
+    """Inject global CSS: Inter/Georgia fonts, cream palette, hide Streamlit chrome."""
+    st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* ── Base background & font ──────────────────────────────────────── */
+.stApp, [data-testid="stAppViewContainer"] {
+    background-color: #f4f1e8 !important;
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    color: #17221b;
+}
+section[data-testid="stMain"], .main .block-container {
+    background-color: #f4f1e8 !important;
+    padding-top: 1.5rem !important;
+}
+
+/* ── Hide Streamlit chrome ───────────────────────────────────────── */
+[data-testid="stHeader"]     { display: none !important; }
+[data-testid="stToolbar"]    { display: none !important; }
+[data-testid="stDecoration"] { display: none !important; }
+#MainMenu                    { display: none !important; }
+footer                       { display: none !important; }
+[data-testid="stSidebar"]    { display: none !important; }
+
+/* ── Headings → Georgia serif ────────────────────────────────────── */
+h1, h2, h3, h4,
+.stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4,
+[data-testid="stHeading"] {
+    font-family: 'Georgia', serif !important;
+    letter-spacing: -.02em;
+    color: #17221b;
+}
+h1 { font-size: 2rem !important; font-weight: 500 !important; }
+h2 { font-size: 1.35rem !important; font-weight: 500 !important; }
+h3 { font-size: 1.1rem !important; font-weight: 500 !important; }
+
+/* ── Tab bar ─────────────────────────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 0;
+    border-bottom: 2px solid #d9d7cb !important;
+    background: transparent !important;
+}
+.stTabs [data-baseweb="tab"] {
+    font-family: 'Inter', sans-serif !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    letter-spacing: .09em !important;
+    text-transform: uppercase !important;
+    color: #69736c !important;
+    background: transparent !important;
+    padding: 10px 20px !important;
+    border-bottom: 2px solid transparent !important;
+}
+.stTabs [aria-selected="true"] {
+    color: #1e5c44 !important;
+    border-bottom: 2px solid #1e5c44 !important;
+    background: transparent !important;
+}
+
+/* ── Metric widgets as bordered cards ────────────────────────────── */
+[data-testid="stMetric"] {
+    border: 1px solid #d9d7cb !important;
+    background: #fffdf7 !important;
+    padding: 14px 16px !important;
+    border-radius: 0 !important;
+}
+[data-testid="stMetricValue"] {
+    font-family: 'Georgia', serif !important;
+    color: #1e5c44 !important;
+    font-size: 1.4rem !important;
+}
+[data-testid="stMetricLabel"] {
+    color: #69736c !important;
+    font-size: 10px !important;
+    text-transform: uppercase !important;
+    letter-spacing: .07em !important;
+}
+[data-testid="stMetricDelta"] svg { display: none; }
+[data-testid="stMetricDelta"] { font-size: 11px !important; }
+
+/* ── Expanders ───────────────────────────────────────────────────── */
+[data-testid="stExpander"] {
+    border: 1px solid #d9d7cb !important;
+    background: #fffdf7 !important;
+    border-radius: 0 !important;
+    margin-bottom: 4px !important;
+}
+[data-testid="stExpander"] > details > summary {
+    font-family: 'Inter', sans-serif !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    letter-spacing: .08em !important;
+    text-transform: uppercase !important;
+    color: #69736c !important;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────── */
+.stButton > button {
+    background-color: #1e5c44 !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 0 !important;
+    font-weight: 600 !important;
+    letter-spacing: .04em !important;
+}
+.stButton > button:hover { background-color: #174a36 !important; }
+
+/* ── Dividers ────────────────────────────────────────────────────── */
+hr { border-color: #d9d7cb !important; }
+
+/* ── Select / input backgrounds ──────────────────────────────────── */
+[data-baseweb="select"] > div,
+[data-testid="stSelectbox"] > div > div {
+    background-color: #fffdf7 !important;
+    border-color: #d9d7cb !important;
+    border-radius: 0 !important;
+}
+input, textarea { border-radius: 0 !important; }
+
+/* ── Info / warning / success banners ────────────────────────────── */
+[data-testid="stAlert"] {
+    border-radius: 0 !important;
+    border-left-width: 3px !important;
+}
+
+/* ── Sidebar toggle button (hidden along with sidebar) ───────────── */
+[data-testid="collapsedControl"] { display: none !important; }
+</style>
+""", unsafe_allow_html=True)
+
+
 def main():
     st.set_page_config(
         page_title="BX CAISO Nodal Analysis Tool",
         page_icon="⚡",
         layout="wide"
     )
-    
-    st.title("⚡ BX CAISO Nodal Analysis Tool")
-    st.markdown("Analyze historical data for the cheapest 4–10 hours of nodal prices across CAISO.")
+    _inject_css()
+
+    st.markdown(
+        '<p style="margin:0 0 6px;color:#1e5c44;font-size:11px;font-weight:800;'
+        'letter-spacing:.14em;text-transform:uppercase">CAISO Day Ahead LMP</p>',
+        unsafe_allow_html=True,
+    )
+    st.title("⚡ BX Nodal Analysis Tool")
+    st.markdown(
+        '<p style="margin:-8px 0 0;color:#69736c;font-size:13px;line-height:1.5">'
+        "Analyze the cheapest 4–10 hours of CAISO Day Ahead nodal prices "
+        "for any node, zone, or facility.</p>",
+        unsafe_allow_html=True,
+    )
     
     # Initialize session state (database-backed)
     if 'processor' not in st.session_state:
@@ -95,38 +238,23 @@ def main():
             st.session_state.zone_years = [2024]
         st.session_state.init_data = True
     
-    with st.sidebar:
-        st.header("Data Status")
-        
-        summary = st.session_state.db_summary
-        if summary and summary.get('total_records', 0) > 0:
-            st.success("Data loaded and ready")
-            st.caption("All data in MotherDuck (DuckDB cloud)")
-            st.session_state.data_loaded = True
-            
-            st.subheader("Data Details")
-            st.markdown("**Zones (zonal data)**")
-            st.markdown("NP15, SP15, ZP26")
-            
-            zone_earliest = summary.get('earliest_date', '')
-            zone_latest = summary.get('latest_date', '')
-            if hasattr(zone_earliest, 'strftime'):
-                zone_earliest = zone_earliest.strftime('%Y-%m-%d')
-            if hasattr(zone_latest, 'strftime'):
-                zone_latest = zone_latest.strftime('%Y-%m-%d')
-            zone_earliest = str(zone_earliest).split(' ')[0] if zone_earliest else ''
-            zone_latest = str(zone_latest).split(' ')[0] if zone_latest else ''
-            
-            if zone_earliest and zone_latest:
-                st.markdown(f"Zone data: {zone_earliest} to {zone_latest}")
-            
-            available_years = st.session_state.get('init_years', [2024])
-            if available_years:
-                st.markdown(f"Node data years: {min(available_years)}–{max(available_years)}")
-        else:
-            st.warning("No data available")
-            st.caption("MotherDuck database may be loading...")
-            st.session_state.data_loaded = False
+    # Data status — computed inline (sidebar removed)
+    summary = st.session_state.db_summary
+    if summary and summary.get('total_records', 0) > 0:
+        st.session_state.data_loaded = True
+        available_years = st.session_state.get('init_years', [2024])
+        zone_earliest = str(summary.get('earliest_date', '')).split(' ')[0]
+        zone_latest   = str(summary.get('latest_date', '')).split(' ')[0]
+        _range = f" · {zone_earliest} → {zone_latest}" if zone_earliest and zone_latest else ""
+        _years = (f" · Node data {min(available_years)}–{max(available_years)}"
+                  if available_years else "")
+        st.markdown(
+            f'<p style="color:#69736c;font-size:11px;margin:0 0 12px">'
+            f'🟢 Connected to MotherDuck — NP15 · SP15 · ZP26{_range}{_years}</p>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.session_state.data_loaded = False
     
     # Main content area
     if not st.session_state.data_loaded:
