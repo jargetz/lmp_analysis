@@ -1146,6 +1146,47 @@ def create_node_box_plot(
     return fig, clipping_info
 
 
+def add_chp_facility_traces(fig: go.Figure, chp_data: list, non_biomass_only: bool = False) -> None:
+    """Overlay CHP cogeneration facility markers on an existing Scattermapbox figure.
+
+    Uses orange markers (distinct from CARB red/gray) so they stand out clearly.
+    non_biomass_only: when True, excludes facilities where biomass_co2 > 0.
+    """
+    if not chp_data:
+        return
+    df = pd.DataFrame(chp_data)
+    if non_biomass_only:
+        df = df[df['biomass_co2'] == 0].reset_index(drop=True)
+    if df.empty:
+        return
+    for covered, label, color, size in [
+        ('Yes', 'CHP — Cap & Trade covered', '#D95F00', 13),
+        ('No',  'CHP — Not covered',         '#FFA94D',  9),
+    ]:
+        sub = df[df['cap_and_trade'] == covered]
+        if sub.empty:
+            continue
+        bm_text = sub['biomass_co2'].apply(lambda x: f'  ·  Biomass CO₂: {x:,.0f} MT' if x > 0 else '')
+        hover = (
+            '<b>' + sub['facility'].astype(str) + '</b><br>'
+            'CHP Cogeneration · ' + sub['city'].astype(str)
+            + ', ' + sub['county'].astype(str) + ' Co.<br>'
+            'Cap-and-Trade: ' + sub['cap_and_trade'].astype(str) + '<br>'
+            'Total GHG: ' + sub['total_ghg'].apply(lambda x: f'{x:,.0f}') + ' MT CO₂e<br>'
+            'Non-Biomass GHG: ' + sub['non_biomass_ghg'].apply(lambda x: f'{x:,.0f}') + ' MT'
+            + bm_text
+        )
+        fig.add_trace(go.Scattermapbox(
+            lat=sub['lat'].tolist(),
+            lon=sub['lon'].tolist(),
+            mode='markers',
+            name=label,
+            marker=dict(symbol='circle', size=size, color=color, opacity=0.9),
+            customdata=hover.tolist(),
+            hovertemplate='%{customdata}<extra></extra>',
+        ))
+
+
 def _add_facility_traces(fig: go.Figure, facilities: list) -> None:
     """Add CARB facility markers to an existing mapbox figure."""
     if not facilities:

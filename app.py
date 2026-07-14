@@ -39,7 +39,48 @@ from charts import (
     create_pnode_price_histogram,
     create_node_finder_map,
     create_node_analysis_chart,
+    add_chp_facility_traces,
 )
+
+@st.cache_data
+def _load_chp_csv():
+    """Load CHP cogeneration facility list from the attached CARB CSV (cached)."""
+    import os
+    path = 'attached_assets/Combined_heat_and_power_list_CA_1784061039546.csv'
+    if not os.path.exists(path):
+        return []
+    try:
+        df = pd.read_csv(path, skipfooter=2, engine='python')
+        df.columns = [c.strip() for c in df.columns]
+        def _n(v):
+            try:
+                return float(str(v).replace(',', '').strip())
+            except Exception:
+                return 0.0
+        records = []
+        for _, r in df.iterrows():
+            try:
+                lat = float(r['Latitude'])
+                lon = float(r['Longitude'])
+                if lat != lat or lon != lon:  # NaN guard
+                    continue
+            except Exception:
+                continue
+            records.append({
+                'facility':        str(r.get('Facility', '')).strip(),
+                'city':            str(r.get('City', '')).strip(),
+                'county':          str(r.get('County', '')).strip(),
+                'cap_and_trade':   str(r.get('Cap-and-Trade', 'No')).strip(),
+                'lat':             lat,
+                'lon':             lon,
+                'total_ghg':       _n(r.get('Total GHG', 0)),
+                'non_biomass_ghg': _n(r.get('Non-Biomass GHG', 0)),
+                'biomass_co2':     _n(r.get('Biomass CO2', 0)),
+            })
+        return records
+    except Exception:
+        return []
+
 
 def main():
     st.set_page_config(
@@ -1130,6 +1171,18 @@ def render_node_map_tab():
         else:
             fac_filter = "All facilities"
 
+    chp_col1, chp_col2 = st.columns([1, 3])
+    with chp_col1:
+        show_chp = st.checkbox("Show CHP generators", value=False, key="map_show_chp")
+    with chp_col2:
+        if show_chp:
+            chp_nonbiomass = st.checkbox(
+                "Non-biomass only (exclude facilities where Biomass CO₂ > 0)",
+                value=True, key="map_chp_nonbiomass",
+            )
+        else:
+            chp_nonbiomass = True
+
     st.divider()
 
     # ── Load facility data (cached for the session) ───────────────────────────
@@ -1329,6 +1382,9 @@ def render_node_map_tab():
             nearest_substation=nearest_substation,
             nearest_lv_substation=nearest_lv_sub,
         )
+
+        if show_chp:
+            add_chp_facility_traces(fig, _load_chp_csv(), non_biomass_only=chp_nonbiomass)
 
         map_event = st.plotly_chart(
             fig,
