@@ -230,88 +230,78 @@ def main():
         st.session_state.data_loaded = False
     
     if 'init_data' not in st.session_state:
-        import subprocess
-        import json as json_mod
         st.session_state.db_connection = {
             'status': 'connecting',
             'stage': 'startup',
             'message': 'Starting the MotherDuck connection check.',
         }
-        try:
-            r = subprocess.run([sys.executable, 'subprocess_query.py', 'init_dashboard'],
-                               capture_output=True, text=True, timeout=30)
-            if r.stderr.strip():
-                # Safe diagnostics from subprocess_query.py; credentials are redacted there.
-                print(r.stderr.strip(), flush=True)
-            if r.returncode == 0 and r.stdout.strip():
-                init_data = json_mod.loads(r.stdout.strip())
-                if init_data.get('error'):
-                    st.session_state.db_connection = {
-                        'status': 'error',
-                        'stage': init_data.get('stage', 'unknown'),
-                        'error_type': init_data.get('error_type', 'ConnectionError'),
-                        'message': init_data['error'],
-                    }
-                    st.session_state.db_summary = {}
-                    st.session_state.init_years = [2024]
-                    st.session_state.init_nodes = []
-                    st.session_state.individual_nodes = []
-                    st.session_state.zone_years = [2024]
-                    st.session_state.node_years = [2024]
-                else:
-                    st.session_state.db_connection = {
-                        'status': 'connected',
-                        'stage': 'dashboard_data',
-                        'message': 'Connected to caiso_lmp and loaded dashboard metadata.',
-                    }
-                    st.session_state.db_summary = init_data.get('data_summary', {})
-                    st.session_state.init_years = init_data.get('available_years', [2024])
-                    st.session_state.init_nodes = init_data.get('all_nodes', [])
-                    st.session_state.individual_nodes = init_data.get('individual_nodes', [])
-                    st.session_state.zone_years = init_data.get('zone_years', [2024])
-                    st.session_state.node_years = init_data.get('node_years', [2024])
-            else:
-                message = r.stderr.strip() or f'Diagnostic process exited with code {r.returncode}.'
+        with st.status("Connecting to MotherDuck…", expanded=True) as startup_status:
+            progress = st.progress(10, text="Starting database connection")
+            st.write("⏳ Opening a secure MotherDuck connection")
+            stage = 'connection'
+            try:
+                summary = _run_site_query('data_summary', timeout=30)
+                progress.progress(45, text="Database connected; summary loaded")
+                st.write("✅ Connected to `caiso_lmp`")
+                st.write("✅ Loaded dashboard summary")
+
+                stage = 'available_years'
+                earliest_year = int(str(summary.get('earliest_date', '2024'))[:4])
+                latest_year = int(str(summary.get('latest_date', '2024'))[:4])
+                years = list(range(latest_year, earliest_year - 1, -1))
+                progress.progress(70, text="Reading available years")
+                st.write(f"✅ Found data for {len(years)} year(s)")
+
+                stage = 'node_options'
+                try:
+                    nodes = _run_site_query('all_individual_nodes', timeout=45)
+                    st.write(f"✅ Loaded {len(nodes):,} node options")
+                    node_warning = None
+                except Exception as node_exc:
+                    # Node choices are useful but not required for maps or initial access.
+                    nodes = []
+                    node_warning = str(node_exc)
+                    st.write("⚠️ Node choices will be unavailable until the next retry")
+                    print(f'[motherduck] optional node list failed: {node_exc}', flush=True)
+
+                progress.progress(100, text="Dashboard ready")
+                startup_status.update(
+                    label="MotherDuck connected — dashboard ready",
+                    state="complete",
+                    expanded=False,
+                )
+                st.session_state.db_connection = {
+                    'status': 'connected',
+                    'stage': 'dashboard_data',
+                    'message': 'Connected to caiso_lmp and loaded dashboard metadata.',
+                    'node_warning': node_warning,
+                }
+                st.session_state.db_summary = summary
+                st.session_state.init_years = years
+                st.session_state.init_nodes = nodes
+                st.session_state.individual_nodes = nodes
+                st.session_state.zone_years = years
+                st.session_state.node_years = years
+            except Exception as exc:
+                progress.progress(100, text="Connection failed")
+                startup_status.update(
+                    label="MotherDuck connection failed",
+                    state="error",
+                    expanded=True,
+                )
                 st.session_state.db_connection = {
                     'status': 'error',
-                    'stage': 'diagnostic_process',
-                    'error_type': 'SubprocessError',
-                    'message': message,
+                    'stage': stage,
+                    'error_type': type(exc).__name__,
+                    'message': str(exc),
                 }
+                print(f'[motherduck] {stage} failed ({type(exc).__name__}): {exc}', flush=True)
                 st.session_state.db_summary = {}
                 st.session_state.init_years = [2024]
                 st.session_state.node_years = [2024]
                 st.session_state.init_nodes = []
                 st.session_state.individual_nodes = []
                 st.session_state.zone_years = [2024]
-        except subprocess.TimeoutExpired:
-            st.session_state.db_connection = {
-                'status': 'error',
-                'stage': 'connection_timeout',
-                'error_type': 'TimeoutExpired',
-                'message': 'MotherDuck did not respond within 30 seconds.',
-            }
-            print('[motherduck] startup failed: connection timed out after 30 seconds', flush=True)
-            st.session_state.db_summary = {}
-            st.session_state.init_years = [2024]
-            st.session_state.node_years = [2024]
-            st.session_state.init_nodes = []
-            st.session_state.individual_nodes = []
-            st.session_state.zone_years = [2024]
-        except Exception as exc:
-            st.session_state.db_connection = {
-                'status': 'error',
-                'stage': 'dashboard_startup',
-                'error_type': type(exc).__name__,
-                'message': str(exc),
-            }
-            print(f'[motherduck] dashboard startup failed ({type(exc).__name__}): {exc}', flush=True)
-            st.session_state.db_summary = {}
-            st.session_state.init_years = [2024]
-            st.session_state.node_years = [2024]
-            st.session_state.init_nodes = []
-            st.session_state.individual_nodes = []
-            st.session_state.zone_years = [2024]
         st.session_state.init_data = True
     
     # Data status — computed inline (sidebar removed)

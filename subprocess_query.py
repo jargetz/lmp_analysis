@@ -89,6 +89,8 @@ def run_query():
             result = get_available_years(conn)
         elif query_type == 'all_nodes_from_summary':
             result = get_all_nodes_from_summary(conn)
+        elif query_type == 'all_individual_nodes':
+            result = get_all_individual_nodes(conn)
         elif query_type == 'raw_sql':
             sql = sys.argv[2]
             params = json.loads(sys.argv[3]) if len(sys.argv) > 3 else None
@@ -699,12 +701,10 @@ def get_node_coverage(conn, year):
     }
 
 def get_all_individual_nodes(conn):
-    """Get all distinct node names from node_hourly_lmp + node_zone_mapping + generator_bx_summary"""
+    """Get selectable nodes without scanning the very large hourly LMP table."""
     try:
         result = conn.execute("""
             SELECT DISTINCT name FROM (
-                SELECT DISTINCT node as name FROM node_hourly_lmp
-                UNION
                 SELECT pnode_id as name FROM node_zone_mapping
                 UNION
                 SELECT node as name FROM generator_bx_summary
