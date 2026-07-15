@@ -41,13 +41,17 @@ from charts import (
 )
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
 def _run_site_query(query_type, *args, timeout=60):
     """Run and cache a Site Analysis query using Streamlit's Python environment."""
     import json
     import subprocess
 
-    cmd = [sys.executable, 'subprocess_query.py', query_type, *[str(arg) for arg in args]]
+    encoded_args = [
+        json.dumps(arg) if isinstance(arg, (list, dict)) else str(arg)
+        for arg in args
+    ]
+    cmd = [sys.executable, 'subprocess_query.py', query_type, *encoded_args]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
@@ -408,7 +412,19 @@ def render_dashboard_tab():
         st.session_state.all_nodes = st.session_state.get('individual_nodes', [])
         st.session_state.dashboard_initialized = True
 
+    controls_disabled = st.session_state.get('price_analysis_loading', False)
+
+    def _mark_price_loading():
+        st.session_state.price_analysis_loading = True
+
     st.header("LMP Dashboard")
+    if controls_disabled:
+        pending_nodes = st.session_state.get('node_multiselect', [])
+        node_text = f"{len(pending_nodes)} selected node(s)" if pending_nodes else "selection"
+        st.info(
+            f"Updating Price Analysis for {node_text}. Controls are temporarily disabled "
+            "until the current MotherDuck queries finish."
+        )
 
     selected_nodes = []
     node_col, options_col = st.columns([3, 1])
@@ -445,23 +461,26 @@ def render_dashboard_tab():
         _dlap_col1, _dlap_col2, _dlap_col3, _ = st.columns(4)
         for _btn_col, (_label, _nid) in zip([_dlap_col1, _dlap_col2, _dlap_col3], _dlap_nodes):
             with _btn_col:
-                if st.button(_label, key=f"dlap_{_nid}"):
+                if st.button(_label, key=f"dlap_{_nid}", disabled=controls_disabled):
                     _cur = st.session_state.get('selected_nodes_list', [])
                     if _nid not in _cur:
                         updated = _cur + [_nid]
                         st.session_state.selected_nodes_list = updated
                         st.session_state.node_multiselect = updated
+                        st.session_state.price_analysis_loading = True
+                        st.rerun(scope="fragment")
 
         prefix_col, add_col = st.columns([4, 1])
         with prefix_col:
             prefix = st.text_input(
                 "Add nodes by prefix",
                 placeholder="e.g., PGE, SCE, SLAP",
-                key="node_prefix"
+                key="node_prefix",
+                disabled=controls_disabled,
             )
         with add_col:
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("Add All", key="add_prefix"):
+            if st.button("Add All", key="add_prefix", disabled=controls_disabled):
                 if prefix and len(prefix) >= 2:
                     matching = [n for n in st.session_state.all_nodes
                                 if n.upper().startswith(prefix.upper())]
@@ -470,12 +489,16 @@ def render_dashboard_tab():
                         updated = list(dict.fromkeys(cur + matching))
                         st.session_state.selected_nodes_list = updated
                         st.session_state.node_multiselect = updated
+                        st.session_state.price_analysis_loading = True
+                        st.rerun(scope="fragment")
 
         selected_nodes = st.multiselect(
             "Selected Nodes",
             options=node_options,
             placeholder="Type to search nodes...",
-            key="node_multiselect"
+            key="node_multiselect",
+            on_change=_mark_price_loading,
+            disabled=controls_disabled,
         )
         st.session_state.selected_nodes_list = list(dict.fromkeys(selected_nodes))
 
@@ -484,8 +507,12 @@ def render_dashboard_tab():
             def _clear_selected_nodes():
                 st.session_state.selected_nodes_list = []
                 st.session_state.node_multiselect = []
+                _mark_price_loading()
 
-            st.button("Clear All", key="clear_nodes", on_click=_clear_selected_nodes)
+            st.button(
+                "Clear All", key="clear_nodes", on_click=_clear_selected_nodes,
+                disabled=controls_disabled,
+            )
 
     parquet_years = st.session_state.get('node_years', st.session_state.get('parquet_years', [2024]))
     with options_col:
@@ -495,11 +522,15 @@ def render_dashboard_tab():
             index=4,
             format_func=lambda x: f"B{x}",
             key="node_bx",
+            on_change=_mark_price_loading,
+            disabled=controls_disabled,
         )
         time_period = st.selectbox(
             "Time Period",
             options=["Annual", "Monthly"],
             key="node_time_period",
+            on_change=_mark_price_loading,
+            disabled=controls_disabled,
         )
         if time_period == "Annual":
             year_options = ["Last 12 months"] + parquet_years
@@ -511,6 +542,8 @@ def render_dashboard_tab():
                 options=year_options,
                 index=default_year_idx,
                 key="node_annual_year",
+                on_change=_mark_price_loading,
+                disabled=controls_disabled,
             )
             st.session_state.last_node_year = selected_year
             selected_month = None
@@ -519,6 +552,8 @@ def render_dashboard_tab():
                 "Year",
                 options=parquet_years,
                 key="monthly_year_node",
+                on_change=_mark_price_loading,
+                disabled=controls_disabled,
             )
             month_options = ["January", "February", "March", "April", "May", "June",
                              "July", "August", "September", "October", "November", "December"]
@@ -526,6 +561,8 @@ def render_dashboard_tab():
                 "Month",
                 options=month_options,
                 key="monthly_month_node",
+                on_change=_mark_price_loading,
+                disabled=controls_disabled,
             )
             selected_month = month_options.index(selected_month_name) + 1
     
@@ -577,21 +614,12 @@ conn.close()
             if not selected_nodes:
                 st.info("Select one or more nodes above to see BX statistics.")
             else:
-                import subprocess
-                import json
-                
                 def run_subprocess_query(query_type, *args, timeout=60):
-                    """Run MotherDuck query in subprocess to avoid Streamlit blocking"""
-                    cmd = [sys.executable, 'subprocess_query.py', query_type] + [str(a) if not isinstance(a, list) else json.dumps(a) for a in args]
+                    """Run a cached MotherDuck query and normalize failures."""
                     try:
-                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-                        if result.returncode == 0:
-                            return json.loads(result.stdout)
-                        return {'success': False, 'error': result.stderr}
-                    except subprocess.TimeoutExpired:
-                        return {'success': False, 'error': f'Query timed out after {timeout}s'}
-                    except Exception as e:
-                        return {'success': False, 'error': str(e)}
+                        return _run_site_query(query_type, *args, timeout=timeout)
+                    except Exception as exc:
+                        return {'success': False, 'error': str(exc)}
                 
                 # Map display year to query param ('last12' or integer string)
                 _node_year_param = 'last12' if selected_year == 'Last 12 months' else str(selected_year)
@@ -736,6 +764,10 @@ conn.close()
     except Exception as e:
         st.warning(f"Could not load BX statistics: {str(e)}")
         st.info("Make sure LMP data is loaded and BX calculations have been run.")
+
+    if controls_disabled:
+        st.session_state.price_analysis_loading = False
+        st.rerun(scope="fragment")
 
 
 def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
