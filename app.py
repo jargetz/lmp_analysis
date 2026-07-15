@@ -435,6 +435,10 @@ def render_dashboard_tab():
             st.session_state.node_multiselect = [
                 node for node in st.session_state.node_multiselect if node in valid_nodes
             ]
+        else:
+            st.session_state.node_multiselect = list(
+                st.session_state.selected_nodes_list
+            )
 
         # DLAP utility quick-select
         st.caption("**Quick add** — utility DLAP nodes")
@@ -470,7 +474,6 @@ def render_dashboard_tab():
         selected_nodes = st.multiselect(
             "Selected Nodes",
             options=node_options,
-            default=st.session_state.selected_nodes_list,
             placeholder="Type to search nodes...",
             key="node_multiselect"
         )
