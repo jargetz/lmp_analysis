@@ -35,11 +35,33 @@ from charts import (
     create_node_month_hour_heatmap,
     create_8760_heatmap,
     create_pnode_map,
-    create_pnode_price_histogram,
     create_node_finder_map,
     create_node_analysis_chart,
     add_chp_facility_traces,
 )
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _run_site_query(query_type, *args, timeout=60):
+    """Run and cache a Site Analysis query using Streamlit's Python environment."""
+    import json
+    import subprocess
+
+    cmd = [sys.executable, 'subprocess_query.py', query_type, *[str(arg) for arg in args]]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f'{query_type} timed out after {timeout} seconds') from exc
+
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or f'{query_type} exited with code {proc.returncode}')
+    if not proc.stdout.strip():
+        raise RuntimeError(f'{query_type} returned an empty response')
+
+    result = json.loads(proc.stdout)
+    if isinstance(result, dict) and result.get('error'):
+        raise RuntimeError(result['error'])
+    return result
 
 
 def _inject_css() -> None:
@@ -1053,17 +1075,16 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
     return html
 
 
+@st.fragment
 def render_node_map_tab():
     """Render the Site Analysis tab: two-column map + node analysis panel."""
-    import subprocess
-    import json
     import math as _math
     import numpy as _np
     st.header("Site Analysis")
     st.markdown("Geographic view of PNODE B*X* average prices. Select a facility or click a node to see its analysis.")
 
     # ── Filters (full width) ──────────────────────────────────────────────────
-    map_col1, map_col2, map_col3, map_col4, map_col5 = st.columns([1, 1, 1, 1, 1])
+    map_col1, map_col2, map_col3, map_col4 = st.columns([1, 1, 1, 1])
 
     with map_col1:
         map_bx = st.selectbox(
@@ -1117,9 +1138,6 @@ def render_node_map_tab():
             map_month_name = st.selectbox("Month", options=month_options, key="map_month")
             map_month = month_options.index(map_month_name) + 1
 
-    with map_col5:
-        color_by = st.radio("Color by", options=["Zone", "Price"], key="map_color_by", horizontal=True)
-
     # ── Partial-year / Last-12 callouts ───────────────────────────────────────
     from datetime import date as _date
     _today = _date.today()
@@ -1171,19 +1189,15 @@ def render_node_map_tab():
 
     st.divider()
 
-    # ── Load facility data (cached for the session) ───────────────────────────
+    # ── Load facility data ────────────────────────────────────────────────────
     if 'facility_data' not in st.session_state:
         with st.spinner("Loading CARB facility data…"):
             try:
-                proc = subprocess.run(
-                    [sys.executable, 'subprocess_query.py', 'facility_emissions'],
-                    capture_output=True, text=True, timeout=30
+                st.session_state['facility_data'] = _run_site_query(
+                    'facility_emissions', timeout=30
                 )
-                if proc.returncode == 0:
-                    st.session_state['facility_data'] = json.loads(proc.stdout)
-                else:
-                    st.session_state['facility_data'] = []
-            except Exception:
+            except Exception as exc:
+                print(f'[site-analysis] facility query failed: {exc}', flush=True)
                 st.session_state['facility_data'] = []
 
     facilities_all = st.session_state.get('facility_data', [])
@@ -1198,27 +1212,18 @@ def render_node_map_tab():
     period_label = map_year if map_year == 'Last 12 months' else (
         str(map_year) if map_time_period == "Annual" else f"{month_options[map_month - 1]} {map_year}"
     )
-    cache_key = f"node_map_{map_bx}_{_map_year_param}_{map_time_period}_{map_month}"
-
-    if cache_key not in st.session_state:
-        with st.spinner(f"Loading B{map_bx} node map for {period_label}…"):
-            cmd = [
-                sys.executable, 'subprocess_query.py', 'node_map',
+    with st.spinner(f"Loading B{map_bx} node map for {period_label}…"):
+        try:
+            map_data = _run_site_query(
+                'node_map',
                 str(map_bx), _map_year_param, map_time_period,
                 str(map_month) if map_month else '',
-            ]
-            try:
-                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-                if proc.returncode == 0:
-                    st.session_state[cache_key] = json.loads(proc.stdout)
-                else:
-                    st.session_state[cache_key] = {'error': proc.stderr}
-            except subprocess.TimeoutExpired:
-                st.session_state[cache_key] = {'error': 'Query timed out after 60s'}
-            except Exception as exc:
-                st.session_state[cache_key] = {'error': str(exc)}
-
-    map_data = st.session_state.get(cache_key, [])
+                timeout=60,
+            )
+        except Exception as exc:
+            st.error(f"Map data error: {exc}")
+            print(f'[site-analysis] map query failed: {exc}', flush=True)
+            return
 
     if isinstance(map_data, dict) and map_data.get('error'):
         st.error(f"Map data error: {map_data['error']}")
@@ -1228,12 +1233,8 @@ def render_node_map_tab():
         st.warning("No coordinate data found for the selected period.")
         return
 
-    # ── Histogram (full width, above columns) ─────────────────────────────────
     total_nodes = len(map_data)
     fac_note = f" · {len(facilities_to_show)} facilities shown" if facilities_to_show else ""
-    st.caption(f"{total_nodes:,} nodes with coordinates plotted{fac_note}")
-    hist_fig = create_pnode_price_histogram(map_data, bx_label=f"B{map_bx}")
-    st.plotly_chart(hist_fig, use_container_width=True)
 
     # ── Load substation CSV (cached) ──────────────────────────────────────────
     if 'ca_substations_df' not in st.session_state:
@@ -1314,6 +1315,14 @@ def render_node_map_tab():
             placeholder="Type to search...",
             key="map_facility_search",
         )
+
+        color_by = st.radio(
+            "Color map by",
+            options=["Zone", "Price"],
+            key="map_color_by",
+            horizontal=True,
+        )
+        st.caption(f"{total_nodes:,} nodes with coordinates plotted{fac_note}")
 
         # Resolve facility → nearest node
         selected_facility = None
@@ -1433,18 +1442,12 @@ def render_node_map_tab():
             if node_zone in ('NP15', 'SP15', 'ZP26'):
                 dlap_cache_key = f"dlap_{node_zone}_8_{_map_year_param}_{map_time_period}_{map_month}"
                 if dlap_cache_key not in st.session_state:
-                    cmd = [sys.executable, 'subprocess_query.py', 'dlap_zone_bx',
-                           node_zone, '8', _map_year_param,
-                           map_time_period,
-                           str(map_month) if map_month else '']
                     try:
-                        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-                        if proc.returncode == 0 and proc.stdout.strip():
-                            st.session_state[dlap_cache_key] = json.loads(proc.stdout)
-                        else:
-                            st.session_state[dlap_cache_key] = {
-                                'success': False, 'error': proc.stderr or 'Empty response'
-                            }
+                        st.session_state[dlap_cache_key] = _run_site_query(
+                            'dlap_zone_bx', node_zone, '8', _map_year_param,
+                            map_time_period, str(map_month) if map_month else '',
+                            timeout=30,
+                        )
                     except Exception as exc:
                         st.session_state[dlap_cache_key] = {'success': False, 'error': str(exc)}
 
@@ -1458,16 +1461,15 @@ def render_node_map_tab():
                     if map_bx != 8:
                         node_b8_key = f"node_b8_{pnode_id}_{_map_year_param}_{map_time_period}_{map_month}"
                         if node_b8_key not in st.session_state:
-                            cmd_b8 = [sys.executable, 'subprocess_query.py', 'node_bx_single',
-                                      pnode_id, '8', _map_year_param]
                             try:
-                                proc_b8 = subprocess.run(cmd_b8, capture_output=True, text=True, timeout=30)
-                                if proc_b8.returncode == 0 and proc_b8.stdout.strip():
-                                    st.session_state[node_b8_key] = json.loads(proc_b8.stdout)
-                                else:
-                                    st.session_state[node_b8_key] = {'success': False}
-                            except Exception:
-                                st.session_state[node_b8_key] = {'success': False}
+                                st.session_state[node_b8_key] = _run_site_query(
+                                    'node_bx_single', pnode_id, '8', _map_year_param,
+                                    timeout=30,
+                                )
+                            except Exception as exc:
+                                st.session_state[node_b8_key] = {
+                                    'success': False, 'error': str(exc)
+                                }
                         b8_result = st.session_state.get(node_b8_key, {})
                         if b8_result.get('success') and b8_result.get('monthly'):
                             monthly_rows = b8_result['monthly']
@@ -1503,16 +1505,11 @@ def render_node_map_tab():
             monthly_cache_key = f"node_monthly_{pnode_id}_{map_bx}_{_map_year_param}"
             if monthly_cache_key not in st.session_state:
                 with st.spinner("Loading monthly data…"):
-                    cmd = [sys.executable, 'subprocess_query.py', 'node_bx_single',
-                           pnode_id, str(map_bx), _map_year_param]
                     try:
-                        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-                        if proc.returncode == 0 and proc.stdout.strip():
-                            st.session_state[monthly_cache_key] = json.loads(proc.stdout)
-                        else:
-                            st.session_state[monthly_cache_key] = {
-                                'success': False, 'error': proc.stderr or 'Empty response'
-                            }
+                        st.session_state[monthly_cache_key] = _run_site_query(
+                            'node_bx_single', pnode_id, str(map_bx), _map_year_param,
+                            timeout=30,
+                        )
                     except Exception as exc:
                         st.session_state[monthly_cache_key] = {'success': False, 'error': str(exc)}
 
