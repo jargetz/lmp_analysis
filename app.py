@@ -412,19 +412,7 @@ def render_dashboard_tab():
         st.session_state.all_nodes = st.session_state.get('individual_nodes', [])
         st.session_state.dashboard_initialized = True
 
-    controls_disabled = st.session_state.get('price_analysis_loading', False)
-
-    def _mark_price_loading():
-        st.session_state.price_analysis_loading = True
-
     st.header("LMP Dashboard")
-    if controls_disabled:
-        pending_nodes = st.session_state.get('node_multiselect', [])
-        node_text = f"{len(pending_nodes)} selected node(s)" if pending_nodes else "selection"
-        st.info(
-            f"Updating Price Analysis for {node_text}. Controls are temporarily disabled "
-            "until the current MotherDuck queries finish."
-        )
 
     selected_nodes = []
     node_col, options_col = st.columns([3, 1])
@@ -455,20 +443,32 @@ def render_dashboard_tab():
             st.session_state.node_multiselect = list(
                 st.session_state.selected_nodes_list
             )
+        if 'price_applied_nodes' not in st.session_state:
+            st.session_state.price_applied_nodes = list(
+                st.session_state.selected_nodes_list
+            )
+        st.session_state.price_applied_nodes = [
+            node for node in st.session_state.price_applied_nodes if node in valid_nodes
+        ]
+        # Remove state from the previous disabled-controls implementation.
+        st.session_state.pop('price_analysis_loading', None)
 
         # DLAP utility quick-select
+        st.subheader("1. Select nodes")
+        st.caption(
+            "Build your node selection below. No database queries run until you click "
+            "**Update Results**."
+        )
         st.caption("**Quick add** — utility DLAP nodes")
         _dlap_col1, _dlap_col2, _dlap_col3, _ = st.columns(4)
         for _btn_col, (_label, _nid) in zip([_dlap_col1, _dlap_col2, _dlap_col3], _dlap_nodes):
             with _btn_col:
-                if st.button(_label, key=f"dlap_{_nid}", disabled=controls_disabled):
+                if st.button(_label, key=f"dlap_{_nid}"):
                     _cur = st.session_state.get('selected_nodes_list', [])
                     if _nid not in _cur:
                         updated = _cur + [_nid]
                         st.session_state.selected_nodes_list = updated
                         st.session_state.node_multiselect = updated
-                        st.session_state.price_analysis_loading = True
-                        st.rerun(scope="fragment")
 
         prefix_col, add_col = st.columns([4, 1])
         with prefix_col:
@@ -476,11 +476,10 @@ def render_dashboard_tab():
                 "Add nodes by prefix",
                 placeholder="e.g., PGE, SCE, SLAP",
                 key="node_prefix",
-                disabled=controls_disabled,
             )
         with add_col:
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("Add All", key="add_prefix", disabled=controls_disabled):
+            if st.button("Add All", key="add_prefix"):
                 if prefix and len(prefix) >= 2:
                     matching = [n for n in st.session_state.all_nodes
                                 if n.upper().startswith(prefix.upper())]
@@ -489,48 +488,73 @@ def render_dashboard_tab():
                         updated = list(dict.fromkeys(cur + matching))
                         st.session_state.selected_nodes_list = updated
                         st.session_state.node_multiselect = updated
-                        st.session_state.price_analysis_loading = True
-                        st.rerun(scope="fragment")
 
-        selected_nodes = st.multiselect(
+        draft_nodes = st.multiselect(
             "Selected Nodes",
             options=node_options,
             placeholder="Type to search nodes...",
             key="node_multiselect",
-            on_change=_mark_price_loading,
-            disabled=controls_disabled,
         )
-        st.session_state.selected_nodes_list = list(dict.fromkeys(selected_nodes))
+        draft_nodes = list(dict.fromkeys(draft_nodes))
+        st.session_state.selected_nodes_list = draft_nodes
 
-        if selected_nodes:
-            st.caption(f"{len(selected_nodes)} nodes selected")
+        if draft_nodes:
+            st.caption(f"{len(draft_nodes)} nodes selected in draft")
             def _clear_selected_nodes():
                 st.session_state.selected_nodes_list = []
                 st.session_state.node_multiselect = []
-                _mark_price_loading()
 
-            st.button(
-                "Clear All", key="clear_nodes", on_click=_clear_selected_nodes,
-                disabled=controls_disabled,
+            st.button("Clear All", key="clear_nodes", on_click=_clear_selected_nodes)
+
+        applied_nodes = list(st.session_state.price_applied_nodes)
+        nodes_changed = draft_nodes != applied_nodes
+
+        def _node_selection_summary(nodes):
+            if not nodes:
+                return "no nodes"
+            if len(nodes) <= 3:
+                return ", ".join(nodes)
+            return f"{', '.join(nodes[:3])}, and {len(nodes) - 3} more"
+
+        if nodes_changed:
+            st.warning(
+                "**Node selection changed.**  \n"
+                f"Currently showing: {_node_selection_summary(applied_nodes)}  \n"
+                f"Draft selection: {_node_selection_summary(draft_nodes)}  \n"
+                "Click Update Results to analyze the draft selection."
             )
+            update_label = (
+                f"Update Results for {len(draft_nodes)} Node(s)"
+                if draft_nodes else "Clear Node Results"
+            )
+            if st.button(update_label, type="primary", key="apply_node_selection"):
+                st.session_state.price_applied_nodes = list(draft_nodes)
+                st.rerun(scope="fragment")
+        elif applied_nodes:
+            st.success(
+                "Results are up to date for: "
+                f"{_node_selection_summary(applied_nodes)}"
+            )
+        else:
+            st.info("Select one or more nodes, then click Update Results.")
+
+        selected_nodes = applied_nodes
 
     parquet_years = st.session_state.get('node_years', st.session_state.get('parquet_years', [2024]))
     with options_col:
+        st.subheader("2. Analysis settings")
+        st.caption("These settings update results immediately for the applied nodes.")
         selected_bx = st.selectbox(
             "BX Hours",
             options=SUPPORTED_BX_VALUES,
             index=4,
             format_func=lambda x: f"B{x}",
             key="node_bx",
-            on_change=_mark_price_loading,
-            disabled=controls_disabled,
         )
         time_period = st.selectbox(
             "Time Period",
             options=["Annual", "Monthly"],
             key="node_time_period",
-            on_change=_mark_price_loading,
-            disabled=controls_disabled,
         )
         if time_period == "Annual":
             year_options = ["Last 12 months"] + parquet_years
@@ -542,8 +566,6 @@ def render_dashboard_tab():
                 options=year_options,
                 index=default_year_idx,
                 key="node_annual_year",
-                on_change=_mark_price_loading,
-                disabled=controls_disabled,
             )
             st.session_state.last_node_year = selected_year
             selected_month = None
@@ -552,8 +574,6 @@ def render_dashboard_tab():
                 "Year",
                 options=parquet_years,
                 key="monthly_year_node",
-                on_change=_mark_price_loading,
-                disabled=controls_disabled,
             )
             month_options = ["January", "February", "March", "April", "May", "June",
                              "July", "August", "September", "October", "November", "December"]
@@ -561,8 +581,6 @@ def render_dashboard_tab():
                 "Month",
                 options=month_options,
                 key="monthly_month_node",
-                on_change=_mark_price_loading,
-                disabled=controls_disabled,
             )
             selected_month = month_options.index(selected_month_name) + 1
     
@@ -764,11 +782,6 @@ conn.close()
     except Exception as e:
         st.warning(f"Could not load BX statistics: {str(e)}")
         st.info("Make sure LMP data is loaded and BX calculations have been run.")
-
-    if controls_disabled:
-        st.session_state.price_analysis_loading = False
-        st.rerun(scope="fragment")
-
 
 def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
                                    node_price, dlap_name, dlap_bx_avg, dlap_allhours,
