@@ -585,6 +585,24 @@ def render_dashboard_tab():
             selected_month = month_options.index(selected_month_name) + 1
     
     st.divider()
+
+    if nodes_changed:
+        st.warning(
+            "**Results below use the previous node selection.**  \n"
+            f"Currently showing: {_node_selection_summary(applied_nodes)}  \n"
+            f"Pending node selection: {_node_selection_summary(draft_nodes)}"
+        )
+        results_update_label = (
+            f"Update Results for {len(draft_nodes)} Node(s)"
+            if draft_nodes else "Clear Node Results"
+        )
+        if st.button(
+            results_update_label,
+            type="primary",
+            key="apply_node_selection_above_results",
+        ):
+            st.session_state.price_applied_nodes = list(draft_nodes)
+            st.rerun(scope="fragment")
     
     # BX Price Summary - title reflects the selection
     if time_period == "Annual":
@@ -593,7 +611,8 @@ def render_dashboard_tab():
         month_names = ["January", "February", "March", "April", "May", "June", 
                        "July", "August", "September", "October", "November", "December"]
         period_label = f"{month_names[selected_month-1]} {selected_year}"
-    st.subheader(f"B{selected_bx} Price Summary ({period_label})")
+    stale_suffix = " — Previous Node Selection" if nodes_changed else ""
+    st.subheader(f"B{selected_bx} Price Summary ({period_label}){stale_suffix}")
     
     try:
         bx_calc = st.session_state.bx_calc
