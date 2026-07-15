@@ -18,13 +18,27 @@ def run_query():
     
     token = os.getenv('MOTHERDUCK_TOKEN')
     if not token:
-        print(json.dumps({'error': 'MOTHERDUCK_TOKEN not set'}))
+        error = 'MOTHERDUCK_TOKEN is not configured'
+        if query_type == 'init_dashboard':
+            print(f'[motherduck] configuration failed: {error}', file=sys.stderr, flush=True)
+        print(json.dumps({'error': error, 'stage': 'configuration'}))
         return
-    
+
+    stage = 'connection'
     try:
+        if query_type == 'init_dashboard':
+            print('[motherduck] token configured: yes', file=sys.stderr, flush=True)
+            print(f'[motherduck] DuckDB version: {duckdb.__version__}', file=sys.stderr, flush=True)
+
         conn = duckdb.connect(f'md:?motherduck_token={token}')
+        if query_type == 'init_dashboard':
+            print('[motherduck] service connection: ok', file=sys.stderr, flush=True)
+
+        stage = 'database_selection'
         conn.execute("SET enable_progress_bar = false")
         conn.execute("USE caiso_lmp")
+        if query_type == 'init_dashboard':
+            print('[motherduck] database caiso_lmp: ok', file=sys.stderr, flush=True)
         
         aws_key = os.getenv('AWS_ACCESS_KEY_ID')
         aws_secret = os.getenv('AWS_SECRET_ACCESS_KEY')
@@ -38,6 +52,7 @@ def run_query():
                 )
             """)
         
+        stage = 'query'
         if query_type == 'node_bx':
             bx = int(sys.argv[2])
             nodes = json.loads(sys.argv[3])
@@ -143,9 +158,22 @@ def run_query():
             result = {'error': f'Unknown query type: {query_type}'}
         
         conn.close()
+        if query_type == 'init_dashboard':
+            print('[motherduck] dashboard initialization: ok', file=sys.stderr, flush=True)
         print(json.dumps(result))
     except Exception as e:
-        print(json.dumps({'error': str(e)}))
+        # MotherDuck errors should not contain the token, but redact it defensively.
+        message = str(e).replace(token, '[REDACTED]') if token else str(e)
+        print(
+            f'[motherduck] {stage} failed ({type(e).__name__}): {message}',
+            file=sys.stderr,
+            flush=True,
+        )
+        print(json.dumps({
+            'error': message,
+            'error_type': type(e).__name__,
+            'stage': stage,
+        }))
 
 def _build_date_filter(year):
     """Return a SQL WHERE fragment for opr_dt filtering.

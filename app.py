@@ -209,25 +209,80 @@ def main():
     if 'init_data' not in st.session_state:
         import subprocess
         import json as json_mod
+        st.session_state.db_connection = {
+            'status': 'connecting',
+            'stage': 'startup',
+            'message': 'Starting the MotherDuck connection check.',
+        }
         try:
             r = subprocess.run(['python3', 'subprocess_query.py', 'init_dashboard'],
                                capture_output=True, text=True, timeout=30)
+            if r.stderr.strip():
+                # Safe diagnostics from subprocess_query.py; credentials are redacted there.
+                print(r.stderr.strip(), flush=True)
             if r.returncode == 0 and r.stdout.strip():
                 init_data = json_mod.loads(r.stdout.strip())
-                st.session_state.db_summary = init_data.get('data_summary', {})
-                st.session_state.init_years = init_data.get('available_years', [2024])
-                st.session_state.init_nodes = init_data.get('all_nodes', [])
-                st.session_state.individual_nodes = init_data.get('individual_nodes', [])
-                st.session_state.zone_years = init_data.get('zone_years', [2024])
-                st.session_state.node_years = init_data.get('node_years', [2024])
+                if init_data.get('error'):
+                    st.session_state.db_connection = {
+                        'status': 'error',
+                        'stage': init_data.get('stage', 'unknown'),
+                        'error_type': init_data.get('error_type', 'ConnectionError'),
+                        'message': init_data['error'],
+                    }
+                    st.session_state.db_summary = {}
+                    st.session_state.init_years = [2024]
+                    st.session_state.init_nodes = []
+                    st.session_state.individual_nodes = []
+                    st.session_state.zone_years = [2024]
+                    st.session_state.node_years = [2024]
+                else:
+                    st.session_state.db_connection = {
+                        'status': 'connected',
+                        'stage': 'dashboard_data',
+                        'message': 'Connected to caiso_lmp and loaded dashboard metadata.',
+                    }
+                    st.session_state.db_summary = init_data.get('data_summary', {})
+                    st.session_state.init_years = init_data.get('available_years', [2024])
+                    st.session_state.init_nodes = init_data.get('all_nodes', [])
+                    st.session_state.individual_nodes = init_data.get('individual_nodes', [])
+                    st.session_state.zone_years = init_data.get('zone_years', [2024])
+                    st.session_state.node_years = init_data.get('node_years', [2024])
             else:
+                message = r.stderr.strip() or f'Diagnostic process exited with code {r.returncode}.'
+                st.session_state.db_connection = {
+                    'status': 'error',
+                    'stage': 'diagnostic_process',
+                    'error_type': 'SubprocessError',
+                    'message': message,
+                }
                 st.session_state.db_summary = {}
                 st.session_state.init_years = [2024]
                 st.session_state.node_years = [2024]
                 st.session_state.init_nodes = []
                 st.session_state.individual_nodes = []
                 st.session_state.zone_years = [2024]
-        except Exception:
+        except subprocess.TimeoutExpired:
+            st.session_state.db_connection = {
+                'status': 'error',
+                'stage': 'connection_timeout',
+                'error_type': 'TimeoutExpired',
+                'message': 'MotherDuck did not respond within 30 seconds.',
+            }
+            print('[motherduck] startup failed: connection timed out after 30 seconds', flush=True)
+            st.session_state.db_summary = {}
+            st.session_state.init_years = [2024]
+            st.session_state.node_years = [2024]
+            st.session_state.init_nodes = []
+            st.session_state.individual_nodes = []
+            st.session_state.zone_years = [2024]
+        except Exception as exc:
+            st.session_state.db_connection = {
+                'status': 'error',
+                'stage': 'dashboard_startup',
+                'error_type': type(exc).__name__,
+                'message': str(exc),
+            }
+            print(f'[motherduck] dashboard startup failed ({type(exc).__name__}): {exc}', flush=True)
             st.session_state.db_summary = {}
             st.session_state.init_years = [2024]
             st.session_state.node_years = [2024]
@@ -256,16 +311,48 @@ def main():
     
     # Main content area
     if not st.session_state.data_loaded:
-        st.info("Connecting to MotherDuck database... If data doesn't appear, please refresh the page.")
-        
-        st.header("Sample Questions")
-        st.markdown("""
-        Once data loads, you can ask the AI Assistant questions like:
-        - What are the 10 cheapest hours at node SLAP_PGE2?
-        - Show me the nodes with the lowest 10% of prices (B10)
-        - What are the average prices by hour of day?
-        - Show me the B6 and B8 hours (cheapest 6 and 8 hours) for each node
-        """)
+        connection = st.session_state.get('db_connection', {})
+        status = connection.get('status', 'connecting')
+
+        st.header("Database Connection")
+        if status == 'error':
+            st.error("The dashboard could not connect to MotherDuck.")
+            st.markdown(
+                "- ✅ Application started\n"
+                "- ✅ Connection diagnostic ran\n"
+                f"- ❌ Failed during **{connection.get('stage', 'unknown')}**"
+            )
+            st.code(
+                f"{connection.get('error_type', 'ConnectionError')}: "
+                f"{connection.get('message', 'No error details were returned.')}",
+                language=None,
+            )
+            st.caption(
+                "This diagnostic never displays the MotherDuck token. The same safe details "
+                "are available in Manage app → Logs."
+            )
+        elif status == 'connected':
+            st.warning("MotherDuck connected, but the dashboard summary returned no records.")
+            st.markdown(
+                "- ✅ MotherDuck service connected\n"
+                "- ✅ Database `caiso_lmp` selected\n"
+                "- ⚠️ No dashboard records found in `bx_daily_summary`"
+            )
+        else:
+            st.info("Connecting to MotherDuck and loading dashboard metadata…")
+
+        if st.button("Retry database connection", type="primary"):
+            st.session_state.pop('init_data', None)
+            st.session_state.pop('db_connection', None)
+            st.rerun()
+
+        with st.expander("Connection checklist"):
+            st.markdown(
+                "1. In Streamlit, open **Manage app → Settings → Secrets**.\n"
+                "2. Confirm `MOTHERDUCK_TOKEN` is a top-level key.\n"
+                "3. Confirm the token can access the `caiso_lmp` database.\n"
+                "4. Save the secret, reboot the app, and retry the connection."
+            )
         
     else:
         tab_site_analysis, tab_price_analysis, tab_node_finder, tab_methodology = st.tabs([
