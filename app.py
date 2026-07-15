@@ -397,6 +397,7 @@ def main():
             render_methodology_tab()
 
 
+@st.fragment
 def render_dashboard_tab():
     """Render the Price Analysis tab with node BX analysis."""
     if 'dashboard_initialized' not in st.session_state:
@@ -446,7 +447,6 @@ def render_dashboard_tab():
                         updated = _cur + [_nid]
                         st.session_state.selected_nodes_list = updated
                         st.session_state.node_multiselect = updated
-                    st.rerun()
 
         prefix_col, add_col = st.columns([4, 1])
         with prefix_col:
@@ -466,7 +466,6 @@ def render_dashboard_tab():
                         updated = list(dict.fromkeys(cur + matching))
                         st.session_state.selected_nodes_list = updated
                         st.session_state.node_multiselect = updated
-                        st.rerun()
 
         selected_nodes = st.multiselect(
             "Selected Nodes",
