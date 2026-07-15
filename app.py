@@ -413,23 +413,39 @@ def render_dashboard_tab():
     node_col, options_col = st.columns([3, 1])
         
     with node_col:
-        if 'selected_nodes_list' not in st.session_state:
-            st.session_state.selected_nodes_list = []
-
-        # DLAP utility quick-select
-        st.caption("**Quick add** — utility DLAP nodes")
-        _dlap_col1, _dlap_col2, _dlap_col3, _ = st.columns(4)
         _dlap_nodes = [
             ("PG&E (DLAP_PGAE-APND)", "DLAP_PGAE-APND"),
             ("SCE (DLAP_SCE-APND)",   "DLAP_SCE-APND"),
             ("SDG&E (DLAP_SDGE-APND)", "DLAP_SDGE-APND"),
         ]
+        _dlap_ids = [_nid for _, _nid in _dlap_nodes]
+        # Quick-select nodes must always be valid multiselect options, even if a
+        # compact startup mapping table does not contain them.
+        node_options = list(dict.fromkeys(st.session_state.all_nodes + _dlap_ids))
+        st.session_state.all_nodes = node_options
+
+        if 'selected_nodes_list' not in st.session_state:
+            st.session_state.selected_nodes_list = []
+        valid_nodes = set(node_options)
+        st.session_state.selected_nodes_list = [
+            node for node in st.session_state.selected_nodes_list if node in valid_nodes
+        ]
+        if 'node_multiselect' in st.session_state:
+            st.session_state.node_multiselect = [
+                node for node in st.session_state.node_multiselect if node in valid_nodes
+            ]
+
+        # DLAP utility quick-select
+        st.caption("**Quick add** — utility DLAP nodes")
+        _dlap_col1, _dlap_col2, _dlap_col3, _ = st.columns(4)
         for _btn_col, (_label, _nid) in zip([_dlap_col1, _dlap_col2, _dlap_col3], _dlap_nodes):
             with _btn_col:
                 if st.button(_label, key=f"dlap_{_nid}"):
                     _cur = st.session_state.get('selected_nodes_list', [])
                     if _nid not in _cur:
-                        st.session_state.selected_nodes_list = _cur + [_nid]
+                        updated = _cur + [_nid]
+                        st.session_state.selected_nodes_list = updated
+                        st.session_state.node_multiselect = updated
                     st.rerun()
 
         prefix_col, add_col = st.columns([4, 1])
@@ -447,13 +463,14 @@ def render_dashboard_tab():
                                 if n.upper().startswith(prefix.upper())]
                     if matching:
                         cur = st.session_state.get('selected_nodes_list', [])
-                        st.session_state.selected_nodes_list = list(
-                            dict.fromkeys(cur + matching))
+                        updated = list(dict.fromkeys(cur + matching))
+                        st.session_state.selected_nodes_list = updated
+                        st.session_state.node_multiselect = updated
                         st.rerun()
 
         selected_nodes = st.multiselect(
             "Selected Nodes",
-            options=st.session_state.all_nodes,
+            options=node_options,
             default=st.session_state.selected_nodes_list,
             placeholder="Type to search nodes...",
             key="node_multiselect"
@@ -462,9 +479,11 @@ def render_dashboard_tab():
 
         if selected_nodes:
             st.caption(f"{len(selected_nodes)} nodes selected")
-            if st.button("Clear All", key="clear_nodes"):
+            def _clear_selected_nodes():
                 st.session_state.selected_nodes_list = []
-                st.rerun()
+                st.session_state.node_multiselect = []
+
+            st.button("Clear All", key="clear_nodes", on_click=_clear_selected_nodes)
 
     parquet_years = st.session_state.get('node_years', st.session_state.get('parquet_years', [2024]))
     with options_col:
