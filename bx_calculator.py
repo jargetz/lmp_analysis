@@ -23,6 +23,7 @@ Usage:
 
 import logging
 import pandas as pd
+import sys
 from datetime import date, timedelta
 from typing import Dict, Any, List, Optional
 from parquet_storage import ParquetStorage
@@ -53,7 +54,7 @@ class BXCalculator:
         """Execute a query via MotherDuck subprocess and return list of dicts"""
         import subprocess
         import json
-        cmd = ['python3', 'subprocess_query.py', 'raw_sql', query]
+        cmd = [sys.executable, 'subprocess_query.py', 'raw_sql', query]
         if params:
             cmd.append(json.dumps(params))
         try:

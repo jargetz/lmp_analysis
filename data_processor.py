@@ -4,6 +4,7 @@ from datetime import datetime, date
 import io
 import csv
 import logging
+import sys
 from typing import Dict, Any, List, Tuple
 
 class CAISODataProcessor:
@@ -220,7 +221,7 @@ class CAISODataProcessor:
         try:
             import subprocess
             import json
-            cmd = ['python3', 'subprocess_query.py', 'data_summary']
+            cmd = [sys.executable, 'subprocess_query.py', 'data_summary']
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
             if result.returncode == 0:
                 data = json.loads(result.stdout.strip())

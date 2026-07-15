@@ -14,6 +14,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta, date
 import os
+import sys
 
 from data_processor import CAISODataProcessor
 from analytics import LMPAnalytics, get_registered_analytics
@@ -215,7 +216,7 @@ def main():
             'message': 'Starting the MotherDuck connection check.',
         }
         try:
-            r = subprocess.run(['python3', 'subprocess_query.py', 'init_dashboard'],
+            r = subprocess.run([sys.executable, 'subprocess_query.py', 'init_dashboard'],
                                capture_output=True, text=True, timeout=30)
             if r.stderr.strip():
                 # Safe diagnostics from subprocess_query.py; credentials are redacted there.
@@ -520,7 +521,7 @@ def render_dashboard_tab():
                     try:
                         start = time.time()
                         result = subprocess.run(
-                            ['python3', '-c', '''
+                            [sys.executable, '-c', '''
 import os, duckdb
 token = os.getenv('MOTHERDUCK_TOKEN')
 conn = duckdb.connect(f'md:?motherduck_token={token}')
@@ -548,7 +549,7 @@ conn.close()
                 
                 def run_subprocess_query(query_type, *args, timeout=60):
                     """Run MotherDuck query in subprocess to avoid Streamlit blocking"""
-                    cmd = ['python3', 'subprocess_query.py', query_type] + [str(a) if not isinstance(a, list) else json.dumps(a) for a in args]
+                    cmd = [sys.executable, 'subprocess_query.py', query_type] + [str(a) if not isinstance(a, list) else json.dumps(a) for a in args]
                     try:
                         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
                         if result.returncode == 0:
@@ -1175,7 +1176,7 @@ def render_node_map_tab():
         with st.spinner("Loading CARB facility data…"):
             try:
                 proc = subprocess.run(
-                    ['python3', 'subprocess_query.py', 'facility_emissions'],
+                    [sys.executable, 'subprocess_query.py', 'facility_emissions'],
                     capture_output=True, text=True, timeout=30
                 )
                 if proc.returncode == 0:
@@ -1202,7 +1203,7 @@ def render_node_map_tab():
     if cache_key not in st.session_state:
         with st.spinner(f"Loading B{map_bx} node map for {period_label}…"):
             cmd = [
-                'python3', 'subprocess_query.py', 'node_map',
+                sys.executable, 'subprocess_query.py', 'node_map',
                 str(map_bx), _map_year_param, map_time_period,
                 str(map_month) if map_month else '',
             ]
@@ -1432,7 +1433,7 @@ def render_node_map_tab():
             if node_zone in ('NP15', 'SP15', 'ZP26'):
                 dlap_cache_key = f"dlap_{node_zone}_8_{_map_year_param}_{map_time_period}_{map_month}"
                 if dlap_cache_key not in st.session_state:
-                    cmd = ['python3', 'subprocess_query.py', 'dlap_zone_bx',
+                    cmd = [sys.executable, 'subprocess_query.py', 'dlap_zone_bx',
                            node_zone, '8', _map_year_param,
                            map_time_period,
                            str(map_month) if map_month else '']
@@ -1457,7 +1458,7 @@ def render_node_map_tab():
                     if map_bx != 8:
                         node_b8_key = f"node_b8_{pnode_id}_{_map_year_param}_{map_time_period}_{map_month}"
                         if node_b8_key not in st.session_state:
-                            cmd_b8 = ['python3', 'subprocess_query.py', 'node_bx_single',
+                            cmd_b8 = [sys.executable, 'subprocess_query.py', 'node_bx_single',
                                       pnode_id, '8', _map_year_param]
                             try:
                                 proc_b8 = subprocess.run(cmd_b8, capture_output=True, text=True, timeout=30)
@@ -1502,7 +1503,7 @@ def render_node_map_tab():
             monthly_cache_key = f"node_monthly_{pnode_id}_{map_bx}_{_map_year_param}"
             if monthly_cache_key not in st.session_state:
                 with st.spinner("Loading monthly data…"):
-                    cmd = ['python3', 'subprocess_query.py', 'node_bx_single',
+                    cmd = [sys.executable, 'subprocess_query.py', 'node_bx_single',
                            pnode_id, str(map_bx), _map_year_param]
                     try:
                         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -1764,7 +1765,7 @@ the PDF and the API exist (CARB's own data) but do not affect geographic proximi
 
     try:
         r = subprocess.run(
-            ['python3', 'subprocess_query.py', 'node_coverage', str(selected_year)],
+            [sys.executable, 'subprocess_query.py', 'node_coverage', str(selected_year)],
             capture_output=True, text=True, timeout=60
         )
         if r.returncode == 0 and r.stdout.strip():
@@ -1804,7 +1805,7 @@ def render_node_finder_tab():
     import json as json_mod
 
     def _run(query_type, *args, timeout=120):
-        cmd = ['python3', 'subprocess_query.py', query_type] + [
+        cmd = [sys.executable, 'subprocess_query.py', query_type] + [
             str(a) if not isinstance(a, list) else json_mod.dumps(a) for a in args
         ]
         try:
