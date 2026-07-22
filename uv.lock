@@ -973,7 +973,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = ">=1.40.31" },
-    { name = "duckdb", specifier = ">=1.4.3" },
+    { name = "duckdb", specifier = "==1.4.3" },
     { name = "numpy", specifier = ">=2.3.3" },
     { name = "openai", specifier = ">=1.107.2" },
     { name = "openpyxl", specifier = ">=3.1.5" },
