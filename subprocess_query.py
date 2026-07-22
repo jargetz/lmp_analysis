@@ -156,6 +156,12 @@ def run_query():
             nodes = json.loads(sys.argv[2])
             year = sys.argv[3]  # may be 'last12' or int string
             result = get_hourly_avg_combined(conn, nodes, year)
+        elif query_type == 'hybrid_bx_hours':
+            node = sys.argv[2]
+            bx = int(sys.argv[3])
+            year = sys.argv[4]
+            month = int(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5] else None
+            result = get_hybrid_bx_hours(conn, node, bx, year, month)
         else:
             result = {'error': f'Unknown query type: {query_type}'}
         
@@ -354,6 +360,68 @@ def get_node_bx(conn, bx, nodes, year):
         'day_count': day_count,
         'per_node': per_node,
         'per_node_hours': per_node_hours
+    }
+
+
+def get_hybrid_bx_hours(conn, node, bx, year, month=None):
+    """Return each daily BX observation for one node and analysis period.
+
+    The ranking happens independently within every operating day.  Hybrid
+    dispatch is deliberately applied later so fixed-share and economic
+    scenarios all use the exact same BX population.
+    """
+    import re
+    if not re.match(r'^[A-Za-z0-9_\-\.]+$', node):
+        return {'success': False, 'error': 'Invalid node name'}
+    if int(bx) not in range(4, 11):
+        return {'success': False, 'error': 'BX must be between B4 and B10'}
+
+    date_filter = _build_date_filter(year)
+    if month is not None:
+        if not 1 <= int(month) <= 12:
+            return {'success': False, 'error': 'Month must be between 1 and 12'}
+        date_filter += f' AND EXTRACT(MONTH FROM opr_dt) = {int(month)}'
+
+    query = f"""
+        WITH ranked AS (
+            SELECT opr_dt, opr_hr, mw,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY opr_dt
+                       ORDER BY mw ASC, opr_hr ASC
+                   ) AS rn
+            FROM node_hourly_lmp
+            WHERE node = ?
+              AND opr_hr BETWEEN 1 AND 24
+              AND {date_filter}
+        )
+        SELECT CAST(opr_dt AS VARCHAR) AS date,
+               opr_hr AS hour,
+               mw AS lmp,
+               rn AS bx_rank
+        FROM ranked
+        WHERE rn <= ?
+        ORDER BY opr_dt, opr_hr
+    """
+    result = conn.execute(query, [node, int(bx)]).fetchdf()
+    if result.empty:
+        return {'success': False, 'error': f'No B{bx} hourly data found for {node}'}
+    rows = [
+        {
+            'date': str(r['date']),
+            'hour': int(r['hour']),
+            'lmp': float(r['lmp']),
+            'bx_rank': int(r['bx_rank']),
+        }
+        for _, r in result.iterrows()
+    ]
+    return {
+        'success': True,
+        'node': node,
+        'bx': int(bx),
+        'year': year,
+        'month': month,
+        'day_count': int(result['date'].nunique()),
+        'observations': rows,
     }
 
 def get_hourly_averages(conn, nodes, year):

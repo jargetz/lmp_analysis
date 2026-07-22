@@ -21,6 +21,13 @@ from analytics import LMPAnalytics, get_registered_analytics
 from chatbot import LMPChatbot
 from node_zone_mapping import NodeZoneMapper, VALID_ZONES
 from bx_calculator import BXCalculator, SUPPORTED_BX_VALUES
+from hybrid_analysis import (
+    HybridAssumptions,
+    chp_extraction_case,
+    natural_gas_case,
+    run_hybrid_dispatch,
+    sensitivity_matrix,
+)
 from charts import (
     create_hourly_price_chart,
     create_bx_trend_chart,
@@ -372,8 +379,9 @@ def main():
             )
         
     else:
-        tab_site_analysis, tab_price_analysis, tab_node_finder, tab_methodology = st.tabs([
-            "🗺️ Site Analysis", "📊 Price Analysis", "🔍 Node Finder", "📋 Methodology & Data"
+        tab_site_analysis, tab_price_analysis, tab_hybrid, tab_node_finder, tab_methodology = st.tabs([
+            "🗺️ Site Analysis", "📊 Price Analysis", "🔀 Hybrid Operation",
+            "🔍 Node Finder", "📋 Methodology & Data"
         ])
         
         # =====================================================================
@@ -387,6 +395,12 @@ def main():
         # =====================================================================
         with tab_price_analysis:
             render_dashboard_tab()
+
+        # =====================================================================
+        # HYBRID OPERATION TAB - BX electricity plus dispatchable backup
+        # =====================================================================
+        with tab_hybrid:
+            render_hybrid_operation_tab()
         
         # =====================================================================
         # NODE FINDER TAB - Cheapest nodes ∪ nodes near top GHG emitters
@@ -1685,6 +1699,476 @@ def render_node_map_tab():
                         use_container_width=True,
                         key="download_report_btn",
                     )
+
+
+@st.fragment
+def render_hybrid_operation_tab():
+    """Analyze a flexible electric-heat load with dispatchable backup."""
+    st.header("Hybrid Operation")
+    st.markdown(
+        "Compare standard BX operation with a hybrid strategy that retains gas or CHP "
+        "for selected hours. The app first identifies each day's B cheapest hours, then "
+        "applies the hybrid dispatch rule to that fixed BX population."
+    )
+
+    nodes = st.session_state.get('individual_nodes', [])
+    dlap_nodes = ['DLAP_PGAE-APND', 'DLAP_SCE-APND', 'DLAP_SDGE-APND']
+    node_options = list(dict.fromkeys(dlap_nodes + nodes))
+    years = st.session_state.get('node_years', st.session_state.get('init_years', [2024]))
+    month_names = [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
+    ]
+
+    period = st.radio(
+        "Analysis period", ["Annual", "Monthly"], horizontal=True,
+        key="hybrid_period",
+    )
+    year_options = (["Last 12 months"] + years) if period == "Annual" else years
+    if st.session_state.get('hybrid_year') not in year_options:
+        st.session_state.pop('hybrid_year', None)
+    with st.form("hybrid_data_form"):
+        node_col, bx_col, year_col, month_col = st.columns([2.5, 0.8, 1.1, 1.2])
+        with node_col:
+            selected_node = st.selectbox(
+                "Pricing node", node_options, index=0, key="hybrid_node",
+            )
+        with bx_col:
+            bx = st.selectbox(
+                "BX", SUPPORTED_BX_VALUES, index=4,
+                format_func=lambda value: f"B{value}", key="hybrid_bx",
+            )
+        with year_col:
+            selected_year = st.selectbox("Year", year_options, key="hybrid_year")
+        with month_col:
+            selected_month_name = st.selectbox(
+                "Month", month_names, disabled=period == "Annual", key="hybrid_month",
+            )
+        load_data = st.form_submit_button("Load BX Hours", type="primary")
+
+    if load_data:
+        query_year = 'last12' if selected_year == "Last 12 months" else str(selected_year)
+        query_month = None if period == "Annual" else month_names.index(selected_month_name) + 1
+        with st.spinner(f"Loading daily B{bx} hours for {selected_node}…"):
+            try:
+                result = _run_site_query(
+                    'hybrid_bx_hours', selected_node, bx, query_year,
+                    query_month if query_month is not None else '', timeout=120,
+                )
+                st.session_state.hybrid_dataset = result
+            except Exception as exc:
+                st.session_state.hybrid_dataset = {'success': False, 'error': str(exc)}
+
+    dataset = st.session_state.get('hybrid_dataset')
+    if not dataset:
+        st.info("Choose a node and period, then click **Load BX Hours**.")
+        return
+    if not dataset.get('success'):
+        st.error(f"Hybrid data unavailable: {dataset.get('error', 'Unknown query error')}")
+        return
+
+    rows = dataset.get('observations', [])
+    source_month = dataset.get('month')
+    source_period = (
+        f"{month_names[int(source_month) - 1]} {dataset.get('year')}"
+        if source_month else str(dataset.get('year')).replace('last12', 'Last 12 months')
+    )
+    st.success(
+        f"Loaded B{dataset.get('bx')} for **{dataset.get('node')}** · {source_period} · "
+        f"{dataset.get('day_count', 0):,} days · {len(rows):,} selected hours"
+    )
+
+    st.subheader("1. Dispatch strategy")
+    strategy_col, share_col, tech_col = st.columns([1.7, 1, 1.5])
+    strategy_labels = {
+        "Highest-priced BX hours": "fixed_hours",
+        "Highest-priced BX days": "fixed_days",
+        "Economic value optimization": "economic",
+    }
+    with strategy_col:
+        strategy_label = st.selectbox(
+            "Backup selection",
+            list(strategy_labels),
+            key="hybrid_strategy",
+            help="The BX hours are selected first. This rule is applied only afterward.",
+        )
+        strategy = strategy_labels[strategy_label]
+    with share_col:
+        backup_share = st.number_input(
+            "Target backup share (%)", min_value=0.0, max_value=100.0,
+            value=15.0, step=1.0, disabled=strategy == "economic",
+            key="hybrid_backup_share",
+        )
+    with tech_col:
+        electric_technology = st.selectbox(
+            "Electric technology",
+            ["Thermal battery", "Heat pump", "Custom electric heat"],
+            key="hybrid_electric_technology",
+        )
+
+    if electric_technology == "Thermal battery":
+        electric_performance = st.number_input(
+            "Full charge/discharge efficiency", min_value=0.01, max_value=1.0,
+            value=0.95, step=0.01, format="%.2f", key="hybrid_tes_efficiency",
+        )
+    elif electric_technology == "Heat pump":
+        electric_performance = st.number_input(
+            "Heat-pump COP", min_value=0.1, max_value=10.0,
+            value=3.0, step=0.1, key="hybrid_heat_pump_cop",
+        )
+    else:
+        electric_performance = st.number_input(
+            "Useful MWh-th per MWh-e", min_value=0.01, max_value=10.0,
+            value=1.0, step=0.05, key="hybrid_custom_performance",
+        )
+
+    st.subheader("2. Electricity assumptions")
+    rate_presets = {
+        "Wholesale energy only": (0.0, 0.0),
+        "Current NBC, no TAC": (33.0, 0.0),
+        "Current NBC + TAC screening proxy": (33.0, 16.39),
+        "Reduced-NBC proxy + TAC": (8.25, 16.39),
+        "Custom": (33.0, 16.39),
+    }
+    rate_preset = st.selectbox(
+        "Electric rate scenario", list(rate_presets), index=2, key="hybrid_rate_preset",
+    )
+    default_nbc, default_tac = rate_presets[rate_preset]
+    ec1, ec2, ec3, ec4 = st.columns(4)
+    with ec1:
+        nbc = st.number_input(
+            "NBC ($/MWh-th)", value=float(default_nbc), step=1.0,
+            key=f"hybrid_nbc_{rate_preset}",
+        )
+    with ec2:
+        tac = st.number_input(
+            "TAC ($/MWh-th)", value=float(default_tac), step=1.0,
+            key=f"hybrid_tac_{rate_preset}",
+            help="Screening proxy. A full B-20 calculation requires the facility demand profile.",
+        )
+    with ec3:
+        procurement_adder = st.number_input(
+            "Procurement adder ($/MWh-e)", value=0.0, step=1.0,
+            key="hybrid_procurement_adder",
+        )
+    with ec4:
+        electric_value = st.number_input(
+            "Electric/grid value ($/MWh-th)", value=0.0, step=1.0,
+            key="hybrid_electric_value",
+            help="Credit for grid services, resilience, avoided costs, or other benefits.",
+        )
+
+    if "Reduced-NBC" in rate_preset:
+        st.warning(
+            "The $8.25 NBC is a research proxy equal to 25% of the current $33 assumption. "
+            "SB 943 proposes a cap on an NBC ratio, not a guaranteed 75% reduction in NBC dollars."
+        )
+
+    carbon_mode = st.selectbox(
+        "Electricity GHG cost treatment",
+        [
+            "Already embedded in LMP",
+            "Explicit supplier charge",
+            "Carbon price × electricity intensity",
+        ],
+        key="hybrid_electric_carbon_mode",
+    )
+    if carbon_mode == "Explicit supplier charge":
+        electric_ghg_adder = st.number_input(
+            "Electric GHG charge ($/MWh-e)", value=0.0, step=1.0,
+            key="hybrid_explicit_electric_ghg",
+        )
+    elif carbon_mode == "Carbon price × electricity intensity":
+        ghg1, ghg2 = st.columns(2)
+        with ghg1:
+            electric_intensity = st.number_input(
+                "Electricity intensity (tCO₂e/MWh-e)", value=0.428,
+                min_value=0.0, step=0.01, format="%.3f", key="hybrid_electric_intensity",
+            )
+        with ghg2:
+            electric_carbon_price = st.number_input(
+                "Electric carbon price ($/tCO₂e)", value=27.92,
+                min_value=0.0, step=1.0, key="hybrid_electric_carbon_price",
+            )
+        electric_ghg_adder = electric_intensity * electric_carbon_price
+        st.caption(f"Calculated electricity GHG adder: **${electric_ghg_adder:.2f}/MWh-e**")
+    else:
+        electric_ghg_adder = 0.0
+
+    reporting_basis = st.selectbox(
+        "Electricity emissions reporting basis",
+        [
+            "Not modeled",
+            "Historic unspecified-power screening factor",
+            "User-defined or contracted-source factor",
+        ],
+        key="hybrid_electric_reporting_basis",
+        help="This is independent of whether a carbon cost is already embedded in LMP.",
+    )
+    if reporting_basis == "Historic unspecified-power screening factor":
+        reporting_intensity = 0.428
+        st.caption(
+            "Screening value: 0.428 tCO₂e/MWh-e. California's Power Source Disclosure "
+            "method begins calculating unspecified-power intensity differently for 2025 reporting."
+        )
+    elif reporting_basis == "User-defined or contracted-source factor":
+        reporting_intensity = st.number_input(
+            "Reporting intensity (tCO₂e/MWh-e)", value=0.0, min_value=0.0,
+            step=0.01, format="%.3f", key="hybrid_reporting_intensity",
+        )
+    else:
+        reporting_intensity = None
+
+    st.subheader("3. Backup assumptions")
+    backup_technology = st.selectbox(
+        "Backup technology", ["Gas heat", "CHP steam-turbine extraction"],
+        key="hybrid_backup_technology",
+    )
+    gas1, gas2, gas3, gas4 = st.columns(4)
+    with gas1:
+        citygate = st.number_input(
+            "Citygate ($/MMBtu-in)", value=3.65, min_value=0.0,
+            step=0.10, key="hybrid_citygate",
+        )
+        gas_efficiency = st.number_input(
+            "Gas heat efficiency", value=0.85, min_value=0.01,
+            max_value=1.0, step=0.01, format="%.2f", key="hybrid_gas_efficiency",
+        )
+    with gas2:
+        transportation = st.number_input(
+            "Transportation ($/MMBtu-in)", value=2.51, min_value=0.0,
+            step=0.10, key="hybrid_gas_transport",
+        )
+        pppc = st.number_input(
+            "PPPC ($/MMBtu-in)", value=0.66, min_value=0.0,
+            step=0.05, key="hybrid_gas_pppc",
+        )
+    with gas3:
+        gas_carbon_price = st.number_input(
+            "Gas carbon price ($/tCO₂)", value=27.92, min_value=0.0,
+            step=1.0, key="hybrid_gas_carbon_price",
+        )
+        gas_emissions_factor = st.number_input(
+            "Gas emissions (tCO₂/therm)", value=0.0053, min_value=0.0,
+            step=0.0001, format="%.4f", key="hybrid_gas_emissions",
+        )
+    with gas4:
+        backup_value = st.number_input(
+            "Other backup value ($/MWh-th)", value=0.0, step=1.0,
+            key="hybrid_backup_value",
+        )
+
+    gas = natural_gas_case(
+        citygate_per_mmbtu_in=citygate,
+        transportation_per_mmbtu_in=transportation,
+        pppc_per_mmbtu_in=pppc,
+        carbon_price_per_ton=gas_carbon_price,
+        emissions_ton_per_therm=gas_emissions_factor,
+        gas_efficiency=gas_efficiency,
+    )
+    backup_cost = gas['total_per_mwh_th']
+    backup_emissions = gas['emissions_ton_per_mwh_th']
+
+    if backup_technology == "CHP steam-turbine extraction":
+        chp1, chp2, chp3 = st.columns(3)
+        with chp1:
+            chp_efficiency = st.number_input(
+                "CHP total useful efficiency", value=0.95, min_value=0.01,
+                max_value=1.0, step=0.01, format="%.2f", key="hybrid_chp_efficiency",
+            )
+        with chp2:
+            heat_power_ratio = st.number_input(
+                "Heat-to-electricity ratio", value=3.0, min_value=0.1,
+                step=0.1, key="hybrid_chp_ratio",
+            )
+        with chp3:
+            generated_power_value = st.number_input(
+                "Generated electricity value ($/MWh-e)", value=0.0,
+                step=1.0, key="hybrid_chp_power_value",
+            )
+        fuel_cost_per_mwh_in = gas['input_cost_per_mmbtu'] * 3.412141633
+        chp = chp_extraction_case(
+            fuel_cost_per_mwh_in=fuel_cost_per_mwh_in,
+            total_useful_efficiency=chp_efficiency,
+            heat_to_power_ratio=heat_power_ratio,
+            electricity_value_per_mwh=generated_power_value,
+        )
+        backup_cost = chp['net_cost_per_mwh_th']
+        fuel_mwh_per_heat = chp['fuel_mwh_in_per_mwh_th']
+        backup_emissions = gas_emissions_factor * 10.0 * 3.412141633 * fuel_mwh_per_heat
+        st.caption(
+            f"Per MWh-th: {chp['fuel_mwh_in_per_mwh_th']:.3f} MWh fuel input · "
+            f"{chp['electricity_mwh_per_mwh_th']:.3f} MWh electricity generated · "
+            f"net backup cost ${backup_cost:.2f}."
+        )
+
+    assumptions = HybridAssumptions(
+        electric_performance=electric_performance,
+        nbc_per_mwh_th=nbc,
+        tac_per_mwh_th=tac,
+        procurement_per_mwh_e=procurement_adder,
+        electric_ghg_per_mwh_e=electric_ghg_adder,
+        electric_value_per_mwh_th=electric_value,
+        backup_cost_per_mwh_th=backup_cost,
+        backup_value_per_mwh_th=backup_value,
+    )
+    dispatch_df, summary = run_hybrid_dispatch(
+        rows, assumptions, mode=strategy, backup_share_percent=backup_share,
+    )
+
+    st.subheader("4. Results")
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric(f"Standard B{dataset.get('bx')} LMP", f"${summary['standard_bx_lmp']:.2f}/MWh")
+    retained = summary['retained_electric_lmp']
+    m2.metric("Retained electric LMP", f"${retained:.2f}/MWh" if retained is not None else "No hours")
+    m3.metric("Backup share", f"{summary['backup_share_percent']:.1f}%")
+    m4.metric("Blended useful heat", f"${summary['blended_cost_per_mwh_th']:.2f}/MWh-th")
+    m5.metric("Break-even LMP", f"${summary['break_even_lmp']:.2f}/MWh")
+
+    detail1, detail2, detail3, detail4 = st.columns(4)
+    detail1.metric("Gas/backup useful heat", f"${backup_cost - backup_value:.2f}/MWh-th")
+    detail2.metric("Backup hours", f"{summary['backup_hours']:,}")
+    detail3.metric("BX hours from 4–9 p.m.", f"{summary['bx_evening_share_percent']:.1f}%")
+    detail4.metric("Dropped hours from 4–9 p.m.", f"{summary['backup_evening_share_percent']:.1f}%")
+    emissions_note = ""
+    if reporting_intensity is not None:
+        electric_emissions_per_th = reporting_intensity / electric_performance
+        backup_fraction = summary['backup_share_percent'] / 100.0
+        blended_emissions = (
+            (1.0 - backup_fraction) * electric_emissions_per_th
+            + backup_fraction * backup_emissions
+        )
+        emissions_note = (
+            f" Blended emissions: {blended_emissions:.3f} tCO₂e/MWh-th "
+            f"(electric {electric_emissions_per_th:.3f}; backup {backup_emissions:.3f})."
+        )
+    st.caption(
+        f"Backup emissions assumption: {backup_emissions:.3f} tCO₂/MWh-th. "
+        f"Savings versus all-electric: ${summary['savings_vs_all_electric']:.2f}/MWh-th; "
+        f"savings versus all-backup: ${summary['savings_vs_all_backup']:.2f}/MWh-th."
+        f"{emissions_note}"
+    )
+
+    electric_prices = dispatch_df.loc[~dispatch_df['use_backup'], 'lmp']
+    backup_prices = dispatch_df.loc[dispatch_df['use_backup'], 'lmp']
+    histogram = go.Figure()
+    histogram.add_trace(go.Histogram(
+        x=electric_prices, name="Retained electric hours", marker_color="#1e5c44",
+        opacity=0.8, nbinsx=45,
+    ))
+    histogram.add_trace(go.Histogram(
+        x=backup_prices, name="Backup hours", marker_color="#c26a35",
+        opacity=0.85, nbinsx=45,
+    ))
+    line_value = summary['break_even_lmp'] if strategy == 'economic' else summary['cutoff_lmp']
+    if line_value is not None:
+        histogram.add_vline(
+            x=float(line_value), line_dash="dash", line_color="#17221b",
+            annotation_text=("Economic break-even" if strategy == 'economic' else "Scenario cutoff"),
+            annotation_position="top",
+        )
+    histogram.update_layout(
+        barmode="overlay", title=f"B{dataset.get('bx')} LMP observations retained or reassigned",
+        xaxis_title="Day-ahead LMP ($/MWh-e)", yaxis_title="Selected BX hours",
+        legend_title=None, margin=dict(l=20, r=20, t=65, b=20),
+    )
+    st.plotly_chart(histogram, use_container_width=True)
+
+    with st.expander("Compare days and inspect dispatched observations"):
+        daily = (
+            dispatch_df.groupby('date', as_index=False)
+            .agg(
+                bx_lmp=('lmp', 'mean'),
+                backup_hours=('use_backup', 'sum'),
+                blended_cost=('selected_cost_per_mwh_th', 'mean'),
+            )
+        )
+        daily['backup_hours'] = daily['backup_hours'].astype(int)
+        st.dataframe(
+            daily.rename(columns={
+                'date': 'Date', 'bx_lmp': f"B{dataset.get('bx')} LMP ($/MWh)",
+                'backup_hours': 'Backup hours',
+                'blended_cost': 'Blended cost ($/MWh-th)',
+            }),
+            use_container_width=True, hide_index=True,
+        )
+
+    with st.expander("Run gas and carbon-price sensitivity"):
+        st.caption(
+            "Each cell economically dispatches the already-loaded BX hours. Transportation, "
+            "PPPC, electricity charges, and technology performance remain fixed."
+        )
+        s1, s2, s3, s4, s5 = st.columns(5)
+        with s1:
+            citygate_min = st.number_input("Citygate minimum", value=1.0, min_value=0.0, step=0.5)
+        with s2:
+            citygate_max = st.number_input("Citygate maximum", value=10.0, min_value=0.0, step=0.5)
+        with s3:
+            carbon_min = st.number_input("Carbon minimum", value=0.0, min_value=0.0, step=5.0)
+        with s4:
+            carbon_max = st.number_input("Carbon maximum", value=100.0, min_value=0.0, step=5.0)
+        with s5:
+            sensitivity_steps = st.number_input("Steps per axis", value=11, min_value=3, max_value=25)
+        if citygate_max <= citygate_min or carbon_max <= carbon_min:
+            st.warning("Sensitivity maximums must be greater than minimums.")
+        elif backup_technology != "Gas heat":
+            st.info("The current sensitivity grid supports the direct gas-heat backup profile.")
+        else:
+            citygate_values = [
+                citygate_min + i * (citygate_max - citygate_min) / (sensitivity_steps - 1)
+                for i in range(int(sensitivity_steps))
+            ]
+            carbon_values = [
+                carbon_min + i * (carbon_max - carbon_min) / (sensitivity_steps - 1)
+                for i in range(int(sensitivity_steps))
+            ]
+            sensitivity = sensitivity_matrix(
+                rows, assumptions,
+                citygate_values=citygate_values,
+                carbon_price_values=carbon_values,
+                transportation_per_mmbtu_in=transportation,
+                pppc_per_mmbtu_in=pppc,
+                emissions_ton_per_therm=gas_emissions_factor,
+                gas_efficiency=gas_efficiency,
+            )
+            grid = sensitivity.pivot(
+                index='carbon_price_per_ton', columns='citygate_per_mmbtu',
+                values='backup_share_percent',
+            )
+            sensitivity_fig = go.Figure(go.Heatmap(
+                z=grid.values, x=grid.columns, y=grid.index,
+                colorscale="YlOrBr", colorbar_title="Backup share (%)",
+                hovertemplate=(
+                    "Citygate: $%{x:.2f}/MMBtu<br>Carbon: $%{y:.2f}/tCO₂"
+                    "<br>Backup share: %{z:.1f}%<extra></extra>"
+                ),
+            ))
+            sensitivity_fig.update_layout(
+                title="Economically selected backup share",
+                xaxis_title="Citygate gas price ($/MMBtu-in)",
+                yaxis_title="Gas carbon price ($/tCO₂)",
+            )
+            st.plotly_chart(sensitivity_fig, use_container_width=True)
+
+    with st.expander("Hybrid methodology and limitations"):
+        st.markdown(f"""
+1. For every operating day, the tool ranks hours 1–24 by day-ahead LMP and selects the
+   **{dataset.get('bx')} cheapest hours**.
+2. The hybrid rule is applied only after that daily BX population is fixed.
+3. **Highest-priced BX hours** reassigns the most expensive X% of individual selected hours.
+4. **Highest-priced BX days** ranks days by their daily BX average and reassigns every selected
+   BX hour on the highest-priced X% of days.
+5. **Economic optimization** uses backup whenever its net useful-heat cost is below the
+   adjusted electric useful-heat cost for that observation.
+
+The `$16.39/MWh-th` TAC is a screening assumption, not a B-20 bill simulation. B-20 demand
+charges depend on the facility's 15-minute monthly peaks. The `$8.25/MWh-th` reduced-NBC case
+is also a research proxy; it should not be interpreted as an implemented SB 943 tariff.
+
+Low midday LMP does not establish a zero-carbon electricity claim. Electricity GHG cost and
+emissions accounting should be selected independently based on the procurement contract and
+applicable reporting rules.
+""")
 
 
 def render_methodology_tab():
