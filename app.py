@@ -1720,15 +1720,11 @@ def render_hybrid_operation_tab():
         "July", "August", "September", "October", "November", "December",
     ]
 
-    period = st.radio(
-        "Analysis period", ["Annual", "Monthly"], horizontal=True,
-        key="hybrid_period",
-    )
-    year_options = (["Last 12 months"] + years) if period == "Annual" else years
+    year_options = ["Last 12 months"] + years
     if st.session_state.get('hybrid_year') not in year_options:
         st.session_state.pop('hybrid_year', None)
     with st.form("hybrid_data_form"):
-        node_col, bx_col, year_col, month_col = st.columns([2.5, 0.8, 1.1, 1.2])
+        node_col, bx_col, year_col = st.columns([2.5, 0.8, 1.3])
         with node_col:
             selected_node = st.selectbox(
                 "Pricing node", node_options, index=0, key="hybrid_node",
@@ -1740,20 +1736,15 @@ def render_hybrid_operation_tab():
             )
         with year_col:
             selected_year = st.selectbox("Year", year_options, key="hybrid_year")
-        with month_col:
-            selected_month_name = st.selectbox(
-                "Month", month_names, disabled=period == "Annual", key="hybrid_month",
-            )
         load_data = st.form_submit_button("Load BX Hours", type="primary")
 
     if load_data:
         query_year = 'last12' if selected_year == "Last 12 months" else str(selected_year)
-        query_month = None if period == "Annual" else month_names.index(selected_month_name) + 1
         with st.spinner(f"Loading daily B{bx} hours for {selected_node}…"):
             try:
                 result = _run_site_query(
                     'hybrid_bx_hours', selected_node, bx, query_year,
-                    query_month if query_month is not None else '', timeout=120,
+                    '', timeout=120,
                 )
                 st.session_state.hybrid_dataset = result
             except Exception as exc:
@@ -1761,7 +1752,7 @@ def render_hybrid_operation_tab():
 
     dataset = st.session_state.get('hybrid_dataset')
     if not dataset:
-        st.info("Choose a node and period, then click **Load BX Hours**.")
+        st.info("Choose a node and year, then click **Load BX Hours**.")
         return
     if not dataset.get('success'):
         st.error(f"Hybrid data unavailable: {dataset.get('error', 'Unknown query error')}")
@@ -1823,27 +1814,17 @@ def render_hybrid_operation_tab():
         )
 
     st.subheader("2. Electricity assumptions")
-    rate_presets = {
-        "Wholesale energy only": (0.0, 0.0),
-        "Current NBC, no TAC": (33.0, 0.0),
-        "Current NBC + TAC screening proxy": (33.0, 16.39),
-        "Reduced-NBC proxy + TAC": (8.25, 16.39),
-        "Custom": (33.0, 16.39),
-    }
-    rate_preset = st.selectbox(
-        "Electric rate scenario", list(rate_presets), index=2, key="hybrid_rate_preset",
-    )
-    default_nbc, default_tac = rate_presets[rate_preset]
+    st.caption("Defaults are shown below. Results update automatically whenever you change an assumption.")
     ec1, ec2, ec3, ec4 = st.columns(4)
     with ec1:
         nbc = st.number_input(
-            "NBC ($/MWh-th)", value=float(default_nbc), step=1.0,
-            key=f"hybrid_nbc_{rate_preset}",
+            "NBC ($/MWh-th)", value=33.0, step=1.0,
+            key="hybrid_nbc",
         )
     with ec2:
         tac = st.number_input(
-            "TAC ($/MWh-th)", value=float(default_tac), step=1.0,
-            key=f"hybrid_tac_{rate_preset}",
+            "TAC ($/MWh-th)", value=16.39, step=1.0,
+            key="hybrid_tac",
             help="Screening proxy. A full B-20 calculation requires the facility demand profile.",
         )
     with ec3:
@@ -1856,12 +1837,6 @@ def render_hybrid_operation_tab():
             "Electric/grid value ($/MWh-th)", value=0.0, step=1.0,
             key="hybrid_electric_value",
             help="Credit for grid services, resilience, avoided costs, or other benefits.",
-        )
-
-    if "Reduced-NBC" in rate_preset:
-        st.warning(
-            "The $8.25 NBC is a research proxy equal to 25% of the current $33 assumption. "
-            "SB 943 proposes a cap on an NBC ratio, not a guaranteed 75% reduction in NBC dollars."
         )
 
     carbon_mode = st.selectbox(
@@ -1921,13 +1896,13 @@ def render_hybrid_operation_tab():
 
     st.subheader("3. Backup assumptions")
     backup_technology = st.selectbox(
-        "Backup technology", ["Gas heat", "CHP steam-turbine extraction"],
+        "Backup technology", ["Natural gas boiler", "CHP steam-turbine extraction"],
         key="hybrid_backup_technology",
     )
     gas1, gas2, gas3, gas4 = st.columns(4)
     with gas1:
         citygate = st.number_input(
-            "Citygate ($/MMBtu-in)", value=3.65, min_value=0.0,
+            "Gas commodity ($/MMBtu-in)", value=3.65, min_value=0.0,
             step=0.10, key="hybrid_citygate",
         )
         gas_efficiency = st.number_input(
@@ -1945,7 +1920,7 @@ def render_hybrid_operation_tab():
         )
     with gas3:
         gas_carbon_price = st.number_input(
-            "Gas carbon price ($/tCO₂)", value=27.92, min_value=0.0,
+            "Carbon permit price or tax ($/tCO₂)", value=27.92, min_value=0.0,
             step=1.0, key="hybrid_gas_carbon_price",
         )
         gas_emissions_factor = st.number_input(
@@ -2017,19 +1992,33 @@ def render_hybrid_operation_tab():
     )
 
     st.subheader("4. Results")
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric(f"Standard B{dataset.get('bx')} LMP", f"${summary['standard_bx_lmp']:.2f}/MWh")
-    retained = summary['retained_electric_lmp']
-    m2.metric("Retained electric LMP", f"${retained:.2f}/MWh" if retained is not None else "No hours")
-    m3.metric("Backup share", f"{summary['backup_share_percent']:.1f}%")
-    m4.metric("Blended useful heat", f"${summary['blended_cost_per_mwh_th']:.2f}/MWh-th")
-    m5.metric("Break-even LMP", f"${summary['break_even_lmp']:.2f}/MWh")
+    st.caption(
+        f"Average cost of useful heat across the loaded B{dataset.get('bx')} operating hours. "
+        "The hybrid result replaces the selected backup hours with the backup heat source."
+    )
+    headline1, headline2 = st.columns(2)
+    headline1.metric(
+        "Full-electric heat cost",
+        f"${summary['all_electric_cost_per_mwh_th']:.2f}/MWh-th",
+    )
+    headline2.metric(
+        f"Hybrid heat cost ({summary['backup_share_percent']:.1f}% of loaded hours on backup)",
+        f"${summary['blended_cost_per_mwh_th']:.2f}/MWh-th",
+        delta=f"${summary['savings_vs_all_electric']:.2f}/MWh-th lower than full electric",
+        delta_color="normal",
+    )
 
-    detail1, detail2, detail3, detail4 = st.columns(4)
-    detail1.metric("Gas/backup useful heat", f"${backup_cost - backup_value:.2f}/MWh-th")
-    detail2.metric("Backup hours", f"{summary['backup_hours']:,}")
-    detail3.metric("BX hours from 4–9 p.m.", f"{summary['bx_evening_share_percent']:.1f}%")
-    detail4.metric("Dropped hours from 4–9 p.m.", f"{summary['backup_evening_share_percent']:.1f}%")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric(f"All selected B{dataset.get('bx')} hours: average electricity price", f"${summary['standard_bx_lmp']:.2f}/MWh-e")
+    retained = summary['retained_electric_lmp']
+    m2.metric("Electricity price during electric-only hours", f"${retained:.2f}/MWh-e" if retained is not None else "No hours")
+    m3.metric(f"{backup_technology} heat cost", f"${backup_cost - backup_value:.2f}/MWh-th")
+    m4.metric("Electricity price where backup breaks even", f"${summary['break_even_lmp']:.2f}/MWh-e")
+
+    detail1, detail2, detail3 = st.columns(3)
+    detail1.metric("Hours served by backup", f"{summary['backup_hours']:,}")
+    detail2.metric("Selected hours from 4–9 p.m.", f"{summary['bx_evening_share_percent']:.1f}%")
+    detail3.metric("Backup hours from 4–9 p.m.", f"{summary['backup_evening_share_percent']:.1f}%")
     emissions_note = ""
     if reporting_intensity is not None:
         electric_emissions_per_th = reporting_intensity / electric_performance
@@ -2053,7 +2042,7 @@ def render_hybrid_operation_tab():
     backup_prices = dispatch_df.loc[dispatch_df['use_backup'], 'lmp']
     histogram = go.Figure()
     histogram.add_trace(go.Histogram(
-        x=electric_prices, name="Retained electric hours", marker_color="#1e5c44",
+        x=electric_prices, name="Hours served by electric heat", marker_color="#1e5c44",
         opacity=0.8, nbinsx=45,
     ))
     histogram.add_trace(go.Histogram(
@@ -2064,13 +2053,18 @@ def render_hybrid_operation_tab():
     if line_value is not None:
         histogram.add_vline(
             x=float(line_value), line_dash="dash", line_color="#17221b",
-            annotation_text=("Economic break-even" if strategy == 'economic' else "Scenario cutoff"),
+            annotation_text=("Economic break-even" if strategy == 'economic' else "Dispatch cutoff"),
             annotation_position="top",
         )
     histogram.update_layout(
-        barmode="overlay", title=f"B{dataset.get('bx')} LMP observations retained or reassigned",
+        barmode="overlay", title=f"Electricity prices for B{dataset.get('bx')} hours, grouped by heat source",
         xaxis_title="Day-ahead LMP ($/MWh-e)", yaxis_title="Selected BX hours",
         legend_title=None, margin=dict(l=20, r=20, t=65, b=20),
+    )
+    st.caption(
+        "This chart shows the distribution of day-ahead electricity prices in the loaded "
+        f"B{dataset.get('bx')} hours. Green hours use electric heat; orange hours are served "
+        "by the backup heat source. It is a dispatch view, not a useful-heat cost comparison."
     )
     st.plotly_chart(histogram, use_container_width=True)
 
@@ -2088,7 +2082,7 @@ def render_hybrid_operation_tab():
             daily.rename(columns={
                 'date': 'Date', 'bx_lmp': f"B{dataset.get('bx')} LMP ($/MWh)",
                 'backup_hours': 'Backup hours',
-                'blended_cost': 'Blended cost ($/MWh-th)',
+                'blended_cost': 'Hybrid heat cost ($/MWh-th)',
             }),
             use_container_width=True, hide_index=True,
         )
@@ -2100,9 +2094,9 @@ def render_hybrid_operation_tab():
         )
         s1, s2, s3, s4, s5 = st.columns(5)
         with s1:
-            citygate_min = st.number_input("Citygate minimum", value=1.0, min_value=0.0, step=0.5)
+            citygate_min = st.number_input("Gas commodity minimum", value=1.0, min_value=0.0, step=0.5)
         with s2:
-            citygate_max = st.number_input("Citygate maximum", value=10.0, min_value=0.0, step=0.5)
+            citygate_max = st.number_input("Gas commodity maximum", value=10.0, min_value=0.0, step=0.5)
         with s3:
             carbon_min = st.number_input("Carbon minimum", value=0.0, min_value=0.0, step=5.0)
         with s4:
@@ -2111,7 +2105,7 @@ def render_hybrid_operation_tab():
             sensitivity_steps = st.number_input("Steps per axis", value=11, min_value=3, max_value=25)
         if citygate_max <= citygate_min or carbon_max <= carbon_min:
             st.warning("Sensitivity maximums must be greater than minimums.")
-        elif backup_technology != "Gas heat":
+        elif backup_technology != "Natural gas boiler":
             st.info("The current sensitivity grid supports the direct gas-heat backup profile.")
         else:
             citygate_values = [
@@ -2139,14 +2133,14 @@ def render_hybrid_operation_tab():
                 z=grid.values, x=grid.columns, y=grid.index,
                 colorscale="YlOrBr", colorbar_title="Backup share (%)",
                 hovertemplate=(
-                    "Citygate: $%{x:.2f}/MMBtu<br>Carbon: $%{y:.2f}/tCO₂"
+                    "Gas commodity: $%{x:.2f}/MMBtu<br>Carbon: $%{y:.2f}/tCO₂"
                     "<br>Backup share: %{z:.1f}%<extra></extra>"
                 ),
             ))
             sensitivity_fig.update_layout(
                 title="Economically selected backup share",
-                xaxis_title="Citygate gas price ($/MMBtu-in)",
-                yaxis_title="Gas carbon price ($/tCO₂)",
+                xaxis_title="Gas commodity price ($/MMBtu-in)",
+                yaxis_title="Carbon permit price or tax ($/tCO₂)",
             )
             st.plotly_chart(sensitivity_fig, use_container_width=True)
 
@@ -2162,8 +2156,7 @@ def render_hybrid_operation_tab():
    adjusted electric useful-heat cost for that observation.
 
 The `$16.39/MWh-th` TAC is a screening assumption, not a B-20 bill simulation. B-20 demand
-charges depend on the facility's 15-minute monthly peaks. The `$8.25/MWh-th` reduced-NBC case
-is also a research proxy; it should not be interpreted as an implemented SB 943 tariff.
+charges depend on the facility's 15-minute monthly peaks.
 
 Low midday LMP does not establish a zero-carbon electricity claim. Electricity GHG cost and
 emissions accounting should be selected independently based on the procurement contract and
