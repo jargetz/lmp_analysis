@@ -18,7 +18,6 @@ import sys
 
 from data_processor import CAISODataProcessor
 from analytics import LMPAnalytics, get_registered_analytics
-from chatbot import LMPChatbot
 from node_zone_mapping import NodeZoneMapper, VALID_ZONES
 from bx_calculator import BXCalculator, SUPPORTED_BX_VALUES
 from hybrid_analysis import (
@@ -257,8 +256,6 @@ def main():
         st.session_state.processor = CAISODataProcessor()
     if 'analytics' not in st.session_state:
         st.session_state.analytics = LMPAnalytics()
-    if 'chatbot' not in st.session_state:
-        st.session_state.chatbot = LMPChatbot()
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
     if 'data_loaded' not in st.session_state:
@@ -2647,6 +2644,15 @@ def render_ai_assistant_tab():
             if user_question:
                 with st.spinner("Analyzing your question..."):
                     try:
+                        if 'chatbot' not in st.session_state:
+                            if not os.getenv("OPENAI_API_KEY"):
+                                st.error(
+                                    "AI Assistant is not configured. The rest of the "
+                                    "application does not require an OpenAI key."
+                                )
+                                return
+                            from chatbot import LMPChatbot
+                            st.session_state.chatbot = LMPChatbot()
                         answer = st.session_state.chatbot.process_question(user_question)
                         st.session_state.chat_history.append((user_question, answer))
                         st.rerun()
