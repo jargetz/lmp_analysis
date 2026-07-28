@@ -74,30 +74,6 @@ def _run_site_query(query_type, *args, timeout=60):
     return result
 
 
-def _facility_search_matches(facilities, query, limit=10):
-    """Return deterministic facility search results, with exact names first."""
-    needle = (query or "").strip().casefold()
-    if not needle:
-        return []
-
-    matches = []
-    for facility in facilities:
-        name = str(facility.get("facility", ""))
-        city = str(facility.get("city", ""))
-        county = str(facility.get("county", ""))
-        if needle in f"{name} {city} {county}".casefold():
-            matches.append(facility)
-
-    matches.sort(
-        key=lambda facility: (
-            str(facility.get("facility", "")).casefold() != needle,
-            str(facility.get("facility", "")).casefold(),
-            str(facility.get("city", "")).casefold(),
-        )
-    )
-    return matches[:limit]
-
-
 def _inject_css() -> None:
     """Inject global CSS: Inter/Georgia fonts, cream palette, hide Streamlit chrome."""
     st.markdown("""
@@ -1312,6 +1288,7 @@ def render_node_map_tab():
 
     facilities_all = st.session_state.get('facility_data', [])
     all_facilities_sorted = sorted(facilities_all, key=lambda f: f['facility'])
+    all_facility_names = [f['facility'] for f in all_facilities_sorted]
 
     facilities_to_show = facilities_all if show_facilities else []
     if fac_filter == "Covered entities only":
@@ -1416,68 +1393,13 @@ def render_node_map_tab():
     left_col, right_col = st.columns([0.6, 0.4])
 
     with left_col:
-        facility_query = st.text_input(
+        selected_name = st.selectbox(
             "Search facility",
-            placeholder="Enter a facility, city, or county...",
-            key="map_facility_query",
+            options=all_facility_names,
+            index=None,
+            placeholder="Type to search...",
+            key="map_facility_search",
         )
-        facility_matches = _facility_search_matches(
-            all_facilities_sorted, facility_query, limit=10
-        )
-        selected_name = st.session_state.get("map_selected_facility_name")
-
-        if facility_query.strip():
-            if facility_matches:
-                st.caption(
-                    "Select a result:"
-                    if len(facility_matches) > 1
-                    else "One matching facility:"
-                )
-                for match_index, match in enumerate(facility_matches):
-                    match_name = match["facility"]
-                    location = ", ".join(
-                        str(part) for part in (match.get("city"), match.get("county"))
-                        if part and str(part).lower() != "nan"
-                    )
-                    label = f"{match_name} — {location}" if location else match_name
-                    if st.button(
-                        label,
-                        key=f"map_facility_result_{match_index}_{match_name}",
-                        use_container_width=True,
-                    ):
-                        selected_name = match_name
-                        st.session_state["map_selected_facility_name"] = match_name
-            else:
-                st.warning(
-                    "No CARB reporting facility matches that name, city, or county."
-                )
-
-        if selected_name:
-            selected_facility_row = next(
-                (f for f in all_facilities_sorted if f["facility"] == selected_name),
-                None,
-            )
-            selected_location = ""
-            if selected_facility_row:
-                selected_location = ", ".join(
-                    str(part)
-                    for part in (
-                        selected_facility_row.get("city"),
-                        selected_facility_row.get("county"),
-                    )
-                    if part and str(part).lower() != "nan"
-                )
-            selected_col, clear_col = st.columns([0.82, 0.18])
-            with selected_col:
-                location_suffix = f" — {selected_location}" if selected_location else ""
-                st.success(f"**Selected:** {selected_name}{location_suffix}")
-            with clear_col:
-                if st.button("Clear", key="map_clear_facility"):
-                    selected_name = None
-                    st.session_state["map_selected_facility_name"] = None
-                    st.session_state["map_selected_node"] = None
-                    st.session_state["map_selected_facility"] = None
-                    st.session_state["map_select_source"] = None
 
         selection_status = (
             st.status(
