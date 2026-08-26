@@ -1003,7 +1003,7 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
         ))
 
     fig.update_layout(
-        mapbox_style='carto-positron',
+        mapbox_style='open-street-map',
         mapbox=dict(center=dict(lat=fac_lat, lon=fac_lon), zoom=9),
         margin=dict(l=0, r=0, t=0, b=0),
         height=520,

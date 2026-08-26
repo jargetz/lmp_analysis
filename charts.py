@@ -1320,7 +1320,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             custom_data=['hover_text'],
             zoom=5,
             center={'lat': 37.0, 'lon': -119.0},
-            mapbox_style='carto-positron',
+            mapbox_style='open-street-map',
             title=f'PNODE {bx_label} Price Map — Colored by Zone',
             height=650,
         )
@@ -1359,7 +1359,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             custom_data=['hover_text'],
             zoom=5,
             center={'lat': 37.0, 'lon': -119.0},
-            mapbox_style='carto-positron',
+            mapbox_style='open-street-map',
             title=f'PNODE {bx_label} Price Map — Colored by Price',
             height=650,
         )
@@ -1443,7 +1443,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             mapbox=dict(
                 center=dict(lat=slat, lon=slon),
                 zoom=11,
-                style='carto-positron',
+                style='open-street-map',
             )
         )
 
@@ -1619,7 +1619,7 @@ def create_node_finder_map(facilities: list, ab617_communities: list,
         ))
 
     fig.update_layout(
-        mapbox=dict(style='carto-positron', center=dict(lat=37.0, lon=-119.0), zoom=5),
+        mapbox=dict(style='open-street-map', center=dict(lat=37.0, lon=-119.0), zoom=5),
         margin=dict(l=0, r=0, t=30, b=0),
         height=640,
         legend=dict(orientation='v', x=0.01, y=0.99, xanchor='left', yanchor='top',
