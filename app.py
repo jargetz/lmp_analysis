@@ -900,7 +900,7 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
                     'dist_mi': d * 0.621371,
                 })
         if sub_in_radius:
-            fig.add_trace(go.Scattermapbox(
+            fig.add_trace(go.Scattermap(
                 lat=[s['lat'] for s in sub_in_radius],
                 lon=[s['lon'] for s in sub_in_radius],
                 mode='markers',
@@ -920,7 +920,7 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
     # 2. Peer facilities — orange, sized proportionally
     if peers:
         peer_sizes = [_dot_size(f['total_ghg']) for f in peers]
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=[f['lat'] for f in peers],
             lon=[f['lon'] for f in peers],
             mode='markers',
@@ -944,7 +944,7 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
         pnode_id = node_to_analyze.get('pnode_id', '')
         if n_lat and n_lon:
             price_str_node = f"${node_price:.2f}/MWh" if node_price is not None else "N/A"
-            fig.add_trace(go.Scattermapbox(
+            fig.add_trace(go.Scattermap(
                 lat=[n_lat], lon=[n_lon],
                 mode='markers',
                 marker=dict(size=16, color='#00c8ff'),
@@ -957,7 +957,7 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
 
     # 4. Selected facility — red
     sel_size = max(18, _dot_size(sel_facility['total_ghg']))
-    fig.add_trace(go.Scattermapbox(
+    fig.add_trace(go.Scattermap(
         lat=[fac_lat], lon=[fac_lon],
         mode='markers',
         marker=dict(size=sel_size, color='#e8000d'),
@@ -974,7 +974,7 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
         ns = nearest_substation
         ns_dist = _fmt_dist_r(ns['dist_km']) if ns.get('dist_km') is not None else '—'
         ns_status = f' ⚠ {ns["status"]}' if ns.get('status') and ns['status'] != 'Operational' else ''
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=[ns['lat']], lon=[ns['lon']],
             mode='markers',
             marker=dict(size=16, color='#e377c2'),
@@ -990,7 +990,7 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
         lv = nearest_lv_substation
         lv_dist = _fmt_dist_r(lv['dist_km']) if lv.get('dist_km') is not None else '—'
         lv_status = f' ⚠ {lv["status"]}' if lv.get('status') and lv['status'] != 'Operational' else ''
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=[lv['lat']], lon=[lv['lon']],
             mode='markers',
             marker=dict(size=13, color='#9467bd'),
@@ -1003,8 +1003,8 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
         ))
 
     fig.update_layout(
-        mapbox_style='open-street-map',
-        mapbox=dict(center=dict(lat=fac_lat, lon=fac_lon), zoom=9),
+        map_style='carto-positron',
+        map=dict(center=dict(lat=fac_lat, lon=fac_lon), zoom=9),
         margin=dict(l=0, r=0, t=0, b=0),
         height=520,
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),

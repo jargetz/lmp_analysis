@@ -1147,7 +1147,7 @@ def create_node_box_plot(
 
 
 def add_chp_facility_traces(fig: go.Figure, chp_data: list, non_biomass_only: bool = False) -> None:
-    """Overlay CHP cogeneration facility markers on an existing Scattermapbox figure.
+    """Overlay CHP cogeneration facility markers on an existing Scattermap figure.
 
     Uses orange markers (distinct from CARB red/gray) so they stand out clearly.
     non_biomass_only: when True, excludes facilities where biomass_co2 > 0.
@@ -1184,7 +1184,7 @@ def add_chp_facility_traces(fig: go.Figure, chp_data: list, non_biomass_only: bo
             'Non-Biomass GHG: ' + nonbio_col + ' MT'
             + bm_text
         )
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=sub['lat'].tolist(),
             lon=sub['lon'].tolist(),
             mode='markers',
@@ -1196,7 +1196,7 @@ def add_chp_facility_traces(fig: go.Figure, chp_data: list, non_biomass_only: bo
 
 
 def _add_facility_traces(fig: go.Figure, facilities: list) -> None:
-    """Add CARB facility markers to an existing mapbox figure."""
+    """Add CARB facility markers to an existing MapLibre figure."""
     if not facilities:
         return
     fdf = pd.DataFrame(facilities)
@@ -1217,7 +1217,7 @@ def _add_facility_traces(fig: go.Figure, facilities: list) -> None:
             'SOx: ' + sub['sox'].apply(lambda x: f'{x:,.1f}') + '  '
             'PM2.5: ' + sub['pm25'].apply(lambda x: f'{x:,.1f}')
         )
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=sub['lat'].tolist(),
             lon=sub['lon'].tolist(),
             mode='markers',
@@ -1311,7 +1311,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             ) + '/MWh<br>' +
             df['sub_hover']
         )
-        fig = px.scatter_mapbox(
+        fig = px.scatter_map(
             df,
             lat='lat',
             lon='lon',
@@ -1320,7 +1320,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             custom_data=['hover_text'],
             zoom=5,
             center={'lat': 37.0, 'lon': -119.0},
-            mapbox_style='open-street-map',
+            map_style='carto-positron',
             title=f'PNODE {bx_label} Price Map — Colored by Zone',
             height=650,
         )
@@ -1349,7 +1349,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             bx_label + ' Avg: $' + df['avg_price'].apply(lambda x: f'{x:.2f}') + '/MWh<br>' +
             df['sub_hover']
         )
-        fig = px.scatter_mapbox(
+        fig = px.scatter_map(
             df,
             lat='lat',
             lon='lon',
@@ -1359,7 +1359,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             custom_data=['hover_text'],
             zoom=5,
             center={'lat': 37.0, 'lon': -119.0},
-            mapbox_style='open-street-map',
+            map_style='carto-positron',
             title=f'PNODE {bx_label} Price Map — Colored by Price',
             height=650,
         )
@@ -1371,6 +1371,10 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             coloraxis_colorbar=dict(title='$/MWh'),
             margin=dict(l=0, r=0, t=50, b=0)
         )
+
+    # Plotly 6.9 retains a redundant legacy layout entry after px.scatter_map.
+    # Remove it so the serialized figure contains only the MapLibre subplot.
+    fig.layout.pop('mapbox', None)
 
     _add_facility_traces(fig, facilities)
 
@@ -1430,7 +1434,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             f"PM2.5: {selected_facility['pm25']:,.1f}"
             f"{_sub_inline}{_lv_inline}"
         )
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=[slat],
             lon=[slon],
             mode='markers',
@@ -1440,10 +1444,10 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             hovertemplate='%{customdata}<extra></extra>',
         ))
         fig.update_layout(
-            mapbox=dict(
+            map=dict(
                 center=dict(lat=slat, lon=slon),
                 zoom=11,
-                style='open-street-map',
+                style='carto-positron',
             )
         )
 
@@ -1455,7 +1459,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             f"Type: {nearest_node.get('node_type') or '—'}<br>"
             f"{bx_label} avg: {price_str}"
         )
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=[nearest_node['lat']],
             lon=[nearest_node['lon']],
             mode='markers',
@@ -1476,7 +1480,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             f"Distance to facility: {ns_dist_str}"
             f"{ns_status_warn}"
         )
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=[ns['lat']],
             lon=[ns['lon']],
             mode='markers',
@@ -1497,7 +1501,7 @@ def create_pnode_map(data: list, bx_label: str, color_by: str = 'zone',
             f"Distance to facility: {lv_dist_str}"
             f"{lv_status_warn}"
         )
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=[lv['lat']],
             lon=[lv['lon']],
             mode='markers',
@@ -1573,7 +1577,7 @@ def create_node_finder_map(facilities: list, ab617_communities: list,
         + fdf['sub_line']
     )
 
-    fig.add_trace(go.Scattermapbox(
+    fig.add_trace(go.Scattermap(
         lat=fdf['fac_lat'].tolist(),
         lon=fdf['fac_lon'].tolist(),
         mode='markers',
@@ -1597,7 +1601,7 @@ def create_node_finder_map(facilities: list, ab617_communities: list,
         + bx_label + ' avg: $' + fdf['node_b_avg'].apply(lambda x: f'{x:.2f}') + '/MWh<br>'
         + '← nearest to: ' + fdf['facility'].astype(str)
     )
-    fig.add_trace(go.Scattermapbox(
+    fig.add_trace(go.Scattermap(
         lat=fdf['node_lat'].tolist(),
         lon=fdf['node_lon'].tolist(),
         mode='markers',
@@ -1610,7 +1614,7 @@ def create_node_finder_map(facilities: list, ab617_communities: list,
     if ab617_communities:
         adf = pd.DataFrame(ab617_communities)
         hover_a = '<b>AB 617: ' + adf['name'].astype(str) + '</b>'
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=adf['lat'].tolist(), lon=adf['lon'].tolist(),
             mode='markers', name='AB 617 Communities',
             marker=dict(size=9, color='#9467bd', opacity=0.85),
@@ -1619,7 +1623,7 @@ def create_node_finder_map(facilities: list, ab617_communities: list,
         ))
 
     fig.update_layout(
-        mapbox=dict(style='open-street-map', center=dict(lat=37.0, lon=-119.0), zoom=5),
+        map=dict(style='carto-positron', center=dict(lat=37.0, lon=-119.0), zoom=5),
         margin=dict(l=0, r=0, t=30, b=0),
         height=640,
         legend=dict(orientation='v', x=0.01, y=0.99, xanchor='left', yanchor='top',
