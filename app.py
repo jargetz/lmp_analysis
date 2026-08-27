@@ -47,6 +47,104 @@ from charts import (
 )
 
 
+CEC_UTILITY_SERVICE_AREA_URL = (
+    "https://services3.arcgis.com/bWPjFyq029ChCGur/arcgis/rest/services/"
+    "ElectricLoadServingEntities_IOU_POU/FeatureServer/0/query"
+)
+
+
+def _commit_facility_search_selection():
+    """Commit the selectbox value before the Site Analysis fragment reruns."""
+    selected_name = st.session_state.get('map_facility_search')
+    st.session_state['map_selected_facility_name'] = selected_name
+    if selected_name is None:
+        st.session_state['map_selected_node'] = None
+        st.session_state['map_selected_facility'] = None
+        st.session_state['map_select_source'] = None
+
+
+@st.cache_data(ttl=86400, max_entries=512, show_spinner=False)
+def _get_utility_service_area(lat, lon):
+    """Return the simplified CEC IOU/POU polygon containing a point."""
+    import json
+    from urllib.parse import urlencode
+    from urllib.request import Request, urlopen
+
+    lat = float(lat)
+    lon = float(lon)
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise ValueError("Invalid facility coordinates for utility-area lookup")
+
+    params = {
+        'where': '1=1',
+        'geometry': f'{lon},{lat}',
+        'geometryType': 'esriGeometryPoint',
+        'inSR': '4326',
+        'spatialRel': 'esriSpatialRelIntersects',
+        'outFields': 'Acronym,Utility,Type,OnlineName,Shape__Area',
+        'returnGeometry': 'true',
+        'outSR': '4326',
+        # The CEC boundaries are approximate. This resolution remains detailed
+        # at report zoom levels while avoiding multi-megabyte HTML downloads.
+        'geometryPrecision': '5',
+        'maxAllowableOffset': '0.002',
+        'f': 'geojson',
+    }
+    request = Request(
+        f'{CEC_UTILITY_SERVICE_AREA_URL}?{urlencode(params)}',
+        headers={'User-Agent': 'BX-CAISO-Nodal-Analysis/1.0'},
+    )
+    with urlopen(request, timeout=20) as response:
+        raw_payload = response.read(5_000_001)
+    if len(raw_payload) > 5_000_000:
+        raise RuntimeError("CEC utility-area response exceeded 5 MB")
+    payload = json.loads(raw_payload.decode('utf-8'))
+
+    if payload.get('error'):
+        message = payload['error'].get('message', 'CEC utility-area query failed')
+        raise RuntimeError(message)
+
+    features = [
+        feature for feature in payload.get('features', [])
+        if (feature.get('geometry') or {}).get('type') in ('Polygon', 'MultiPolygon')
+    ]
+    if not features:
+        return None
+
+    # A point exactly on a shared boundary can intersect multiple features.
+    # Prefer the smallest territory rather than swallowing a local POU inside
+    # a much larger neighboring IOU polygon.
+    features.sort(
+        key=lambda feature: (feature.get('properties') or {}).get('Shape__Area')
+        or float('inf')
+    )
+    feature = features[0]
+    properties = feature.get('properties') or {}
+    name = properties.get('OnlineName') or properties.get('Utility') or 'Unknown utility'
+    acronym = properties.get('Acronym')
+    utility_type = properties.get('Type')
+
+    embedded_feature = {
+        'type': 'Feature',
+        'id': 'selected-utility-territory',
+        'properties': {
+            'name': name,
+            'acronym': acronym,
+            'utility_type': utility_type,
+        },
+        'geometry': feature['geometry'],
+    }
+    return {
+        'name': name,
+        'acronym': acronym,
+        'utility_type': utility_type,
+        'geojson': {
+            'type': 'FeatureCollection',
+            'features': [embedded_feature],
+        },
+    }
+
+
 @st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
 def _run_site_query(query_type, *args, timeout=60):
     """Run and cache a Site Analysis query using Streamlit's Python environment."""
@@ -817,11 +915,12 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
                                    node_price, dlap_name, dlap_bx_avg, dlap_allhours,
                                    bx_label, period_label, radius_miles=50,
                                    nearest_substation=None, nearest_lv_substation=None,
-                                   substations_df=None):
+                                   substations_df=None, utility_service_area=None):
     """Build a self-contained interactive HTML report for a facility and its nearby peers."""
     import plotly.io as pio
     import math
     from datetime import date as _date
+    from html import escape as _html_escape
 
     def _fmt_dist_r(dist_km):
         dist_mi = dist_km * 0.621371
@@ -864,11 +963,44 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
         return max(8, min(44, 8 + 36 * (ghg / max_ghg)))
 
     # ── Draw order: back → front ──────────────────────────────────────────────
+    # 0. Utility service territory (background polygon)
     # 1. Grey substations (background)
     # 2. Peer facilities (orange)
     # 3. Highlighted nearest substation(s) (pink / orange)
     # 4. PNODE (cyan)
     # 5. Selected facility (red) — always on top
+
+    utility_name = None
+    utility_acronym = None
+    utility_type = None
+    utility_geojson = None
+    if utility_service_area:
+        utility_name = utility_service_area.get('name')
+        utility_acronym = utility_service_area.get('acronym')
+        utility_type = utility_service_area.get('utility_type')
+        utility_geojson = utility_service_area.get('geojson')
+
+    utility_label = utility_name or 'Utility service territory'
+    if utility_acronym and utility_acronym.lower() not in utility_label.lower():
+        utility_label = f'{utility_label} ({utility_acronym})'
+    if utility_geojson and utility_geojson.get('features'):
+        fig.add_trace(go.Choroplethmap(
+            geojson=utility_geojson,
+            locations=['selected-utility-territory'],
+            z=[1],
+            featureidkey='id',
+            colorscale=[[0, '#2563a8'], [1, '#2563a8']],
+            zmin=0,
+            zmax=1,
+            marker=dict(
+                opacity=0.14,
+                line=dict(color='#174f87', width=2),
+            ),
+            showscale=False,
+            text=[_html_escape(utility_label)],
+            hovertemplate='<b>%{text}</b><br>Approximate CEC service-area boundary<extra></extra>',
+            name=f'Utility territory: {utility_label}',
+        ))
 
     # 1. All substations within radius — drawn first so everything sits on top
     if substations_df is not None and not substations_df.empty:
@@ -1022,6 +1154,21 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
     ct_badge = ('<span class="badge">Cap-and-Trade</span>'
                 if sel_facility.get('cap_and_trade') == 'Yes' else '')
 
+    utility_html = ''
+    if utility_name:
+        utility_type_label = {
+            'IOU': 'Investor-owned utility',
+            'POU': 'Publicly owned utility',
+        }.get(utility_type, utility_type or 'Electric utility')
+        utility_html = (
+            f'<div class="utility-box">'
+            f'<b>Electric service territory:</b> {_html_escape(utility_label)} '
+            f'&nbsp;·&nbsp; {_html_escape(utility_type_label)}<br>'
+            f'<span style="color:#667">Approximate planning boundary from the '
+            f'California Energy Commission; confirm service at the specific address '
+            f'with the utility.</span></div>'
+        )
+
     # ── Substation HTML block ─────────────────────────────────────────────────
     sub_html = ''
     if nearest_substation:
@@ -1083,6 +1230,7 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
   .card-label{{font-size:.72em;color:#888;text-transform:uppercase;letter-spacing:.05em}}
   .card-value{{font-size:1.25em;font-weight:600}}
   .node-box{{background:#e8f4fd;border-left:3px solid #2196F3;padding:10px 16px;border-radius:4px;margin-bottom:12px;font-size:.9em;line-height:1.6}}
+  .utility-box{{background:#edf4fb;border-left:3px solid #2563a8;padding:10px 16px;border-radius:4px;margin-bottom:12px;font-size:.9em;line-height:1.6}}
   .sub-box{{background:#fce4f5;border-left:3px solid #e377c2;padding:10px 16px;border-radius:4px;margin-bottom:20px;font-size:.9em;line-height:1.6}}
   table{{width:100%;border-collapse:collapse;font-size:.83em}}
   thead tr{{background:#f0f2f5}}
@@ -1136,8 +1284,9 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
   {dlap_name or 'DLAP'} {bx_label} Avg: <b>{dlap_str}</b> &nbsp;·&nbsp;
   {dlap_name or 'DLAP'} All-Hours Avg: <b>{dlap_all_str}</b>
 </div>
+{utility_html}
 {sub_html}
-<h2>Map — {sel_facility['facility']}, Nearby Facilities, PNODE &amp; Substation ({radius_miles}-mile radius)</h2>
+<h2>Map — {sel_facility['facility']}, Nearby Facilities, PNODE, Substation{', &amp; Utility Territory' if utility_name else ''} ({radius_miles}-mile radius)</h2>
 {map_html}
 
 <h2>Nearby Facilities — {len(peers)} within {radius_miles} miles</h2>
@@ -1154,6 +1303,7 @@ def generate_facility_report_html(sel_facility, all_facilities, node_to_analyze,
 
 <div class="footer">
   Source: CARB Mandatory GHG Reporting (2023) · CAISO Day Ahead LMP {period_label} ·
+  {'CEC Electric Load Serving Entities (IOU &amp; POU) ·' if utility_name else ''}
   Generated by BX CAISO Nodal Analysis Tool · {today}
 </div>
 </body>
@@ -1393,13 +1543,23 @@ def render_node_map_tab():
     left_col, right_col = st.columns([0.6, 0.4])
 
     with left_col:
-        selected_name = st.selectbox(
+        widget_selected_name = st.selectbox(
             "Search facility",
             options=all_facility_names,
             index=None,
             placeholder="Type to search...",
             key="map_facility_search",
+            on_change=_commit_facility_search_selection,
         )
+        selected_name = st.session_state.get(
+            'map_selected_facility_name', widget_selected_name
+        )
+        # Initialize the committed key for sessions created before the callback
+        # existed, and keep it aligned if the available options change.
+        if ('map_selected_facility_name' not in st.session_state
+                or selected_name != widget_selected_name):
+            selected_name = widget_selected_name
+            st.session_state['map_selected_facility_name'] = widget_selected_name
 
         selection_status = (
             st.status(
@@ -1679,6 +1839,17 @@ def render_node_map_tab():
                 safe_name = (sel_facility['facility']
                              .replace(' ', '_').replace('/', '-')[:50])
 
+                _utility_service_area = None
+                try:
+                    _utility_service_area = _get_utility_service_area(
+                        sel_facility['lat'], sel_facility['lon']
+                    )
+                except Exception as _utility_exc:
+                    st.caption(
+                        "CEC utility service territory is temporarily unavailable; "
+                        "the report can still be downloaded without that layer."
+                    )
+
                 try:
                     _report_bytes = generate_facility_report_html(
                         sel_facility=sel_facility,
@@ -1694,6 +1865,7 @@ def render_node_map_tab():
                         nearest_substation=nearest_substation,
                         nearest_lv_substation=nearest_lv_sub,
                         substations_df=sub_df if not sub_df.empty else None,
+                        utility_service_area=_utility_service_area,
                     ).encode('utf-8')
                 except Exception as _exc:
                     _report_bytes = None
